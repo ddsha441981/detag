@@ -402,29 +402,41 @@ mod tests {
         (lock, guard)
     }
 
+    /// Full defaults snapshot: every field must equal its `.env.example`
+    /// value. If a default changes, `.env.example` changes with it
+    /// (`just env-check` enforces the three-way agreement).
     #[test]
-    fn defaults_match_env_example() {
+    fn defaults_snapshot_matches_env_example() {
         let _env = clean_env();
-        let settings = Settings::load_from(None).expect("defaults must load");
-        assert_eq!(settings.database_url, "postgres://pf:pf@localhost:5432/pf");
-        assert_eq!(settings.redis_url, "redis://localhost:6379");
-        assert_eq!(settings.s3_endpoint, "http://localhost:9000");
-        assert_eq!(settings.s3_bucket, "detag-dev");
-        assert_eq!(settings.smtp_port, 1025);
-        assert_eq!(settings.engine_tiles_max, 1024);
-        assert_eq!(settings.engine_gpu, 0);
-        assert_eq!(
-            (
-                settings.results_ttl_free_h,
-                settings.results_ttl_pro_h,
-                settings.results_ttl_business_h
-            ),
-            (6, 24, 72)
-        );
-        assert!(!settings.feature_razorpay);
-        assert!(!settings.feature_provenance_strip);
-        assert_eq!(settings.log_level, "info");
-        assert!(settings.otel_endpoint.is_empty());
+        let s = Settings::load_from(None).expect("defaults must load");
+        assert_eq!(s.database_url, "postgres://pf:pf@localhost:5432/pf");
+        assert_eq!(s.redis_url, "redis://localhost:6379");
+        assert_eq!(s.s3_endpoint, "http://localhost:9000");
+        assert_eq!(s.s3_bucket, "detag-dev");
+        assert_eq!(s.s3_access_key, "minioadmin");
+        assert_eq!(s.s3_secret_key, "minioadmin");
+        assert_eq!(s.s3_region, "us-east-1");
+        assert_eq!(s.jwt_secret, "dev-fixed");
+        assert_eq!(s.public_base_url, "http://localhost:8080");
+        assert_eq!(s.stripe_secret_key, "sk_test_placeholder");
+        assert_eq!(s.stripe_webhook_secret, "whsec_placeholder");
+        assert_eq!(s.razorpay_key, "rzp_test_placeholder");
+        assert_eq!(s.razorpay_secret, "placeholder");
+        assert!(!s.feature_razorpay);
+        assert_eq!(s.smtp_host, "localhost");
+        assert_eq!(s.smtp_port, 1025);
+        assert!(s.smtp_user.is_empty());
+        assert!(s.smtp_pass.is_empty());
+        assert_eq!(s.mail_from, "noreply@detag.local");
+        assert_eq!(s.engine_models_dir, "./models");
+        assert_eq!(s.engine_gpu, 0);
+        assert_eq!(s.engine_tiles_max, 1024);
+        assert_eq!(s.results_ttl_free_h, 6);
+        assert_eq!(s.results_ttl_pro_h, 24);
+        assert_eq!(s.results_ttl_business_h, 72);
+        assert!(!s.feature_provenance_strip);
+        assert_eq!(s.log_level, "info");
+        assert!(s.otel_endpoint.is_empty());
     }
 
     #[test]
@@ -519,5 +531,94 @@ mod tests {
         let path = Path::new("/nonexistent/detag.toml");
         let settings = Settings::load_from(Some(path)).expect("missing file must not fail");
         assert_eq!(settings.log_level, "info");
+    }
+
+    /// All three layers in one load: file beats env on the same field,
+    /// env beats defaults where the file is silent, defaults fill the rest.
+    #[test]
+    fn layer_precedence_all_three() {
+        let _env = clean_env();
+        env::set_var("PF_LOG_LEVEL", "debug");
+        env::set_var("PF_SMTP_PORT", "2525");
+        let dir = std::env::temp_dir().join("detag-config-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("detag.toml");
+        std::fs::write(&path, "log_level = \"warn\"\n").unwrap();
+        let settings = Settings::load_from(Some(&path)).expect("layered load must work");
+        assert_eq!(settings.log_level, "warn"); // file beats env ("debug")
+        assert_eq!(settings.smtp_port, 2525); // env beats default (1025)
+        assert_eq!(settings.redis_url, "redis://localhost:6379"); // default
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    /// The aggregated-error case: four bad vars of different kinds
+    /// (bad URL, empty required string, out-of-range number, bad log
+    /// level) are all reported in one error, with a count.
+    #[test]
+    fn aggregated_report_names_every_bad_var() {
+        let _env = clean_env();
+        env::set_var("PF_DATABASE_URL", "junk");
+        env::set_var("PF_S3_BUCKET", "");
+        env::set_var("PF_RESULTS_TTL_PRO_H", "0");
+        env::set_var("PF_LOG_LEVEL", "verbose");
+        let err = Settings::load_from(None).expect_err("four bad vars");
+        match &err {
+            ConfigError::Multiple { count, details } => {
+                assert_eq!(*count, 4);
+                for var in [
+                    "PF_DATABASE_URL",
+                    "PF_S3_BUCKET",
+                    "PF_RESULTS_TTL_PRO_H",
+                    "PF_LOG_LEVEL",
+                ] {
+                    assert!(details.contains(var), "missing {var} in: {details}");
+                }
+            }
+            other => panic!("expected Multiple, got: {other}"),
+        }
+    }
+
+    /// One bad var stays a single Invalid, not an aggregated report.
+    #[test]
+    fn single_bad_var_is_not_aggregated() {
+        let _env = clean_env();
+        env::set_var("PF_LOG_LEVEL", "verbose");
+        let err = Settings::load_from(None).expect_err("one bad var");
+        assert!(
+            matches!(err, ConfigError::Invalid { .. }),
+            "expected Invalid, got: {err}"
+        );
+    }
+
+    /// A bad value can also come from the file layer, and it still names
+    /// the var.
+    #[test]
+    fn file_bad_value_fails_with_var_name() {
+        let _env = clean_env();
+        let dir = std::env::temp_dir().join("detag-config-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("detag.toml");
+        std::fs::write(&path, "log_level = \"verbose\"\n").unwrap();
+        let err = Settings::load_from(Some(&path)).expect_err("bad file value");
+        assert!(
+            err.to_string().contains("PF_LOG_LEVEL"),
+            "error must name the var, got: {err}"
+        );
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    /// Empty OTEL endpoint disables export (the dev default); a
+    /// non-empty but unparseable one fails naming the var.
+    #[test]
+    fn otel_endpoint_empty_ok_bad_fails() {
+        let _env = clean_env();
+        env::set_var("PF_OTEL_ENDPOINT", "");
+        Settings::load_from(None).expect("empty otel must load");
+        env::set_var("PF_OTEL_ENDPOINT", ":::not a url");
+        let err = Settings::load_from(None).expect_err("bad otel must fail");
+        assert!(
+            err.to_string().contains("PF_OTEL_ENDPOINT"),
+            "error must name the var, got: {err}"
+        );
     }
 }

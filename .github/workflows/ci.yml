@@ -75,6 +75,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: clippy (-D warnings)
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: env-check (.env.example drift)
+        run: python3 scripts/env_check.py
       - name: Install nextest + llvm-cov
         uses: taiki-e/install-action@v2
         with:

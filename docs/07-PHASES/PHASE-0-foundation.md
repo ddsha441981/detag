@@ -145,11 +145,11 @@
     - [x] invalid var fails boot with var name
     - [x] precedence test green
 
-- [ ] **P0-016** — Settings tests
+- [x] **P0-016** — Settings tests
   - **Type:** test · **Area:** core/config · **Est:** S · **Deps:** P0-015 · **Prio:** P1
   - **Spec:** Layer precedence, invalid var aggregated report, defaults snapshot; .env.example drift covered by `just env:check`.
   - **AC:**
-    - [ ] tests green incl. aggregated-error case
+    - [x] tests green incl. aggregated-error case
 
 - [ ] **P0-017** — Error taxonomy
   - **Type:** feat · **Area:** core/config · **Est:** M · **Deps:** P0-016 · **Prio:** P1
