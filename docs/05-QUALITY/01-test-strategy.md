@@ -88,7 +88,42 @@ test. Run: `just prop`. Also runs on every push (part of
 
 ## Flaky-test policy
 
-A test that fails twice without a product change is quarantined (`#[ignore = "flaky:<issue>"]`) with an ISSUES.md entry; fix or delete within the week. Nightly run surfaces quarantined tests on the report.
+A test that fails twice without a product change is quarantined with
+an ISSUES.md entry; fix or delete within the week. Nightly run
+surfaces quarantined tests on the report.
+
+**Quarantine convention (P0-099):**
+
+- Tag the test: `#[ignore = "flaky:<issue-id>"]` (e.g.
+  `#[ignore = "flaky:FLAKY-001"]`). Plain `#[ignore]` without the
+  tag does not count — the tag is what the tooling finds.
+- Add (or update) the `FLAKY-<nnn>` entry in `docs/09-STATE/ISSUES.md`
+  with the failure signature, the suspected cause, and the strike
+  count. `just list-quarantined` flags any tagged test whose entry
+  is missing.
+- A quarantined test is skipped by `cargo test` (and therefore by
+  `just verify`) by default; run it on purpose with
+  `cargo test -- --ignored` or clear it with
+  `just test-repeat <name> 5`.
+- **Strikes:** each failure without a product change is one strike;
+  two strikes = quarantine. A fix (or a hardening ticket) clears the
+  tag; the ISSUES.md entry records the fix commit.
+- **Nightly:** the nightly job runs `just list-quarantined` so the
+  quarantined set is visible every day instead of rotting silently.
+  Quarantined tests are listed, not run, in nightly.
+- **Reproduce first:** before quarantining, run
+  `just test-repeat <name> 5` — a test that passes 5/5 in a row is
+  load-sensitive, not broken; quarantine it anyway (the policy is
+  about the suite, not the test) and let the hardening ticket own
+  the race.
+
+**Not quarantined yet (deliberate):** FLAKY-001 and FLAKY-002 meet
+the letter of the two-strike rule, but earlier runs kept them in the
+suite on purpose — re-running `just verify` until green, rather than
+silently dropping shutdown-drain and pubsub coverage from every
+commit. Quarantining either one is an owner decision (it changes
+what `just verify` covers); the tooling to do it is here, the call
+is not made in P0-099. FLAKY-003 has one strike (P0-093).
 
 ## What "green" means per run
 

@@ -96,6 +96,21 @@ snapshots-check:
 prop:
     cargo test -p detag-core --test prop
 
+# Run one test N times in fresh processes to catch (or clear) a
+# flake (P0-099). Name is cargo's substring filter. Exit 0 only if
+# every run passed. Example:
+#   just test-repeat sigterm_drains_in_flight_request_and_exits_zero 5
+# (The spec wrote `just test:repeat` — just does not allow `:` in a
+# recipe name, so this is the dash spelling in the repo's convention.)
+test-repeat name n:
+    python3 scripts/test_repeat.py {{name}} {{n}}
+
+# List quarantined tests (P0-099): every #[ignore = "flaky:<issue>"]
+# with its ISSUES.md entry status. Always exits 0 — a listing, not
+# a gate. Also runs in the nightly job.
+list-quarantined:
+    python3 scripts/list_quarantined.py
+
 # Engine benches (P0-097): criterion, fast defaults (10 samples,
 # 3 s per bench — see crates/engine/benches/support.rs). Saves a
 # `main` baseline and copies the estimate summaries to

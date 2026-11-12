@@ -51,3 +51,14 @@ jobs:
         with:
           name: bench-baselines
           path: crates/engine/benches/baselines/
+
+  quarantined:
+    # P0-099: list quarantined tests (#[ignore = "flaky:<issue>"])
+    # so the set is visible every day. A listing, not a gate —
+    # this job never fails the nightly run.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@just
+      - name: list quarantined tests
+        run: just list-quarantined
