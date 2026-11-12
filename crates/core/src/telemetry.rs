@@ -1,4 +1,5 @@
-//! Tracing bootstrap + PII redaction (P0-025, NFR-42).
+//! Tracing bootstrap + PII redaction (P0-025, NFR-42) + OTLP export
+//! (P0-027).
 //!
 //! Both binaries call [`init_tracing`] once at boot, after loading
 //! settings: JSON logs to stdout, filtered by `PF_LOG_LEVEL` via
@@ -7,6 +8,17 @@
 //! which is what log collectors and `just dev`'s log files want.
 //! `RUST_LOG` is intentionally NOT consulted — `PF_LOG_LEVEL` is the
 //! one source of truth for the level.
+//!
+//! OpenTelemetry (P0-027): when `PF_OTEL_ENDPOINT` is set, spans are
+//! also exported over OTLP/HTTP (protobuf) to that endpoint, with a
+//! batch processor and the service name (`detag-api` / `detag-worker`)
+//! as the resource. A bare endpoint (`http://collector:4318`) gets
+//! `/v1/traces` appended; an endpoint that already carries a path is
+//! used as-is. When it is empty the exporter is not built at all
+//! (no-op: no network traffic, no error). [`shutdown_telemetry`]
+//! flushes the batch on graceful shutdown. Exemplars (linking metric
+//! samples to trace ids) are a metrics-layer concern and wire in with
+//! the custom metrics of P0-028/P0-029, not here.
 //!
 //! Span fields: every log line carries the fields of the spans it was
 //! emitted in. The convention is `request_id` (P0-019 middleware),
@@ -22,8 +34,23 @@
 //! a length (or a content hash) instead.
 
 use crate::config::Settings;
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_otlp::{SpanExporter, WithExportConfig};
+use opentelemetry_sdk::{
+    trace::{BatchConfigBuilder, BatchSpanProcessor, SdkTracerProvider},
+    Resource,
+};
 use std::io::IsTerminal;
+use std::sync::OnceLock;
+use std::time::Duration;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+
+/// The OTLP batch delay in production (5 s, the SDK default).
+pub const OTEL_BATCH_DELAY: Duration = Duration::from_secs(5);
+
+/// The tracer provider behind the OTLP layer, kept alive for the
+/// process lifetime so [`shutdown_telemetry`] can flush it.
+static OTEL_PROVIDER: OnceLock<SdkTracerProvider> = OnceLock::new();
 
 /// Log output format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,42 +63,173 @@ pub enum LogFormat {
 
 /// Install the global tracing subscriber: JSON to stdout, level from
 /// `PF_LOG_LEVEL`; pretty instead of JSON when stdout is a terminal.
-/// Panics if a global subscriber is already installed — binaries call
-/// this exactly once at boot. Tests use [`build_subscriber`] with
-/// `tracing::subscriber::with_default` instead (scoped, no global).
-pub fn init_tracing(settings: &Settings) {
+/// `service_name` is the OTLP resource name (`detag-api`,
+/// `detag-worker`). Panics if a global subscriber is already installed
+/// — binaries call this exactly once at boot. Tests use
+/// [`build_subscriber`] with `tracing::subscriber::with_default`
+/// instead (scoped, no global).
+pub fn init_tracing(settings: &Settings, service_name: &str) {
     let format = if std::io::stdout().is_terminal() {
         LogFormat::Pretty
     } else {
         LogFormat::Json
     };
-    init_tracing_with_format(settings, format);
+    init_tracing_with_format(settings, format, service_name);
 }
 
 /// Install the global subscriber with an explicit format.
-pub fn init_tracing_with_format(settings: &Settings, format: LogFormat) {
-    build_subscriber(settings, format, std::io::stdout)
+pub fn init_tracing_with_format(settings: &Settings, format: LogFormat, service_name: &str) {
+    let (subscriber, provider) = build_subscriber(settings, format, service_name, std::io::stdout)
+        .expect("tracing subscriber builds");
+    if let Some(provider) = provider {
+        let _ = OTEL_PROVIDER.set(provider);
+    }
+    subscriber
         .try_init()
         .expect("tracing subscriber installs (called once at boot)");
 }
 
+/// Flush the OTLP batch and shut the exporter down (graceful path
+/// only; no-op when no exporter was built). Call after the servers
+/// drain, before the process exits.
+pub fn shutdown_telemetry() {
+    if let Some(provider) = OTEL_PROVIDER.get() {
+        let _ = provider.shutdown();
+    }
+}
+
 /// Build the subscriber without installing it (tests, embedding).
 /// `writer` is usually `std::io::stdout`; tests pass a buffer.
+/// Returns the subscriber and, when `PF_OTEL_ENDPOINT` is set, the
+/// tracer provider that must be kept alive (and shut down via
+/// [`shutdown_telemetry`] in binaries, or dropped in tests).
+/// Fails when the endpoint is set but the exporter cannot be built
+/// (bad URL) — a misconfigured endpoint must fail boot, not silently
+/// drop every span.
 pub fn build_subscriber<W>(
     settings: &Settings,
     format: LogFormat,
+    service_name: &str,
     writer: W,
-) -> impl tracing::Subscriber + Send + Sync
+) -> Result<
+    (
+        impl tracing::Subscriber + Send + Sync,
+        Option<SdkTracerProvider>,
+    ),
+    String,
+>
+where
+    W: for<'a> fmt::writer::MakeWriter<'a> + Send + Sync + 'static,
+{
+    build_subscriber_inner(settings, format, service_name, writer, OTEL_BATCH_DELAY)
+}
+
+/// [`build_subscriber`] with an explicit OTLP batch delay. Production
+/// uses [`OTEL_BATCH_DELAY`]; tests pass a short delay so exports
+/// arrive quickly.
+fn build_subscriber_inner<W>(
+    settings: &Settings,
+    format: LogFormat,
+    service_name: &str,
+    writer: W,
+    otel_batch_delay: Duration,
+) -> Result<
+    (
+        impl tracing::Subscriber + Send + Sync,
+        Option<SdkTracerProvider>,
+    ),
+    String,
+>
 where
     W: for<'a> fmt::writer::MakeWriter<'a> + Send + Sync + 'static,
 {
     let filter = EnvFilter::try_new(&settings.log_level).unwrap_or_else(|_| EnvFilter::new("info"));
-    let layer = fmt::layer().with_writer(writer).with_ansi(false);
-    let layer = match format {
-        LogFormat::Json => layer.json().boxed(),
-        LogFormat::Pretty => layer.pretty().boxed(),
+    let fmt_layer = fmt::layer().with_writer(writer).with_ansi(false);
+    let fmt_layer = match format {
+        LogFormat::Json => fmt_layer.json().boxed(),
+        LogFormat::Pretty => fmt_layer.pretty().boxed(),
     };
-    tracing_subscriber::registry().with(filter).with(layer)
+    let (otel_layer, provider) = match build_otel_layer(settings, service_name, otel_batch_delay)? {
+        Some((layer, provider)) => (Some(layer), Some(provider)),
+        None => (None, None),
+    };
+    // The OTLP layer goes on first, directly onto the bare Registry:
+    // its subscriber parameter must be `Registry`, and later layers
+    // stack on top of it.
+    let subscriber = tracing_subscriber::registry()
+        .with(otel_layer)
+        .with(filter)
+        .with(fmt_layer);
+    Ok((subscriber, provider))
+}
+
+/// The OTLP layer + the tracer provider that must be kept alive
+/// (see [`build_otel_layer`]).
+type OtelLayer = (
+    tracing_opentelemetry::OpenTelemetryLayer<
+        tracing_subscriber::Registry,
+        opentelemetry_sdk::trace::Tracer,
+    >,
+    SdkTracerProvider,
+);
+
+/// Build the OTLP exporter layer, or `None` when `PF_OTEL_ENDPOINT`
+/// is empty (no-op). The exporter posts spans as OTLP/HTTP protobuf
+/// to `{endpoint}/v1/traces` in batches. The layer is returned
+/// unboxed (concrete type) so its subscriber parameter unifies with
+/// the layered subscriber it is added to.
+fn build_otel_layer(
+    settings: &Settings,
+    service_name: &str,
+    batch_delay: Duration,
+) -> Result<Option<OtelLayer>, String> {
+    if settings.otel_endpoint.trim().is_empty() {
+        return Ok(None);
+    }
+    let exporter = SpanExporter::builder()
+        .with_http()
+        .with_endpoint(otel_endpoint_with_traces_path(&settings.otel_endpoint))
+        .build()
+        .map_err(|err| {
+            format!(
+                "OTLP exporter for {} failed to build: {err}",
+                settings.otel_endpoint
+            )
+        })?;
+    let provider = SdkTracerProvider::builder()
+        .with_span_processor(
+            BatchSpanProcessor::builder(exporter)
+                .with_batch_config(
+                    BatchConfigBuilder::default()
+                        .with_scheduled_delay(batch_delay)
+                        .build(),
+                )
+                .build(),
+        )
+        .with_resource(
+            Resource::builder()
+                .with_service_name(service_name.to_string())
+                .build(),
+        )
+        .build();
+    let tracer = provider.tracer(service_name.to_string());
+    let layer = tracing_opentelemetry::layer().with_tracer(tracer);
+    Ok(Some((layer, provider)))
+}
+
+/// The OTLP/HTTP traces path (`/v1/traces`), appended to the endpoint
+/// when it has no path of its own: `with_endpoint` posts to the URL
+/// as given, so a bare `http://collector:4318` would otherwise post to
+/// `/` and the collector would 404. An endpoint that already carries
+/// a path (e.g. `…/v1/traces`, or a custom route) is used as-is.
+fn otel_endpoint_with_traces_path(endpoint: &str) -> String {
+    let Ok(mut url) = url::Url::parse(endpoint) else {
+        return endpoint.to_string();
+    };
+    if url.path().is_empty() || url.path() == "/" {
+        url.set_path("/v1/traces");
+    }
+    url.to_string()
 }
 
 /// Span for one background job. `job_id` is the job's id; `user_id` is
@@ -450,11 +608,14 @@ mod tests {
     #[test]
     fn json_logs_parse_and_carry_span_fields() {
         let writer = BufWriter::default();
-        let subscriber = build_subscriber(
+        let (subscriber, provider) = build_subscriber(
             &settings_with_level("info"),
             LogFormat::Json,
+            "detag-test",
             writer.clone(),
-        );
+        )
+        .expect("subscriber builds");
+        assert!(provider.is_none(), "no OTLP provider without an endpoint");
         tracing::subscriber::with_default(subscriber, || {
             let span = tracing::info_span!(
                 "job",
@@ -485,11 +646,13 @@ mod tests {
     #[test]
     fn level_filter_comes_from_settings() {
         let writer = BufWriter::default();
-        let subscriber = build_subscriber(
+        let (subscriber, _) = build_subscriber(
             &settings_with_level("error"),
             LogFormat::Json,
+            "detag-test",
             writer.clone(),
-        );
+        )
+        .expect("subscriber builds");
         tracing::subscriber::with_default(subscriber, || {
             tracing::info!("dropped by filter");
             tracing::error!("kept by filter");
@@ -502,11 +665,13 @@ mod tests {
     #[test]
     fn pretty_format_is_not_json() {
         let writer = BufWriter::default();
-        let subscriber = build_subscriber(
+        let (subscriber, _) = build_subscriber(
             &settings_with_level("info"),
             LogFormat::Pretty,
+            "detag-test",
             writer.clone(),
-        );
+        )
+        .expect("subscriber builds");
         tracing::subscriber::with_default(subscriber, || {
             tracing::info!("pretty hello");
         });
@@ -516,5 +681,135 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&output).is_err(),
             "pretty output must not parse as JSON: {output}"
         );
+    }
+
+    // -- OpenTelemetry -------------------------------------------------------
+
+    #[test]
+    fn otel_noop_without_endpoint() {
+        let settings = settings_with_level("info");
+        assert!(settings.otel_endpoint.is_empty());
+        let layer = build_otel_layer(&settings, "detag-test", OTEL_BATCH_DELAY)
+            .expect("layer build succeeds");
+        assert!(layer.is_none(), "no exporter without an endpoint");
+    }
+
+    #[test]
+    fn otel_builds_with_endpoint() {
+        let mut settings = settings_with_level("info");
+        settings.otel_endpoint = "http://127.0.0.1:4318".to_string();
+        let layer = build_otel_layer(&settings, "detag-test", OTEL_BATCH_DELAY)
+            .expect("layer build succeeds");
+        assert!(layer.is_some(), "exporter starts with an endpoint set");
+    }
+
+    #[test]
+    fn otel_endpoint_path_rule() {
+        assert_eq!(
+            otel_endpoint_with_traces_path("http://collector:4318"),
+            "http://collector:4318/v1/traces"
+        );
+        assert_eq!(
+            otel_endpoint_with_traces_path("http://collector:4318/"),
+            "http://collector:4318/v1/traces"
+        );
+        assert_eq!(
+            otel_endpoint_with_traces_path("http://collector:4318/v1/traces"),
+            "http://collector:4318/v1/traces"
+        );
+        assert_eq!(
+            otel_endpoint_with_traces_path("http://collector:4318/custom"),
+            "http://collector:4318/custom"
+        );
+    }
+
+    /// Read one HTTP request: headers, then exactly Content-Length body
+    /// bytes. Returns (request line, body length).
+    async fn read_request(stream: &mut tokio::net::TcpStream) -> (String, usize) {
+        use tokio::io::AsyncReadExt;
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        let header_len = loop {
+            let n = stream.read(&mut chunk).await.expect("read headers");
+            assert!(n > 0, "connection closed before headers");
+            buf.extend_from_slice(&chunk[..n]);
+            if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break pos + 4;
+            }
+            assert!(buf.len() < 65536, "headers too large");
+        };
+        let head = String::from_utf8_lossy(&buf[..header_len]).into_owned();
+        let request_line = head.lines().next().unwrap_or("").to_string();
+        let mut content_length = 0usize;
+        for line in head.lines() {
+            if let Some(value) = line.to_lowercase().strip_prefix("content-length:") {
+                content_length = value.trim().parse().unwrap_or(0);
+            }
+        }
+        let mut body = buf[header_len..].to_vec();
+        while body.len() < content_length {
+            let n = stream.read(&mut chunk).await.expect("read body");
+            assert!(n > 0, "connection closed before body");
+            body.extend_from_slice(&chunk[..n]);
+        }
+        (request_line, body.len())
+    }
+
+    /// AC: the exporter really posts spans to the endpoint. A fake
+    /// OTLP/HTTP collector on localhost records the first POST.
+    #[tokio::test]
+    async fn otel_exports_span_to_local_collector() {
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let received: Arc<Mutex<Vec<(String, usize)>>> = Arc::default();
+        let collector_received = Arc::clone(&received);
+        let collector = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("collector accept");
+            let (request_line, body_len) = read_request(&mut stream).await;
+            collector_received
+                .lock()
+                .unwrap()
+                .push((request_line, body_len));
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .expect("collector respond");
+        });
+        let mut settings = settings_with_level("info");
+        settings.otel_endpoint = format!("http://127.0.0.1:{port}");
+        let writer = BufWriter::default();
+        let (subscriber, _provider) = build_subscriber_inner(
+            &settings,
+            LogFormat::Json,
+            "detag-test",
+            writer,
+            Duration::from_millis(100),
+        )
+        .expect("subscriber builds with an endpoint");
+        tracing::subscriber::with_default(subscriber, || {
+            let span = tracing::info_span!("job", job_id = "job-otel");
+            let _enter = span.enter();
+            tracing::info!("otel hello");
+        });
+        // The batch delay is 100 ms; wait up to 5 s for the export.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if !received.lock().unwrap().is_empty() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "no OTLP export arrived within 5 s"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let (request_line, body_len) = received.lock().unwrap()[0].clone();
+        assert!(
+            request_line.starts_with("POST /v1/traces "),
+            "OTLP export must POST /v1/traces, got: {request_line}"
+        );
+        assert!(body_len > 0, "OTLP export body must carry spans");
+        let _ = collector.await;
     }
 }

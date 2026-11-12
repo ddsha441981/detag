@@ -222,12 +222,12 @@
     - [x] metrics scrape works
     - [x] not on edge network
 
-- [ ] **P0-027** — OpenTelemetry export
+- [x] **P0-027** — OpenTelemetry export
   - **Type:** feat · **Area:** observability · **Est:** M · **Deps:** P0-026 · **Prio:** P1
   - **Spec:** tracing-opentelemetry OTLP exporter, no-op when PF_OTEL_ENDPOINT empty; exemplars wired for job stages.
   - **AC:**
-    - [ ] exporter starts with endpoint set
-    - [ ] no-op without
+    - [x] exporter starts with endpoint set
+    - [x] no-op without
 
 - [ ] **P0-028** — HTTP metrics middleware
   - **Type:** feat · **Area:** observability · **Est:** M · **Deps:** P0-027 · **Prio:** P1

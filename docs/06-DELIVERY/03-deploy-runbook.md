@@ -29,7 +29,7 @@
 | `PF_RESULTS_TTL_FREE/PRO/BUSINESS_H` | cleanup | 6/24/72 | plan TTLs |
 | `PF_RATELIMIT_*` | api | per-plan defaults | tuned Phase 5 |
 | `PF_FEATURE_PROVENANCE_STRIP` | api | off | legal gate required |
-| `PF_LOG_LEVEL`, `PF_OTEL_ENDPOINT` | all | info, empty | |
+| `PF_LOG_LEVEL`, `PF_OTEL_ENDPOINT` | all | info, empty | OTLP/HTTP; `/v1/traces` appended when the endpoint has no path |
 
 ## Release flow (cocogitto, P0-010)
 

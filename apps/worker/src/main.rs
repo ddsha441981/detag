@@ -3,7 +3,7 @@
 
 use detag_core::config::{warn_unknown_feature_flags, Settings};
 use detag_core::shutdown::shutdown_signal;
-use detag_core::telemetry::init_tracing;
+use detag_core::telemetry::{init_tracing, shutdown_telemetry};
 
 #[tokio::main]
 async fn main() {
@@ -13,7 +13,7 @@ async fn main() {
         std::process::exit(1);
     });
     // Tracing first, so the warn below (and everything after) is logged.
-    init_tracing(&settings);
+    init_tracing(&settings, "detag-worker");
     // Unknown PF_FEATURE_* flags warn (a typo must not silently do nothing).
     warn_unknown_feature_flags();
     tracing::info!("started (queues: pipeline, cleanup, email, reconciliation)");
@@ -21,6 +21,7 @@ async fn main() {
     // jobs; the in-flight job finishes before exit. No pools exist yet
     // (E0.4/E0.8) — their close calls hook in here.
     shutdown_signal().await;
+    shutdown_telemetry();
     tracing::info!("shutting down");
 }
 

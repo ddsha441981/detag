@@ -4,7 +4,7 @@ use detag_api::{build_router, metrics::metrics_router};
 use detag_core::config::{warn_unknown_feature_flags, Settings};
 use detag_core::metrics::Metrics;
 use detag_core::shutdown::{shutdown_signal, SHUTDOWN_TIMEOUT};
-use detag_core::telemetry::init_tracing;
+use detag_core::telemetry::{init_tracing, shutdown_telemetry};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Notify;
@@ -17,7 +17,7 @@ async fn main() {
         std::process::exit(1);
     });
     // Tracing first, so the warn below (and everything after) is logged.
-    init_tracing(&settings);
+    init_tracing(&settings, "detag-api");
     // Unknown PF_FEATURE_* flags warn (a typo must not silently do nothing).
     warn_unknown_feature_flags();
     let app = build_router();
@@ -58,7 +58,10 @@ async fn main() {
     })
     .await;
     match drained {
-        Ok((Ok(()), Ok(()))) => tracing::info!("shut down gracefully"),
+        Ok((Ok(()), Ok(()))) => {
+            shutdown_telemetry();
+            tracing::info!("shut down gracefully");
+        }
         Ok((api, metrics)) => {
             if let Err(err) = api {
                 eprintln!("detag-api serve error: {err}");
