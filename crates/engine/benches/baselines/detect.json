@@ -1,0 +1,23 @@
+{
+  "baseline": "main",
+  "bench": "detect",
+  "estimates": {
+    "pack_verify": {
+      "mean_ns": 171927.16640957035,
+      "median_ns": 170062.21688382194
+    },
+    "prologue_1080p": {
+      "mean_ns": 56514038.60670634,
+      "median_ns": 56491875.88888889
+    },
+    "prologue_4k": {
+      "mean_ns": 207077968.4,
+      "median_ns": 207569352.75
+    },
+    "prologue_512": {
+      "mean_ns": 4307347.927277167,
+      "median_ns": 4273965.314102564
+    }
+  },
+  "unit": "ns"
+}

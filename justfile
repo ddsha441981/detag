@@ -79,6 +79,18 @@ snapshots-check:
 prop:
     cargo test -p detag-core --test prop
 
+# Engine benches (P0-097): criterion, fast defaults (10 samples,
+# 3 s per bench — see crates/engine/benches/support.rs). Saves a
+# `main` baseline and copies the estimate summaries to
+# crates/engine/benches/baselines/ (committed). Full run:
+# `cargo bench -p detag-engine -- --sample-size 100 --measurement-time 10`.
+bench:
+    cargo bench -p detag-engine --bench detect -- --save-baseline main
+    cargo bench -p detag-engine --bench inpaint -- --save-baseline main
+    cargo bench -p detag-engine --bench encode -- --save-baseline main
+    cargo bench -p detag-engine --bench full_job -- --save-baseline main
+    python3 scripts/bench_baseline.py
+
 # Verify gate: fmt + clippy + tests. (Compose smoke is `just smoke`,
 # kept separate: it needs a working docker daemon, which this VM does
 # not have (DOCKER-001); see ADR-0017 in docs/09-STATE/DECISIONS.md.)
@@ -92,10 +104,6 @@ verify: fmt-check lint test
 # reported as pending by scripts/dev.sh (see docs/09-STATE/ISSUES.md).
 dev:
     bash scripts/dev.sh
-
-# Run Criterion benches (scaffold lands in P0-097).
-bench:
-    @echo "pending: benches land in P0-097" >&2; exit 1
 
 # Apply pending sqlx migrations from migrations/ (P0-036, embedded
 # Migrator — no sqlx-cli needed). Uses PF_DATABASE_URL (dev default

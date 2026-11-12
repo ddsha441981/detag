@@ -1,10 +1,17 @@
-# Nightly (P0-096): scheduled re-run of the property suite.
+# Nightly (P0-096, benches P0-097): scheduled re-run of the property
+# suite + the criterion benches.
 #
 # The prop tests (`crates/core/tests/prop/`, 1000 cases each) also run
 # on every push inside the CI verify job — nightly is a scheduled
 # re-run, not the only run. The golden suite and e2e join this
 # workflow when they exist (Phase 2 / web e2e); until then this job
 # stays small on purpose.
+#
+# The bench job (P0-097) runs `just bench` against the committed
+# `main` baseline and uploads the new estimates as an artifact; it
+# does NOT commit. The coordinator copies the snapshot into
+# `docs/09-STATE/PROGRESS.md` (bench snapshot section) and opens a
+# fix ticket if any bench regresses > 10% without an ADR.
 name: Nightly
 
 on:
@@ -28,3 +35,19 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: property tests (1000 cases, P0-096)
         run: cargo test -p detag-core --test prop
+
+  bench:
+    runs-on: ubuntu-latest
+    env:
+      SQLX_OFFLINE: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@just
+      - name: benches vs committed main baseline (P0-097)
+        run: just bench
+      - name: upload new baseline estimates
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-baselines
+          path: crates/engine/benches/baselines/

@@ -3,9 +3,35 @@ name = "detag-engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+# Benches are explicit ([[bench]] below); support.rs is a shared
+# helper, not a bench target.
+autobenches = false
 
 [dependencies]
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 detag-core = { path = "../core" }
+
+[dev-dependencies]
+criterion.workspace = true
+image.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+# Criterion benches (P0-097): custom harness, one file per stage.
+[[bench]]
+name = "detect"
+harness = false
+
+[[bench]]
+name = "inpaint"
+harness = false
+
+[[bench]]
+name = "encode"
+harness = false
+
+[[bench]]
+name = "full_job"
+harness = false

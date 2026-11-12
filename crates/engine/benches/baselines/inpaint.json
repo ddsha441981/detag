@@ -1,0 +1,19 @@
+{
+  "baseline": "main",
+  "bench": "inpaint",
+  "estimates": {
+    "tiles_1080p": {
+      "mean_ns": 56279107.10206349,
+      "median_ns": 55590706.07142857
+    },
+    "tiles_4k": {
+      "mean_ns": 222740950.3,
+      "median_ns": 221074077.5
+    },
+    "tiles_512": {
+      "mean_ns": 8982894.34406349,
+      "median_ns": 8629222.846666668
+    }
+  },
+  "unit": "ns"
+}
