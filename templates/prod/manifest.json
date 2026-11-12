@@ -1,0 +1,301 @@
+{
+  "generator": "scripts/templates_gen.py",
+  "generator_version": 1,
+  "label": null,
+  "pack": "prod",
+  "pack_version": 1,
+  "source": "synthesized",
+  "templates": [
+    {
+      "bytes": 5294,
+      "file": "badge-ai-generated.png",
+      "has_alpha": true,
+      "height": 120,
+      "kind": "badge",
+      "name": "badge-ai-generated",
+      "params": {
+        "bg_rgba": [
+          255,
+          255,
+          255,
+          217
+        ],
+        "corner_radius": 24,
+        "fg_rgba": [
+          30,
+          30,
+          30,
+          255
+        ],
+        "font": "DejaVuSans.ttf",
+        "font_size": 44,
+        "match_threshold": 0.8,
+        "scales": [
+          0.5,
+          0.75,
+          1.0,
+          1.5,
+          2.0
+        ],
+        "text": "AI GENERATED"
+      },
+      "sha256": "b4b2c75b024533924d339992bf7052e2eae71b561f89a0f9fdc4f15c758b1f15",
+      "width": 480
+    },
+    {
+      "bytes": 6733,
+      "file": "badge-made-with-ai.png",
+      "has_alpha": true,
+      "height": 120,
+      "kind": "badge",
+      "name": "badge-made-with-ai",
+      "params": {
+        "bg_rgba": [
+          30,
+          30,
+          30,
+          204
+        ],
+        "corner_radius": 24,
+        "fg_rgba": [
+          255,
+          255,
+          255,
+          255
+        ],
+        "font": "DejaVuSans.ttf",
+        "font_size": 44,
+        "match_threshold": 0.8,
+        "scales": [
+          0.5,
+          0.75,
+          1.0,
+          1.5,
+          2.0
+        ],
+        "text": "Made with AI"
+      },
+      "sha256": "afd454ff2a65003f01da602369b4047669e21755371e68a829c6f320ef02f7fe",
+      "width": 480
+    },
+    {
+      "bytes": 1853,
+      "file": "badge-ai.png",
+      "has_alpha": true,
+      "height": 120,
+      "kind": "badge",
+      "name": "badge-ai",
+      "params": {
+        "bg_rgba": [
+          255,
+          255,
+          255,
+          217
+        ],
+        "corner_radius": 24,
+        "fg_rgba": [
+          30,
+          30,
+          30,
+          255
+        ],
+        "font": "DejaVuSans.ttf",
+        "font_size": 56,
+        "match_threshold": 0.8,
+        "scales": [
+          0.5,
+          0.75,
+          1.0,
+          1.5,
+          2.0
+        ],
+        "text": "AI"
+      },
+      "sha256": "8f5ba0d37a7f28affae0e84b78919332256334ad6d36f73d200c4f7d310b011c",
+      "width": 160
+    },
+    {
+      "bytes": 2155,
+      "file": "badge-sparkle-ai.png",
+      "has_alpha": true,
+      "height": 120,
+      "kind": "badge",
+      "name": "badge-sparkle-ai",
+      "params": {
+        "bg_rgba": [
+          255,
+          255,
+          255,
+          217
+        ],
+        "corner_radius": 24,
+        "fg_rgba": [
+          30,
+          30,
+          30,
+          255
+        ],
+        "font": "DejaVuSans.ttf",
+        "font_size": 56,
+        "match_threshold": 0.8,
+        "scales": [
+          0.5,
+          0.75,
+          1.0,
+          1.5,
+          2.0
+        ],
+        "text": "AI"
+      },
+      "sha256": "da9a557df96a72cf4709c20865bc0505e698cf6027644da9ebab8d93e7d31218",
+      "width": 200
+    },
+    {
+      "bytes": 4056,
+      "file": "text-ai-generated.png",
+      "has_alpha": true,
+      "height": 80,
+      "kind": "text",
+      "name": "text-ai-generated",
+      "params": {
+        "bg_rgba": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "corner_radius": 0,
+        "fg_rgba": [
+          255,
+          255,
+          255,
+          200
+        ],
+        "font": "DejaVuSans.ttf",
+        "font_size": 56,
+        "match_threshold": 0.75,
+        "scales": [
+          0.5,
+          0.75,
+          1.0,
+          1.5,
+          2.0
+        ],
+        "text": "AI GENERATED"
+      },
+      "sha256": "02cbb53b8076d01f7c54b0abce3b2978effc5df4fd10de8cf229cdb665cb9ef2",
+      "width": 640
+    },
+    {
+      "bytes": 5238,
+      "file": "text-made-with-ai.png",
+      "has_alpha": true,
+      "height": 80,
+      "kind": "text",
+      "name": "text-made-with-ai",
+      "params": {
+        "bg_rgba": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "corner_radius": 0,
+        "fg_rgba": [
+          20,
+          20,
+          20,
+          200
+        ],
+        "font": "DejaVuSans.ttf",
+        "font_size": 56,
+        "match_threshold": 0.75,
+        "scales": [
+          0.5,
+          0.75,
+          1.0,
+          1.5,
+          2.0
+        ],
+        "text": "Made with AI"
+      },
+      "sha256": "3d0d9e2f16475e6aac4df7897a5dc6cbacbffcc207eff78f5cfa19fafa88f232",
+      "width": 640
+    },
+    {
+      "bytes": 5182,
+      "file": "text-generated-with-ai.png",
+      "has_alpha": true,
+      "height": 80,
+      "kind": "text",
+      "name": "text-generated-with-ai",
+      "params": {
+        "bg_rgba": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "corner_radius": 0,
+        "fg_rgba": [
+          255,
+          255,
+          255,
+          200
+        ],
+        "font": "DejaVuSans.ttf",
+        "font_size": 48,
+        "match_threshold": 0.75,
+        "scales": [
+          0.5,
+          0.75,
+          1.0,
+          1.5,
+          2.0
+        ],
+        "text": "Generated with AI"
+      },
+      "sha256": "fddb50800dde975f8426d903b37ab288e6c19ad8d366d81706ee65507adf5bff",
+      "width": 720
+    },
+    {
+      "bytes": 1147,
+      "file": "text-ai.png",
+      "has_alpha": true,
+      "height": 80,
+      "kind": "text",
+      "name": "text-ai",
+      "params": {
+        "bg_rgba": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "corner_radius": 0,
+        "fg_rgba": [
+          255,
+          255,
+          255,
+          200
+        ],
+        "font": "DejaVuSans.ttf",
+        "font_size": 64,
+        "match_threshold": 0.75,
+        "scales": [
+          0.5,
+          0.75,
+          1.0,
+          1.5,
+          2.0
+        ],
+        "text": "AI"
+      },
+      "sha256": "e88cdb02807dfeee4a06593c7fd7077fd07d43685367fbf102eda3b2a69d6219",
+      "width": 160
+    }
+  ],
+  "tool_versions": {
+    "pillow": "10.2.0"
+  }
+}

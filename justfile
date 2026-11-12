@@ -157,6 +157,18 @@ fixtures-gen:
 fixtures-check:
     python3 scripts/fixtures_gen.py --check
 
+# Generate synthesized template packs (P0-094): dev (SYNTHETIC-TEST-ONLY)
+# + prod v1, 8 badge/text templates with alpha + manifests.
+# Needs Pillow (see templates/README.md).
+templates-gen:
+    python3 scripts/templates_gen.py
+
+# Fail if committed template packs drift from the generator (P0-094; CI
+# runs this). Regenerates to temp and compares template bytes + manifest
+# sha256/bytes fields + pack labels.
+templates-check:
+    python3 scripts/templates_gen.py --check
+
 # Regenerate the committed OpenAPI document from code (P0-067).
 # The spec is generated, never hand-edited: `just openapi-check`
 # (CI) fails when this file drifts from the code.

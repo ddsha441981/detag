@@ -104,6 +104,10 @@ jobs:
         run: |
           python3 -m pip install --quiet "pillow==10.2.0" "numpy==1.26.4"
           just fixtures-check
+      - name: templates-check (committed template packs match the generator, P0-094)
+        run: |
+          python3 -m pip install --quiet "pillow==10.2.0"
+          just templates-check
       - name: compose-db-check (Postgres compose file validates)
         run: just compose-db-check
       - name: compose-redis-check (Redis compose file validates)
