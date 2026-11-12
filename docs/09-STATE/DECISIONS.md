@@ -36,6 +36,12 @@
 **Decision:** This coordinator commits locally only, one commit per ticket, and never pushes or tags. The parent pushes/tags after the run report.
 **Consequences:** Local `git log` is the source of truth until the parent pushes.
 
+
+## ADR-0017 — `just verify` excludes compose smoke until P0-090 (2026-11-12, Phase 0)
+**Context:** Kit DoD defines `just verify` as fmt + clippy + tests + compose smoke. Compose files land in E0.9 (P0-085..P0-090) and Docker Hub pulls through the VM egress proxy fail with EOF/timeouts (5 attempts, overlayfs + vfs drivers); skopeo-to-archive + `docker load` is the working workaround (see ISSUES.md).
+**Decision:** Until P0-090, `just verify` = fmt-check + clippy `-D warnings` + `cargo test --workspace`; `just smoke` exists but fails loudly as "pending P0-090"; `just verify-full` = verify + smoke for use once smoke lands. No ticket is marked done on a faked smoke run.
+**Consequences:** Early-phase verify is honest but partial; the smoke gap is tracked in ISSUES.md and closed by P0-090.
+
 ## owner-input-needed queue
 
 | # | Date | Question | Temporary default in use | Owner answer |
