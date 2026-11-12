@@ -16,6 +16,7 @@
 
 use apalis::prelude::*;
 use apalis_redis::{Config as RedisConfig, RedisStorage};
+use detag_core::db::{connect_lazy, PoolConfig};
 use detag_core::metrics::Metrics;
 use detag_worker::{
     envelope::JobEnvelope,
@@ -65,7 +66,15 @@ async fn unknown_kind_quarantines_and_worker_survives() {
     let hooks = QueueHooks::new(metrics.queue().clone());
     hooks.reset_depths();
     let config = test_config();
-    let monitor = build_monitor(&config, hooks)
+    // The retry-event sink's pool (P0-077): lazy, never used here
+    // (no handler fails), but the monitor needs it to build.
+    let pool = connect_lazy(
+        &std::env::var("PF_DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://pf:pf@localhost:5432/pf".to_string()),
+        &PoolConfig::default(),
+    )
+    .expect("pool builds");
+    let monitor = build_monitor(&config, hooks, &pool)
         .await
         .expect("monitor builds against the native Redis");
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();

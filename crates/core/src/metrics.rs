@@ -214,7 +214,8 @@ impl Drop for InflightGuard<'_> {
 /// The quarantine counter (P0-076) is labelled by `queue` only: the
 /// unknown kind string is untrusted input and must never become a
 /// metric label (unbounded cardinality); it is recorded in the
-/// structured error log instead.
+/// structured error log instead. The retry counters (P0-077) are
+/// labelled the same way.
 #[derive(Clone, Debug)]
 pub struct QueueMetrics {
     depth: IntGaugeVec,
@@ -222,6 +223,8 @@ pub struct QueueMetrics {
     dequeued_total: IntCounterVec,
     stage_duration_seconds: HistogramVec,
     quarantined_total: IntCounterVec,
+    retried_total: IntCounterVec,
+    dead_total: IntCounterVec,
 }
 
 impl QueueMetrics {
@@ -270,6 +273,22 @@ impl QueueMetrics {
             &["queue"],
         )
         .expect("quarantine counter registers into a fresh registry");
+        let retried_total = IntCounterVec::new(
+            Opts::new(
+                "detag_queue_retried_total",
+                "Job attempts retried under the P0-077 backoff policy, by queue.",
+            ),
+            &["queue"],
+        )
+        .expect("retry counter registers into a fresh registry");
+        let dead_total = IntCounterVec::new(
+            Opts::new(
+                "detag_queue_dead_total",
+                "Jobs that exhausted retries and went to dead, by queue.",
+            ),
+            &["queue"],
+        )
+        .expect("dead counter registers into a fresh registry");
         registry
             .register(Box::new(depth.clone()))
             .expect("queue depth registers into a fresh registry");
@@ -285,12 +304,20 @@ impl QueueMetrics {
         registry
             .register(Box::new(quarantined_total.clone()))
             .expect("quarantine counter registers into a fresh registry");
+        registry
+            .register(Box::new(retried_total.clone()))
+            .expect("retry counter registers into a fresh registry");
+        registry
+            .register(Box::new(dead_total.clone()))
+            .expect("dead counter registers into a fresh registry");
         QueueMetrics {
             depth,
             enqueued_total,
             dequeued_total,
             stage_duration_seconds,
             quarantined_total,
+            retried_total,
+            dead_total,
         }
     }
 
@@ -324,6 +351,20 @@ impl QueueMetrics {
     /// label (see the struct docs).
     pub fn quarantine(&self, queue: &str) {
         self.quarantined_total.with_label_values(&[queue]).inc();
+    }
+
+    /// Record one retry decision on `queue` (P0-077): the attempt
+    /// failed and the job sleeps for the backoff delay, then runs
+    /// again in-process.
+    pub fn retried(&self, queue: &str) {
+        self.retried_total.with_label_values(&[queue]).inc();
+    }
+
+    /// Record one job going to dead on `queue` (P0-077): it
+    /// exhausted its attempts; the ack path moves it to the dead
+    /// set (the DLQ reads it in P0-078).
+    pub fn dead(&self, queue: &str) {
+        self.dead_total.with_label_values(&[queue]).inc();
     }
 }
 
@@ -425,7 +466,7 @@ mod tests {
         // family once at least one label combination exists, so the
         // test touches one series per family (exactly what the worker
         // does at startup with reset_depths) and then asserts all
-        // five families appear in the scrape text.
+        // seven families appear in the scrape text.
         let metrics = Metrics::new();
         let queue = metrics.queue();
         queue.set_depth("pipeline", 0);
@@ -433,6 +474,8 @@ mod tests {
         queue.dequeue("pipeline");
         queue.observe_stage("intake", Duration::from_millis(1));
         queue.quarantine("pipeline");
+        queue.retried("pipeline");
+        queue.dead("pipeline");
         let text = metrics.gather();
         for family in [
             "detag_queue_depth",
@@ -440,6 +483,8 @@ mod tests {
             "detag_queue_dequeued_total",
             "detag_job_stage_duration_seconds",
             "detag_queue_quarantined_total",
+            "detag_queue_retried_total",
+            "detag_queue_dead_total",
         ] {
             assert!(
                 text.contains(family),

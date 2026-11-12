@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT payload FROM job_events\n           WHERE job_id = $1 AND type = 'state_change'\n             AND payload ->> 'event' = 'retry'\n           ORDER BY at ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "payload",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "job_events",
+            "name": "payload"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "0245d59b2ece8a9065606eeba723b3a0853fcd6abda42de1316e24524325cdc1"
+}

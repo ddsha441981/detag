@@ -18,10 +18,11 @@
 //! below version-checks, records the dequeue, and hands the
 //! envelope to the [`JobRegistry`](crate::registry::JobRegistry),
 //! which maps the kind to a handler (P0-076) or quarantines an
-//! unknown kind. The retry policy (P0-077), DLQ (P0-078) and
-//! graceful drain (P0-081) all extend this flow — nothing
-//! enqueues jobs in Phase 0, so it never runs in production
-//! today.
+//! unknown kind. The handler is wrapped in the P0-077 retry
+//! layer (per-queue policy, backoff, abort-to-dead). The DLQ
+//! (P0-078) and graceful drain (P0-081) extend this flow —
+//! nothing enqueues jobs in Phase 0, so it never runs in
+//! production today.
 //!
 //! Storage defaults in force (apalis-redis `Config::default`):
 //! 100 ms poll, 10-job buffer, 5 max retries, 30 s keep-alive,
@@ -32,9 +33,11 @@
 use crate::envelope::JobEnvelope;
 use crate::queue_hooks::{QueueHooks, QUEUES};
 use crate::registry::{DispatchOutcome, JobRegistry};
+use crate::retry::{PostgresRetryEventSink, RetryLayer, RetryPolicy};
 use apalis::prelude::*;
 use apalis_redis::{Config as RedisConfig, RedisStorage};
 use detag_core::config::Settings;
+use detag_core::db::DbPool;
 
 /// Redis key prefix for the apalis queues
 /// (`pf:queue:{queue}:{suffix}`).
@@ -105,11 +108,16 @@ pub enum WorkerError {
 /// name (`{queue}-{i}`), which is also its Redis consumer id.
 /// The storage is cloned per replica (it shares the one
 /// connection manager).
+///
+/// Each worker's handler is wrapped in the P0-077 retry layer
+/// (per-queue policy + `job_events` sink from `pool`).
 pub async fn build_monitor(
     config: &WorkerConfig,
     hooks: QueueHooks,
+    pool: &DbPool,
 ) -> Result<Monitor, WorkerError> {
     let conn = apalis_redis::connect(config.redis_url.as_str()).await?;
+    let sink = PostgresRetryEventSink::new(pool.clone());
     let mut monitor = Monitor::new();
     for queue in QUEUES {
         let storage = RedisStorage::new_with_config(
@@ -124,6 +132,12 @@ pub async fn build_monitor(
             };
             let worker = WorkerBuilder::new(format!("{queue}-{replica}"))
                 .data(ctx)
+                .layer(RetryLayer::new(
+                    RetryPolicy::for_queue(queue),
+                    sink.clone(),
+                    hooks.clone(),
+                    queue,
+                ))
                 .backend(storage.clone())
                 .build_fn(handle_envelope);
             monitor = monitor.register(worker);

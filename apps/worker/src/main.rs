@@ -39,7 +39,8 @@ async fn main() {
     // Postgres pool (P0-035, E0.4): lazy, like the api's — the worker
     // must not fail boot on a temporarily-down database. No jobs run
     // yet (E0.8); today the pool only proves the database is reachable
-    // at startup, and the close below keeps shutdown clean.
+    // at startup, backs the retry-event sink (P0-077), and the close
+    // below keeps shutdown clean.
     let pool = connect_lazy(&settings.database_url, &PoolConfig::default()).unwrap_or_else(|err| {
         eprintln!("detag-worker: invalid PF_DATABASE_URL: {err}");
         std::process::exit(1);
@@ -49,7 +50,7 @@ async fn main() {
     // queue. A dead Redis is a boot error — the worker cannot do
     // its job without the queue — so fail fast naming the var.
     let worker_config = WorkerConfig::from_settings(&settings);
-    let monitor = build_monitor(&worker_config, hooks)
+    let monitor = build_monitor(&worker_config, hooks, &pool)
         .await
         .unwrap_or_else(|err| {
             eprintln!("detag-worker: {err}");

@@ -67,6 +67,18 @@ impl QueueHooks {
         self.metrics.quarantine(queue);
     }
 
+    /// Record one retry decision on `queue` (P0-077): the attempt
+    /// failed and the job sleeps for the backoff delay.
+    pub fn retried(&self, queue: &str) {
+        self.metrics.retried(queue);
+    }
+
+    /// Record one job going to dead on `queue` (P0-077): it
+    /// exhausted its attempts (or aborted directly).
+    pub fn dead(&self, queue: &str) {
+        self.metrics.dead(queue);
+    }
+
     /// Set the current depth of `queue` (jobs waiting, not yet picked
     /// up).
     pub fn set_depth(&self, queue: &str, depth: i64) {
