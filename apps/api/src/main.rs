@@ -1,7 +1,6 @@
-//! detag-api — Axum HTTP server (bootstrap stub, P0-002).
-//! Full router/middleware/state land in E0.7 (P0-063..P0-074).
+//! detag-api binary: load settings, serve the router from the lib.
 
-use axum::{routing::get, Router};
+use detag_api::build_router;
 use detag_core::config::Settings;
 use std::net::SocketAddr;
 
@@ -17,19 +16,4 @@ async fn main() {
     println!("detag-api listening on {addr}");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
-}
-
-/// Minimal router: only the process health endpoint exists yet.
-fn build_router() -> Router {
-    Router::new().route("/healthz", get(|| async { "ok" }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn router_builds() {
-        let _app = build_router();
-    }
 }

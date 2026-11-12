@@ -164,11 +164,11 @@
   - **AC:**
     - [x] table test green
 
-- [ ] **P0-019** — Request-id middleware
+- [x] **P0-019** — Request-id middleware
   - **Type:** feat · **Area:** core/config · **Est:** S · **Deps:** P0-018 · **Prio:** P1
   - **Spec:** UUIDv7 request ids, x-request-id echo, tracing span with request_id + route; log sampling configured.
   - **AC:**
-    - [ ] integration test asserts id echo + span
+    - [x] integration test asserts id echo + span
 
 - [ ] **P0-020** — Typed settings fail-fast report
   - **Type:** feat · **Area:** core/config · **Est:** S · **Deps:** P0-019 · **Prio:** P1
