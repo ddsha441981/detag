@@ -30,6 +30,7 @@ tracing.workspace = true
 apalis.workspace = true
 apalis-redis.workspace = true
 detag-core = { path = "../../crates/core" }
+detag-engine = { path = "../../crates/engine" }
 
 [dev-dependencies]
 libc.workspace = true

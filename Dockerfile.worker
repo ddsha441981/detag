@@ -1,0 +1,76 @@
+# Dockerfile.worker — Detag worker image (P0-084).
+#
+# Same multi-stage cargo-chef base as Dockerfile.api, plus:
+#   - ffmpeg runtime deps (video work lands in Phase 3; the binary is
+#     in the image from the start so the Phase-3 handlers need no
+#     image change),
+#   - a models volume: PF_ENGINE_MODELS_DIR defaults to /models and
+#     the directory is declared a VOLUME (compose mounts it in P0-085),
+#   - startup model verification (P0-084): the worker verifies every
+#     model the registry requires (sha256) before consuming jobs.
+#
+# Build:  docker build -f Dockerfile.worker -t detag-worker:<tag> .
+# Gate:   just image-size-check  (also builds this image; the worker
+#         ceiling is 200 MB uncompressed — a Phase-0 ops guardrail, not
+#         an NFR: NFR-63 caps API images only. Derived from the parts:
+#         bookworm-slim ~80 MB + ffmpeg stack ~45 MB + curl/certs ~15 MB
+#         + the 6.2 MB worker binary ≈ 146 MB, with headroom for
+#         base/ffmpeg updates.)
+#
+# Live verification is deferred to CI (DOCKER-001: no working docker
+# daemon on this VM, and Hub pulls fail via the egress proxy).
+
+# syntax=docker/dockerfile:1
+FROM lukemathwalker/cargo-chef:0.1.78-rust-1.99.1-slim-bookworm AS chef
+WORKDIR /app
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+# sqlx `query!` macros compile offline from the checked-in .sqlx/ data (P0-041).
+ENV SQLX_OFFLINE=true
+RUN cargo chef cook --release --recipe-path recipe.json
+COPY . .
+# `strip` needs binutils, which the chef image does not ship — install it
+# in the builder only (never in the runtime image). Belt-and-braces: the
+# workspace release profile already sets strip = "symbols" (measured
+# 6.2 MB for the worker binary in P0-084), so this is a no-op unless the
+# profile ever changes.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends binutils \
+    && rm -rf /var/lib/apt/lists/* \
+    && cargo build --release --bin detag-worker \
+    && cp target/release/detag-worker /tmp/detag-worker \
+    && strip /tmp/detag-worker
+
+FROM debian:bookworm-slim AS runtime
+# ffmpeg: video work (Phase 3). curl: the HEALTHCHECK below.
+# ca-certificates: the S3 client (aws-sdk-s3 over rustls) verifies TLS
+# against the system CA bundle. Nothing else: the binary links only
+# glibc/libm/libgcc (ldd, P0-084) — no libssl.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN groupadd --system detag --gid 10001 \
+    && useradd --system --gid detag --uid 10001 --home-dir /app detag
+WORKDIR /app
+COPY --from=builder /tmp/detag-worker /app/detag-worker
+# Models live on a volume, not in the image: the registry pins them by
+# sha256 and the worker verifies them at startup (P0-084); compose
+# mounts the volume here in P0-085. The directory is created owned by
+# the runtime user so the verify step can read it as non-root.
+RUN mkdir -p /models && chown detag:detag /models
+VOLUME /models
+ENV PF_ENGINE_MODELS_DIR=/models
+USER detag
+EXPOSE 9092
+# /metrics on the default worker metrics port (PF_WORKER_METRICS_PORT,
+# 9092): a 200 means the worker process is up and its metrics server is
+# bound. Compose keeps the default, so the healthcheck and the server
+# agree (P0-085 wires it).
+HEALTHCHECK --interval=10s --timeout=2s --start-period=10s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:9092/metrics || exit 1
+ENTRYPOINT ["/app/detag-worker"]

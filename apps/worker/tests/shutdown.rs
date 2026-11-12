@@ -89,6 +89,10 @@ async fn worker_starts_and_exits_zero_on_sigterm() {
         .spawn()
         .expect("worker binary spawns");
     let rx = stdout_lines(&mut child);
+    // P0-084: the worker verifies its models before starting the
+    // queues (empty registry in Phase 0 — the attestation itself is
+    // the assertion: a failed verification would exit 1, not start).
+    wait_for_log_line(&rx, "models verified", &mut child).await;
     wait_for_log_line(&rx, "started (queues:", &mut child).await;
     assert!(
         child.try_wait().expect("try_wait").is_none(),

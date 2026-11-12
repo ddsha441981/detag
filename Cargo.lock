@@ -1156,6 +1156,7 @@ dependencies = [
  "detag-core",
  "serde",
  "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
@@ -1202,6 +1203,7 @@ dependencies = [
  "chrono",
  "deadpool-redis",
  "detag-core",
+ "detag-engine",
  "libc",
  "serde",
  "serde_json",

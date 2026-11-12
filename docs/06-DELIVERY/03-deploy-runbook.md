@@ -27,6 +27,22 @@ uncompressed size, a conservative proxy for the compressed limit.
 Live verification is deferred to CI (DOCKER-001: no working docker
 daemon on this VM).
 
+### Worker image (P0-084)
+
+`Dockerfile.worker` is the same cargo-chef base with the worker
+binary, `ffmpeg` runtime deps (video work lands in Phase 3), and a
+models volume: `PF_ENGINE_MODELS_DIR` defaults to `/models` inside
+the image and compose mounts the volume there (P0-085). The worker
+verifies every model the registry requires (sha256) at startup,
+before consuming jobs — a failed verification is a boot error.
+Phase 0 requires no model, so the check attests an empty registry;
+downloading a missing model lands in Phase 2 with the first real
+registry entry (license audit). `HEALTHCHECK` hits the worker's
+`/metrics` on port 9092. Size: the same `just image-size-check`
+builds this image against a 200 MB uncompressed ceiling — a Phase-0
+ops guardrail, not an NFR (NFR-63 caps API images only; the worker
+ceiling comes from the parts estimate, ~146 MB).
+
 ## Environment variables (PF_*)
 
 | Var | Used by | Default (dev) | Notes |

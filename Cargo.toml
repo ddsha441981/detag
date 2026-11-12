@@ -20,7 +20,7 @@ homepage = "https://github.com/ddsha441981/detag"
 repository = "https://github.com/ddsha441981/detag"
 
 [workspace.dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync", "net", "io-util"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "sync", "net", "io-util", "fs"] }
 futures-core = "0.3"
 libc = "0.2"
 prometheus = { version = "0.14", features = ["process"] }

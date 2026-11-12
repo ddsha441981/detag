@@ -9,8 +9,9 @@
 #   plus JUnit output — stable `cargo test` cannot emit JUnit without
 #   nightly). Coverage floors (05-QUALITY/01-test-strategy.md) are
 #   reported, not enforced, until the suites exist to measure them.
-# - image-size: build Dockerfile.api and fail if the image is >= 150 MB
-#   (NFR-63, P0-083; `just image-size-check`).
+# - image-size: build Dockerfile.api + Dockerfile.worker and fail if
+#   either is over its ceiling (NFR-63 api 150 MB, P0-083; worker
+#   200 MB guardrail, P0-084; `just image-size-check`).
 name: CI
 
 on:
@@ -139,5 +140,5 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: just
-      - name: api image < 150 MB (NFR-63, P0-083)
+      - name: api image < 150 MB, worker image < 200 MB (NFR-63, P0-083/P0-084)
         run: just image-size-check

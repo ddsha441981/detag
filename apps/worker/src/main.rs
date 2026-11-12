@@ -38,6 +38,24 @@ async fn main() {
     init_tracing(&settings, "detag-worker");
     // Unknown PF_FEATURE_* flags warn (a typo must not silently do nothing).
     warn_unknown_feature_flags();
+    // Models (P0-084): verify every model the registry requires before
+    // any worker starts consuming jobs. Phase 0 requires none, so this
+    // only attests the empty registry — the sha256 check itself is real
+    // and runs on the first Phase-2 entry. A failure is a boot error.
+    let verified = detag_engine::registry::verify_models(
+        std::path::Path::new(&settings.engine_models_dir),
+        &detag_engine::registry::required_models(),
+    )
+    .await
+    .unwrap_or_else(|err| {
+        eprintln!("detag-worker: model verification failed: {err}");
+        std::process::exit(1);
+    });
+    tracing::info!(
+        models_dir = %settings.engine_models_dir,
+        verified,
+        "models verified"
+    );
     // Job/queue metrics hooks (P0-029): the registry is owned by this
     // process; the hooks are the queue implementation's recording
     // surface. The depths start at 0 (no jobs yet); the workers

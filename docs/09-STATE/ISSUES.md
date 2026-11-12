@@ -36,6 +36,7 @@
 - Update 2026-11-12 (P0-035): the flake got much worse — 3/6 and 4/6 failures in isolation runs (still the 0.11 s vs 0.21 s split). Ruled OUT as a P0-035 regression by a stash test: pre-P0-035 code fails 4/6 identically. Suspected cause is now environmental load (dockerd + native postgres now run on the VM alongside the test), which narrows the drain race window. The workaround still works but may need several retries.
 - Update 2026-11-12 (P0-077): still bad — 3 consecutive `just verify` failures, then 3/4 isolation failures (load average 2.63 on the 1.5-CPU share; the 0.11 s failure signature unchanged). The 4th verify passed with no code change. No new evidence for a regression: P0-077 touches only worker/core code, and the failing test is api-only.
 - Update 2026-11-12 (P0-082): recurred in `just verify` attempt 1 (full workspace run), passed in the next full run with no code change (324 passed, 0 failed). P0-082 touches only worker code. Still the known race — no new evidence.
+- Update 2026-11-12 (P0-084): recurred again in `just verify` attempt 1 (0.11 s, Connection reset by peer — the exact known signature), passed in the next full run with no code change (328 passed, 0 failed). P0-084 touches worker/engine code; the failing test is api-only. Still the known race — no new evidence.
 
 ### FLAKY-002 [flaky] `slow_consumer_drops_safely` failed once, passed on retry (P0-060)
 - Date: 2026-11-12 · Ticket: P0-060
