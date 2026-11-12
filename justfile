@@ -33,6 +33,11 @@ deny:
 secrets:
     gitleaks detect --source . --config .gitleaks.toml --verbose
 
+# Coverage report (llvm-cov, lcov). Floors per docs/05-QUALITY/01-test-strategy.md.
+coverage:
+    mkdir -p target/llvm-cov
+    cargo llvm-cov --workspace --lcov --output-path target/llvm-cov/lcov.info
+
 # Release dry-run: prints the next version implied by the commits, writes
 # nothing (P0-010). Generate the changelog stub with `just changelog`.
 release-dry-run:

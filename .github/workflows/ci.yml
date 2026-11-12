@@ -1,9 +1,14 @@
-# Supply-chain checks (P0-007, NFR-52).
+# CI (P0-007 cargo-deny, P0-008 gitleaks, P0-013 verify pipeline).
 #
-# Runs cargo-deny: RUSTSEC advisories + the license allow-list in
-# deny.toml. This workflow grows in P0-013 (verify + smoke pipeline);
-# until then it is the only job here, so a supply-chain regression
-# fails fast on every push / PR.
+# Jobs:
+# - cargo-deny: RUSTSEC advisories + the license allow-list in deny.toml.
+# - gitleaks: secret scan of the full history on every push / PR.
+# - verify: fmt + clippy -D warnings + tests under postgres+redis service
+#   containers, with JUnit XML + llvm-cov coverage uploaded as artifacts.
+#   Tests run with cargo-nextest (same test binaries as `cargo test`,
+#   plus JUnit output — stable `cargo test` cannot emit JUnit without
+#   nightly). Coverage floors (05-QUALITY/01-test-strategy.md) are
+#   reported, not enforced, until the suites exist to measure them.
 name: CI
 
 on:
@@ -32,3 +37,60 @@ jobs:
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: pf
+          POSTGRES_PASSWORD: pf
+          POSTGRES_DB: pf
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PF_DATABASE_URL: postgres://pf:pf@localhost:5432/pf
+      PF_REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+      - name: fmt
+        run: cargo fmt --all -- --check
+      - name: clippy (-D warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Install nextest + llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest, cargo-llvm-cov
+      - name: Test (JUnit)
+        run: cargo nextest run --workspace --profile ci
+      - name: Coverage (llvm-cov)
+        run: |
+          mkdir -p target/llvm-cov
+          cargo llvm-cov --workspace --lcov --output-path target/llvm-cov/lcov.info
+      - name: Upload test results + coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            target/junit.xml
+            target/llvm-cov/lcov.info
+          retention-days: 30

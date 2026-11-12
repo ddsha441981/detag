@@ -121,12 +121,12 @@
   - **AC:**
     - [x] fresh clone: just dev reaches healthy stack
 
-- [ ] **P0-013** — CI smoke pipeline
+- [x] **P0-013** — CI smoke pipeline
   - **Type:** test · **Area:** repo · **Est:** M · **Deps:** P0-012 · **Prio:** P1
   - **Spec:** GitHub Actions: fmt, clippy, cargo deny, test (postgres+redis services), gitleaks; junit + coverage artifacts; README badge.
   - **AC:**
-    - [ ] CI green on main
-    - [ ] artifacts uploaded
+    - [x] CI green on main
+    - [x] artifacts uploaded
 
 - [ ] **P0-014** — Toolchain docs
   - **Type:** docs · **Area:** repo · **Est:** S · **Deps:** P0-013 · **Prio:** P1

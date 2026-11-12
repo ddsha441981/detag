@@ -1,0 +1,11 @@
+# cargo-nextest configuration (P0-013, NFR-52).
+#
+# The `ci` profile writes JUnit XML for the CI artifacts upload. The
+# default profile stays plain: local runs use `cargo test` via
+# `just test`; nextest is only the CI runner for its JUnit output
+# (stable `cargo test` cannot emit JUnit without nightly).
+#
+# NOTE: junit.path is resolved relative to nextest's store dir
+# (target/nextest/ci/), so ../../junit.xml lands at target/junit.xml.
+[profile.ci]
+junit = { path = "../../junit.xml" }
