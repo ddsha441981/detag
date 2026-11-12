@@ -10,12 +10,15 @@
 #   2. postgres (ops/compose.db.yml, P0-034) — `up -d --wait`, then a
 #      pg_isready wait loop; native postgres on :5432 is the fallback
 #      when docker cannot run containers on this VM (DOCKER-001).
+#      redis (ops/compose.redis.yml, P0-046) — same shape: `up -d
+#      --wait`, then a redis-cli ping wait loop; native redis on
+#      :6379 is the fallback when docker cannot run containers.
 #      compose deps (ops/compose.dev.yml) — pending P0-085..P0-090.
 #   3. cargo build of the workspace, then start api + worker in the
 #      background (logs in .scratch/dev/).
 #   4. wait for /healthz (api, exists since P0-002) and /readyz (db
-#      component since P0-035; redis/storage/models land in E0.7,
-#      P0-063) — readyz is pending until then.
+#      component since P0-035, redis component since P0-046;
+#      storage/models land in E0.7, P0-063).
 #   5. migrations (migrations/ dir) — pending P0-036.
 #   6. seed (ops/seed.sql) — pending P0-043. Assumption (logged in
 #      docs/09-STATE/ISSUES.md): P0-043 provides ops/seed.sql; if it uses
@@ -93,6 +96,44 @@ if ! pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1; then
     note_pending "P0-034" "postgres healthy (neither compose nor native postgres answered on :5432)"
 fi
 
+# --- 2b. redis (compose) ----------------------------------------------------
+# P0-046: mirror of the postgres block above. `up --wait` blocks on
+# the redis-cli ping healthcheck. When docker cannot run containers
+# on this VM (DOCKER-001), fall back to a native redis on :6379 if
+# one answers PING; either way the wait loop below proves a healthy
+# redis before the api starts.
+if [ -f ops/compose.redis.yml ] && docker info >/dev/null 2>&1; then
+    echo "dev: starting redis (ops/compose.redis.yml)..."
+    if docker compose -f ops/compose.redis.yml --env-file .env up -d --wait --wait-timeout 60; then
+        echo "dev: compose redis healthy"
+    else
+        # A failed start must not kill `just dev` (set -e): fall through
+        # to the ping wait below, which the native redis fallback can
+        # satisfy. Remove the stuck container (no volume to keep — the
+        # cache is ephemeral by design, P0-046).
+        echo "dev: compose redis did not start — falling back to native redis"
+        docker compose -f ops/compose.redis.yml down >/dev/null 2>&1 || true
+        note_pending "DOCKER-001" "compose redis (docker cannot run containers on this VM)"
+    fi
+elif [ -f ops/compose.redis.yml ]; then
+    note_pending "DOCKER-001" "compose redis (docker cannot run containers on this VM)"
+fi
+if command -v redis-cli >/dev/null 2>&1; then
+    echo -n "dev: waiting for redis on 127.0.0.1:6379 ..."
+    for _ in $(seq 1 60); do
+        if redis-cli -h 127.0.0.1 -p 6379 ping >/dev/null 2>&1; then
+            echo " ok"
+            break
+        fi
+        sleep 1
+    done
+    if ! redis-cli -h 127.0.0.1 -p 6379 ping >/dev/null 2>&1; then
+        note_pending "P0-046" "redis healthy (neither compose nor native redis answered on :6379)"
+    fi
+else
+    note_pending "P0-046" "redis healthy (redis-cli not installed — cannot probe :6379)"
+fi
+
 # --- 3. build + start api + worker ------------------------------------------
 # Run the compiled binaries directly (not `cargo run`): cleanup kills the
 # actual processes, not a cargo-run wrapper that would orphan them.
@@ -135,9 +176,9 @@ if ! curl -fsS --max-time 2 "$API_URL/healthz" >/dev/null 2>&1; then
 fi
 
 if curl -fsS --max-time 2 "$API_URL/readyz" >/dev/null 2>&1; then
-    echo "dev: /readyz ok (db component only; redis/storage/models land in P0-063)"
+    echo "dev: /readyz ok (db + redis components; storage/models land in P0-063)"
 else
-    echo "dev: warning: /readyz is not ok — the db component reports down; see $API_LOG" >&2
+    echo "dev: warning: /readyz is not ok — a component reports down; see $API_LOG" >&2
 fi
 
 # --- 5. migrations ------------------------------------------------------------

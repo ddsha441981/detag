@@ -29,7 +29,7 @@ async fn main() {
         eprintln!("detag-api: invalid PF_DATABASE_URL: {err}");
         std::process::exit(1);
     });
-    let app = build_router(metrics.clone(), pool.clone());
+    let app = build_router(metrics.clone(), pool.clone(), settings.redis_url.clone());
     let addr = SocketAddr::from(([127, 0, 0, 1], settings.api_port));
     tracing::info!(addr = %addr, "listening");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();

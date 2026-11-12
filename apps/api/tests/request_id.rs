@@ -68,7 +68,7 @@ fn header_id(res: &axum::http::Response<axum::body::Body>) -> String {
 fn test_router() -> axum::Router {
     let pool = connect_lazy(&Settings::default().database_url, &PoolConfig::default())
         .expect("dev-default URL is well-formed");
-    build_router(Metrics::new(), pool)
+    build_router(Metrics::new(), pool, Settings::default().redis_url)
 }
 
 #[tokio::test]

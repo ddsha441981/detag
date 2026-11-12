@@ -146,6 +146,13 @@ schema-docs-check:
 compose-db-check:
     docker compose -f ops/compose.db.yml --env-file .env config --quiet
 
+# Validate the Redis dev compose file (P0-046): parses, env
+# interpolates, healthcheck renders. Static only — it does not start
+# containers (the live `up --wait` check waits for E0.9's smoke,
+# P0-090). Requires the docker compose plugin.
+compose-redis-check:
+    docker compose -f ops/compose.redis.yml --env-file .env config --quiet
+
 # Validate Grafana dashboards + provisioning (P0-030, NFR-62):
 # JSON parses, uids unique, panels well-formed, every PromQL expr
 # queries only series the code registers.

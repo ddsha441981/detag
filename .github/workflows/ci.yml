@@ -95,6 +95,8 @@ jobs:
           tool: just
       - name: compose-db-check (Postgres compose file validates)
         run: just compose-db-check
+      - name: compose-redis-check (Redis compose file validates)
+        run: just compose-redis-check
       - name: migrate (clean migrate on the empty CI database, twice for idempotency)
         run: |
           just migrate

@@ -1,12 +1,15 @@
 //! P0-035: /readyz reflects db health — end to end, against the
-//! spawned api binary.
+//! spawned api binary. P0-046 adds the redis component the same way.
 //!
 //! Up case: the binary boots with the default PF_DATABASE_URL (the
 //! dev database — native postgres on this VM, compose postgres where
-//! docker runs) and /readyz answers 200 with the db component ok.
-//! Down case: the binary boots with PF_DATABASE_URL pointed at a
-//! closed port — boot still succeeds (lazy pool, P0-035) and /readyz
-//! answers 503 with the db component down.
+//! docker runs) and the default PF_REDIS_URL (native redis on this
+//! VM, compose redis where docker runs) and /readyz answers 200
+//! with the db + redis components ok.
+//! Down cases: the binary boots with PF_DATABASE_URL (or
+//! PF_REDIS_URL) pointed at a closed port — boot still succeeds
+//! (lazy pool, P0-035) and /readyz answers 503 with that component
+//! down.
 
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
@@ -79,7 +82,12 @@ async fn wait_for_exit(child: &mut Child) -> std::process::ExitStatus {
     }
 }
 
-fn spawn_api(api_port: u16, metrics_port: u16, database_url: Option<&str>) -> Child {
+fn spawn_api(
+    api_port: u16,
+    metrics_port: u16,
+    database_url: Option<&str>,
+    redis_url: Option<&str>,
+) -> Child {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_detag-api"));
     cmd.env("PF_API_PORT", api_port.to_string())
         .env("PF_METRICS_PORT", metrics_port.to_string())
@@ -88,7 +96,20 @@ fn spawn_api(api_port: u16, metrics_port: u16, database_url: Option<&str>) -> Ch
     if let Some(url) = database_url {
         cmd.env("PF_DATABASE_URL", url);
     }
+    if let Some(url) = redis_url {
+        cmd.env("PF_REDIS_URL", url);
+    }
     cmd.spawn().expect("spawn detag-api")
+}
+
+/// The component with `name` in a /readyz JSON body.
+fn component<'a>(json: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+    json["components"]
+        .as_array()
+        .expect("components is an array")
+        .iter()
+        .find(|c| c["name"] == name)
+        .unwrap_or_else(|| panic!("no {name} component in {json}"))
 }
 
 async fn stop_api(child: &mut Child) {
@@ -105,7 +126,7 @@ async fn stop_api(child: &mut Child) {
 async fn readyz_ok_when_database_up() {
     let api_port = free_port();
     let metrics_port = free_port();
-    let mut child = spawn_api(api_port, metrics_port, None);
+    let mut child = spawn_api(api_port, metrics_port, None, None);
     wait_for_healthz(api_port).await;
 
     let (status, body) = http_get(api_port, "/readyz").await.expect("GET /readyz");
@@ -115,9 +136,12 @@ async fn readyz_ok_when_database_up() {
     );
     let json: serde_json::Value = serde_json::from_str(&body).expect("readyz body is JSON");
     assert_eq!(json["status"], "ok");
-    assert_eq!(json["components"][0]["name"], "db");
-    assert_eq!(json["components"][0]["ok"], true);
-    assert_eq!(json["components"][0]["detail"], "ok");
+    let db = component(&json, "db");
+    assert_eq!(db["ok"], true);
+    assert_eq!(db["detail"], "ok");
+    let redis = component(&json, "redis");
+    assert_eq!(redis["ok"], true, "redis must be ok: {body}");
+    assert_eq!(redis["detail"], "ok");
 
     stop_api(&mut child).await;
 }
@@ -132,6 +156,7 @@ async fn readyz_degraded_when_database_down() {
         api_port,
         metrics_port,
         Some("postgres://pf:pf@127.0.0.1:59999/pf"),
+        None,
     );
     wait_for_healthz(api_port).await;
 
@@ -142,10 +167,45 @@ async fn readyz_degraded_when_database_down() {
     );
     let json: serde_json::Value = serde_json::from_str(&body).expect("readyz body is JSON");
     assert_eq!(json["status"], "degraded");
-    assert_eq!(json["components"][0]["name"], "db");
-    assert_eq!(json["components"][0]["ok"], false);
+    let db = component(&json, "db");
+    assert_eq!(db["ok"], false);
     assert!(
-        json["components"][0]["detail"]
+        db["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unavailable"),
+        "detail must say unavailable: {body}"
+    );
+
+    stop_api(&mut child).await;
+}
+
+#[tokio::test]
+async fn readyz_degraded_when_redis_down() {
+    let api_port = free_port();
+    let metrics_port = free_port();
+    // Closed redis port: the db is up, redis is down — /readyz
+    // must be 503 with the redis component down and the db ok.
+    let mut child = spawn_api(
+        api_port,
+        metrics_port,
+        None,
+        Some("redis://127.0.0.1:59998"),
+    );
+    wait_for_healthz(api_port).await;
+
+    let (status, body) = http_get(api_port, "/readyz").await.expect("GET /readyz");
+    assert!(
+        status.starts_with("HTTP/1.1 503"),
+        "readyz must be 503 with redis down, got {status}: {body}"
+    );
+    let json: serde_json::Value = serde_json::from_str(&body).expect("readyz body is JSON");
+    assert_eq!(json["status"], "degraded");
+    assert_eq!(component(&json, "db")["ok"], true);
+    let redis = component(&json, "redis");
+    assert_eq!(redis["ok"], false);
+    assert!(
+        redis["detail"]
             .as_str()
             .unwrap_or_default()
             .contains("unavailable"),

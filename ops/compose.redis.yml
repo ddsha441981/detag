@@ -1,0 +1,57 @@
+# Redis for local dev (P0-046, E0.5).
+#
+# This is the redis counterpart of ops/compose.db.yml. It exists now
+# because the redis tickets (P0-046+) need a real server; E0.9
+# (P0-085) folds this service into compose.base.yml alongside api,
+# worker, postgres and minio.
+#
+#   docker compose -f ops/compose.redis.yml --env-file .env up -d --wait
+#   docker compose -f ops/compose.redis.yml down        # cache data is
+#   ephemeral by design (see below) — nothing persists.
+#
+# Notes:
+# - `network_mode: host` (ADR-0014): this VM has no bridge networking
+#   (dockerd runs with "bridge": "none"), so there is no `ports:`
+#   mapping — redis listens on the host's 6379 directly.
+# - Cache role (the whole point of this service): NO persistence.
+#   `--appendonly no` (no AOF) and `--save ""` (no RDB snapshots):
+#   a cache can always be rebuilt, and a restart must never replay
+#   stale entries. There is deliberately no volume.
+# - Maxmemory policy: 256 MB cap with `allkeys-lru` eviction — when
+#   full, the least-recently-used keys go first (usage counters,
+#   flags cache, rate-limit buckets and singleflight entries are
+#   all re-derivable). 256 MB is a dev default: the VM has ~7.7 GB
+#   and the cache must never starve the api/worker. Production
+#   sizing is a deploy-time decision, not a code change.
+# - No password in dev: the service binds loopback only (host
+#   networking on this VM means it listens on 127.0.0.1:6379;
+#   `protected-mode` is on by default and refuses non-loopback
+#   clients without a password). PF_REDIS_URL is
+#   redis://localhost:6379 (see .env.example).
+# - The healthcheck uses the image's own redis-cli. `--wait` blocks
+#   until it reports healthy.
+name: detag-redis
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: detag-redis
+    network_mode: host
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "no",
+        "--save",
+        "",
+        "--maxmemory",
+        "256mb",
+        "--maxmemory-policy",
+        "allkeys-lru",
+      ]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s

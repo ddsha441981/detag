@@ -54,6 +54,11 @@
 - Assumption: sqlx/migration tickets (P0-035+) verify against native PostgreSQL 16 on 127.0.0.1:5432 (role `pf`, db `pf`, same credentials as `.env.example`'s `PF_DATABASE_URL`); the compose file stays the canonical service definition and E0.9 folds it into compose.base.yml unchanged in shape. If docker starts working on this VM, `just dev` already prefers compose — no code change needed, just re-verify.
 - Status: open
 
+### ASSUMPTION-008 [assumption] Native redis is the dev Redis on this VM until docker can run containers (P0-046)
+- Date: 2026-11-12 · Ticket: P0-046
+- Assumption: redis tickets (P0-046+) verify against native redis-server 7.0.15 on 127.0.0.1:6379 (installed via apt, started manually with `redis-server /etc/redis/redis.conf`; `/etc/redis/redis.conf` carries the dev cache-role flags — `save ""`, `maxmemory 256mb`, `maxmemory-policy allkeys-lru` — mirroring ops/compose.redis.yml, original backed up at `/etc/redis/redis.conf.detag-orig`). The compose file stays the canonical service definition and E0.9 folds it into compose.base.yml unchanged in shape. The redis-server systemd unit CANNOT start on this VM (fails 217/USER, "Failed to set up user namespacing" — same missing-capabilities family as DOCKER-001), so after a VM reboot redis must be started manually with that command until docker works.
+- Status: open
+
 ## Closed issues (keep for history; prune to last 50)
 
 (none yet)

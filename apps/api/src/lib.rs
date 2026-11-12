@@ -13,14 +13,20 @@ use axum::{
 };
 use detag_core::db::{db_health, DbPool, Readiness};
 use detag_core::metrics::Metrics;
+use detag_core::redis::redis_health;
 
-/// Readiness (P0-035, FR-X-02): 200 when every component is ok, 503
-/// otherwise. Today the only component is the database; redis,
-/// storage and models join in E0.7 (P0-063), which owns the full
-/// `/readyz` shape. The body is always the same JSON — the status
-/// code is the signal, the body is the diagnosis.
-async fn readyz(Extension(pool): Extension<DbPool>) -> (StatusCode, Json<Readiness>) {
-    let report = Readiness::from_components(vec![db_health(&pool).await]);
+/// Readiness (P0-035, FR-X-02; redis component P0-046): 200 when
+/// every component is ok, 503 otherwise. The components are the
+/// database and redis; storage and models join in E0.7 (P0-063),
+/// which owns the full `/readyz` shape. The body is always the
+/// same JSON — the status code is the signal, the body is the
+/// diagnosis.
+async fn readyz(
+    Extension(pool): Extension<DbPool>,
+    Extension(redis_url): Extension<String>,
+) -> (StatusCode, Json<Readiness>) {
+    let report =
+        Readiness::from_components(vec![db_health(&pool).await, redis_health(&redis_url).await]);
     let status = if report.is_ok() {
         StatusCode::OK
     } else {
@@ -36,7 +42,7 @@ async fn readyz(Extension(pool): Extension<DbPool>) -> (StatusCode, Json<Readine
 /// metrics and the pool must be outermost so the middleware and the
 /// handlers can read them, and the metrics middleware wraps the
 /// request-id middleware so its timer covers the whole downstream call.
-pub fn build_router(metrics: Metrics, pool: DbPool) -> Router {
+pub fn build_router(metrics: Metrics, pool: DbPool, redis_url: String) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/readyz", get(readyz))
@@ -44,6 +50,7 @@ pub fn build_router(metrics: Metrics, pool: DbPool) -> Router {
         .layer(middleware::from_fn(http_metrics::http_metrics_middleware))
         .layer(Extension(metrics))
         .layer(Extension(pool))
+        .layer(Extension(redis_url))
 }
 
 #[cfg(test)]
@@ -58,6 +65,6 @@ mod tests {
         // even with no database behind the URL.
         let pool = connect_lazy(&Settings::default().database_url, &PoolConfig::default())
             .expect("dev-default URL is well-formed");
-        let _app = build_router(Metrics::new(), pool);
+        let _app = build_router(Metrics::new(), pool, Settings::default().redis_url);
     }
 }

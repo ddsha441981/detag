@@ -5,7 +5,7 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-046
+- **Current ticket:** P0-047
 - **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007).
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
@@ -34,11 +34,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-046 — Redis in compose
-2. P0-047 — Connection manager
-3. P0-048 — Rate-limit primitives
-4. P0-049 — Cache helper
-5. P0-050 — SSE pubsub channel design
+1. P0-047 — Connection manager
+2. P0-048 — Rate-limit primitives
+3. P0-049 — Cache helper
+4. P0-050 — SSE pubsub channel design
+5. P0-051 — Redis integration tests
 5. P0-041 — Repo layer tests
 
 ## Bench history (append-only)

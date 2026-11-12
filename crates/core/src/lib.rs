@@ -8,6 +8,7 @@ pub mod error;
 pub mod flags;
 pub mod metrics;
 pub mod migrate;
+pub mod redis;
 pub mod repos;
 pub mod seed;
 pub mod shutdown;
