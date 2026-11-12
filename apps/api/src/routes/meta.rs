@@ -8,6 +8,8 @@
 use axum::{extract::State, http::StatusCode, response::Json, routing::get, Router};
 use detag_core::db::{db_health, Readiness};
 use detag_core::redis::redis_health;
+use detag_engine::registry::models_health;
+use detag_storage::health::storage_health;
 
 use crate::AppState;
 
@@ -17,17 +19,21 @@ async fn healthz() -> &'static str {
     "ok"
 }
 
-/// Readiness (P0-035, FR-X-02; redis component P0-046): 200 when
-/// every component is ok, 503 otherwise. The components are the
-/// database and redis, read from the state; storage and models
-/// join in E0.7 (P0-066), which owns the full `/readyz` shape.
-/// The body is always the same JSON — the status code is the
-/// signal, the body is the diagnosis.
+/// Readiness (P0-035 db, P0-046 redis, P0-066 storage + models;
+/// FR-X-02): 200 when every component is ok, 503 otherwise. The
+/// four probes run concurrently — each is bounded by its own 2 s
+/// timeout, so the worst case is ~2 s, not ~8 s. Every component
+/// reports its probe latency in `latency_ms` (P0-066). The body is
+/// always the same JSON — the status code is the signal, the body
+/// is the diagnosis.
 async fn readyz(State(state): State<AppState>) -> (StatusCode, Json<Readiness>) {
-    let report = Readiness::from_components(vec![
-        db_health(&state.pool).await,
-        redis_health(&state.settings.redis_url).await,
-    ]);
+    let (db, redis, storage, models) = tokio::join!(
+        db_health(&state.pool),
+        redis_health(&state.settings.redis_url),
+        storage_health(&state.storage),
+        async { models_health() },
+    );
+    let report = Readiness::from_components(vec![db, redis, storage, models]);
     let status = if report.is_ok() {
         StatusCode::OK
     } else {

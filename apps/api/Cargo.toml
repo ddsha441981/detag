@@ -22,6 +22,7 @@ sqlx.workspace = true
 thiserror.workspace = true
 detag-core = { path = "../../crates/core" }
 detag-storage = { path = "../../crates/storage" }
+detag-engine = { path = "../../crates/engine" }
 
 [dev-dependencies]
 tracing-subscriber.workspace = true

@@ -4,9 +4,15 @@
 
 ## Open issues
 
+### ASSUMPTION-012 [assumption] `db_health` takes the full 2 s probe timeout on an unreachable database (P0-066)
+- Date: 2026-11-12 · Ticket: P0-066
+- Assumption: on a dead database the db probe does NOT fail fast — it reports ~2000 ms latency via the timeout arm. Verified in the vendored sqlx-core 0.9.0 source (`pool/inner.rs`): `acquire` retries transient connection errors in a backoff loop (10 ms doubling, capped at deadline/5) until the acquire deadline, so `SELECT 1` against a closed port keeps retrying until this probe's own 2 s `tokio::time::timeout` fires. The probe is therefore slow-but-bounded on a down DB by design; `/readyz` on a dead database takes ~2 s (probes run concurrently, so the total is ~2 s, not ~8 s). The `db_health_down_on_unreachable_database` test asserts `latency_ms <= 2050` (timeout + scheduling slack), not `< 2000`. A fail-fast db probe (raw TCP pre-check like the redis probe) is a possible future optimisation, not a P0-066 gap.
+- Status: open
+
 ### ASSUMPTION-010 [assumption] Dev Redis/Postgres do NOT survive a VM reset — reinstall + manual start (P0-051)
 - Date: 2026-11-12 · Ticket: P0-051
 - Assumption: at run start both native services were gone entirely — no `redis-server`/`psql` binaries, no `/etc/redis`, no `/var/lib/postgresql`, ports 6379/5432 closed — although ASSUMPTION-007/008 recorded them as installed. Restored by `apt-get install -y redis-server postgresql-16` (apt works via the VM egress proxy), then `redis-server /etc/redis/redis.conf --daemonize yes --save "" --maxmemory 256mb --maxmemory-policy allkeys-lru`, `pg_ctlcluster 16 main start`, `CREATE ROLE pf LOGIN PASSWORD 'pf'` + `ALTER ROLE pf CREATEDB` + `CREATE DATABASE pf OWNER pf` (dev placeholders from `.env.example`). Baseline `just verify` then green modulo the known FLAKY-001. After any VM reset, re-run the install + start steps before trusting `just verify`; `just dev` still prefers compose when docker works.
+- Update 2026-11-12 (P0-066): the VM reset also wiped the `pf` role/database even though the postgres binaries and data directory survived — a fresh cluster. Recreated them from `.env.example`'s password. AND: a plain `redis-server ... --daemonize yes` does NOT survive this environment — the daemon stayed in the launching exec session's process group and was killed when the session was reaped (log ends at "Ready to accept connections", no shutdown line; the P0-066 verify run then failed 3 readyz tests on redis connection-refused). Start it detached: `setsid redis-server /etc/redis/redis.conf --daemonize yes --save "" --maxmemory 256mb --maxmemory-policy allkeys-lru` (own session, PPID 1). Postgres survives on its own (`pg_ctlcluster` daemonizes into its own session).
 - Status: open
 
 ### ASSUMPTION-009 [assumption] P0-051 runs its integration suite against native Redis, not testcontainers (P0-051)

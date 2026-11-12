@@ -112,6 +112,22 @@ impl S3Storage {
         &self.bucket
     }
 
+    /// Probe the bucket's existence (`HeadBucket`). Used by the
+    /// `/readyz` storage component (P0-066, `health.rs`): a missing
+    /// bucket, bad credentials, or an unreachable endpoint all
+    /// surface as a `Backend` error — the bucket must exist before
+    /// the api can serve uploads, and creating it is an ops concern
+    /// (P0-054).
+    pub async fn check_bucket(&self) -> Result<(), StorageError> {
+        self.client
+            .head_bucket()
+            .bucket(&self.bucket)
+            .send()
+            .await
+            .map(|_| ())
+            .map_err(map_sdk_error)
+    }
+
     /// Presign a request builder. `build` is the fluent builder's
     /// `presigned` call; kept generic over the two presignable
     /// builders via a closure so the two methods stay identical.

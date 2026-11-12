@@ -167,9 +167,10 @@ practice, and what is implemented today:
   with the job-creation endpoint (the endpoint does not exist
   yet). The `DetagRedisDown` alert rule is commented out in
   `ops/prometheus/alerts.yml` because it needs a redis_exporter
-  scrape job (E0.5, P0-044+); `/readyz` does not exist yet either — the
-  `redis_health` probe in core (P0-046) is what it will call.
-  Until then, Redis health is the compose healthcheck plus
+  scrape job (E0.5, P0-044+); `/readyz` itself exists since P0-066
+  (db/redis/storage/models, per-component latency) — see
+  "Health endpoints" under Observability. Until the exporter
+  lands, Redis health is the compose healthcheck plus
   `redis-cli ping`.
 
 ### Operating it
@@ -388,6 +389,49 @@ Business 72 h — then are deleted):
 
 ## Observability
 
+### Health endpoints
+
+`GET /healthz` (liveness — the process answers `"ok"`) and
+`GET /readyz` (readiness — FR-X-02, P0-066) are unauthenticated
+and unversioned by design: orchestrators and load balancers must
+reach them without credentials. `/readyz` answers 200 when every
+component is ok, 503 otherwise; the body is always the same JSON
+(the status code is the signal, the body is the diagnosis):
+
+```json
+{ "status": "ok",
+  "components": [
+    { "name": "db", "ok": true, "detail": "ok", "latency_ms": 3 },
+    { "name": "redis", "ok": true, "detail": "ok", "latency_ms": 1 },
+    { "name": "storage", "ok": true, "detail": "ok", "latency_ms": 12 },
+    { "name": "models", "ok": true, "detail": "no models registered — none required until Phase 2", "latency_ms": 0 } ] }
+```
+
+- **db:** `SELECT 1` against the pool. **redis:** TCP `PING` →
+  `+PONG`. **storage:** `HeadBucket` on the configured bucket —
+  a missing bucket, bad credentials, or an unreachable endpoint
+  all report down. **models:** the engine registry state — in
+  Phase 0 no model is required, so an empty registry is ok and
+  the detail says so; Phase 2 replaces this with a real
+  "required models present + verified" check (P0-084).
+- Each probe is bounded by its own 2 s timeout and the four run
+  concurrently, so a fully-down dependency set still answers in
+  ~2 s. On a dead database the db probe takes the whole 2 s
+  (sqlx retries the acquire internally — ASSUMPTION-012).
+- Details never contain credentials or provider error text
+  (`StorageError`'s display is PII-free by construction; db/redis
+  details are redacted the same way).
+
+```bash
+curl -fsS http://localhost:8080/healthz   # ok
+curl -s http://localhost:8080/readyz | python3 -m json.tool
+```
+
+Compose healthchecks consume these endpoints (P0-088 wires them
+into `compose.base.yml`; the Dockerfile `HEALTHCHECK` lands with
+P0-083). Until then, `just dev` reports `/readyz` after boot and
+`just smoke` (P0-090) waits on both endpoints for every service.
+
 ### Dashboards (Grafana, as code)
 
 Dashboards live in `ops/grafana/dashboards/` and are provisioned
@@ -427,7 +471,7 @@ condition must hold before the alert fires.
 
 | Alert | Severity | What it means | First steps |
 | --- | --- | --- | --- |
-| `DetagApiDown` (`up{job="detag-api"} == 0`, 2m) | page | Prometheus cannot scrape the api's `/metrics` — the api is down or its metrics port is blocked. Proxy for "readyz fail > 2 min"; there is no `/readyz` probe series yet. | `docker compose ps`; api logs; check the metrics port is reachable. `/readyz` reports db/redis/storage/model health once it lands. |
+| `DetagApiDown` (`up{job="detag-api"} == 0`, 2m) | page | Prometheus cannot scrape the api's `/metrics` — the api is down or its metrics port is blocked. Proxy for "readyz fail > 2 min"; there is still no Prometheus series scraping `/readyz` itself (a blackbox/readyz probe lands with the compose stack, E0.9). | `docker compose ps`; api logs; check the metrics port is reachable. `curl localhost:8080/readyz` reports db/redis/storage/models health directly (P0-066). |
 | `DetagApiHighErrorRate` (5xx share > 5%, 5m) | page | More than 5% of api requests return 5xx. | Api logs + api-golden error-rate panel; likely a down dependency (db/redis/storage) or a bad deploy. |
 
 Pending (commented rules in `ops/prometheus/alerts.yml` — not

@@ -176,9 +176,9 @@ if ! curl -fsS --max-time 2 "$API_URL/healthz" >/dev/null 2>&1; then
 fi
 
 if curl -fsS --max-time 2 "$API_URL/readyz" >/dev/null 2>&1; then
-    echo "dev: /readyz ok (db + redis components; storage/models land in P0-063)"
+    echo "dev: /readyz ok (db + redis + storage + models, P0-066)"
 else
-    echo "dev: warning: /readyz is not ok — a component reports down; see $API_LOG" >&2
+    echo "dev: warning: /readyz is not ok — a component reports down (storage is down until MinIO runs; see $API_LOG) — curl $API_URL/readyz for the per-component diagnosis" >&2
 fi
 
 # --- 5. migrations ------------------------------------------------------------

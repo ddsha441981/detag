@@ -1019,6 +1019,7 @@ dependencies = [
  "axum",
  "chrono",
  "detag-core",
+ "detag-engine",
  "detag-storage",
  "libc",
  "serde",
@@ -1070,6 +1071,7 @@ dependencies = [
 name = "detag-engine"
 version = "0.1.0"
 dependencies = [
+ "detag-core",
  "serde",
  "thiserror 2.0.21",
 ]
@@ -1099,6 +1101,7 @@ dependencies = [
  "aws-sdk-s3",
  "aws-smithy-types",
  "chrono",
+ "detag-core",
  "serde",
  "testcontainers",
  "thiserror 2.0.21",

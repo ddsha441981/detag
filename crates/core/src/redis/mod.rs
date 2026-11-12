@@ -93,6 +93,7 @@ pub fn create_pool(redis_url: &str, config: &RedisPoolConfig) -> Result<RedisPoo
 /// the server answers `+PONG`. The detail never contains the URL
 /// or credentials.
 pub async fn redis_health(redis_url: &str) -> ComponentHealth {
+    let started = std::time::Instant::now();
     let probe = async {
         let url = url::Url::parse(redis_url).map_err(|_| "invalid redis URL".to_string())?;
         if url.scheme() != "redis" {
@@ -122,21 +123,19 @@ pub async fn redis_health(redis_url: &str) -> ComponentHealth {
         }
     };
     match tokio::time::timeout(Duration::from_secs(2), probe).await {
-        Ok(Ok(())) => ComponentHealth {
-            name: "redis",
-            ok: true,
-            detail: "ok".to_string(),
-        },
-        Ok(Err(err)) => ComponentHealth {
-            name: "redis",
-            ok: false,
-            detail: format!("unavailable: {}", redact(&err)),
-        },
-        Err(_) => ComponentHealth {
-            name: "redis",
-            ok: false,
-            detail: "unavailable: probe timed out".to_string(),
-        },
+        Ok(Ok(())) => ComponentHealth::timed("redis", true, "ok".to_string(), started),
+        Ok(Err(err)) => ComponentHealth::timed(
+            "redis",
+            false,
+            format!("unavailable: {}", redact(&err)),
+            started,
+        ),
+        Err(_) => ComponentHealth::timed(
+            "redis",
+            false,
+            "unavailable: probe timed out".to_string(),
+            started,
+        ),
     }
 }
 
@@ -178,6 +177,12 @@ mod tests {
         assert!(health.ok, "PONG must be healthy: {health:?}");
         assert_eq!(health.name, "redis");
         assert_eq!(health.detail, "ok");
+        // P0-066: the probe reports its latency, bounded by the 2 s
+        // timeout.
+        assert!(
+            health.latency_ms < 2000,
+            "healthy probe latency must be under the timeout: {health:?}"
+        );
     }
 
     #[tokio::test]
@@ -193,6 +198,12 @@ mod tests {
         let health = redis_health(&format!("redis://127.0.0.1:{}", free_port())).await;
         assert!(!health.ok, "a closed port must be down: {health:?}");
         assert!(health.detail.contains("unavailable"));
+        // P0-066: a down component reports its latency too, never a
+        // missing one.
+        assert!(
+            health.latency_ms < 2000,
+            "down probe latency must be under the timeout: {health:?}"
+        );
     }
 
     #[tokio::test]

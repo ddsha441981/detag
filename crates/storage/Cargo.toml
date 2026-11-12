@@ -13,6 +13,7 @@ url.workspace = true
 uuid.workspace = true
 aws-sdk-s3.workspace = true
 aws-smithy-types.workspace = true
+detag-core = { path = "../core" }
 
 [dev-dependencies]
 tokio.workspace = true

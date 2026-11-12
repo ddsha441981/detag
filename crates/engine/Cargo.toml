@@ -7,3 +7,4 @@ license.workspace = true
 [dependencies]
 serde.workspace = true
 thiserror.workspace = true
+detag-core = { path = "../core" }

@@ -83,6 +83,21 @@ async fn server_boots_with_full_state() {
         "readyz must report the redis component: {body}"
     );
     assert!(
+        components.iter().any(|c| c["name"] == "storage"),
+        "readyz must report the storage component: {body}"
+    );
+    assert!(
+        components.iter().any(|c| c["name"] == "models"),
+        "readyz must report the models component: {body}"
+    );
+    // P0-066: every component reports its probe latency.
+    for c in components {
+        assert!(
+            c["latency_ms"].is_number(),
+            "every component must report latency_ms: {body}"
+        );
+    }
+    assert!(
         json["status"] == "ok" || json["status"] == "degraded",
         "readyz status must be ok or degraded: {body}"
     );
