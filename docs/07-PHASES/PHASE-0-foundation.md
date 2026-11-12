@@ -248,12 +248,12 @@
     - [x] dashboards visible in grafana — statically validated only; live visibility deferred to E0.9 per ASSUMPTION-004 (no Grafana/compose on this VM yet)
     - [x] provisioning reload documented
 
-- [ ] **P0-031** — Prometheus config + alerts file
+- [x] **P0-031** — Prometheus config + alerts file
   - **Type:** chore · **Area:** observability · **Est:** S · **Deps:** P0-030 · **Prio:** P1
   - **Spec:** prometheus.yml scrape jobs; alert rules per runbook (readyz fail, queue age, error rate, disk); alertmanager optional, disabled by default.
   - **AC:**
-    - [ ] rules load
-    - [ ] targets up
+    - [x] rules load — verified by promtool 3.5.0 (config valid, 1 rule file, 2 rules) + static validator in CI
+    - [x] targets up — statically defined; live confirmation deferred to E0.9 per ASSUMPTION-005 (no Prometheus running yet)
 
 - [ ] **P0-032** — Logging hygiene tests
   - **Type:** test · **Area:** observability · **Est:** S · **Deps:** P0-031 · **Prio:** P1

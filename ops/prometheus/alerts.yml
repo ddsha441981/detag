@@ -1,0 +1,86 @@
+# Alert rules (P0-031, NFR-62). Thresholds per the runbook
+# (docs/06-DELIVERY/03-deploy-runbook.md, Observability section).
+#
+# Only rules whose series exist today are active. The runbook's
+# remaining alerts are listed as commented rules below with the
+# series and landing ticket — they are NOT active rules, because a
+# rule over a nonexistent series evaluates to no data and would
+# silently never fire. Uncomment each one in the ticket that
+# registers its series.
+
+groups:
+  - name: detag-api
+    rules:
+      # Runbook: "readyz fail > 2 min". There is no /readyz probe
+      # series yet (the endpoint lands with the API spec), so the
+      # scrape health `up` is the proxy: if Prometheus cannot scrape
+      # the api's /metrics for 2 minutes, the api is down or its
+      # metrics port is blocked.
+      - alert: DetagApiDown
+        expr: up{job="detag-api"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Detag API scrape down for 2m
+          description: >-
+            Prometheus cannot reach the detag-api /metrics endpoint.
+            The api is down, or its metrics port (PF_METRICS_PORT,
+            default 9090) is blocked. Check `docker compose ps` and
+            the api logs; the /readyz endpoint reports db/redis/
+            storage/model health once it lands.
+
+      # Runbook: "error rate" (job failure > 5%/15 min is the job
+      # analogue, pending below). API 5xx share above 5% for 5m.
+      - alert: DetagApiHighErrorRate
+        expr: |
+          sum(rate(detag_http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(detag_http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: Detag API 5xx share above 5% for 5m
+          description: >-
+            More than 5% of API requests return 5xx. Check the api
+            logs and the api-golden dashboard (error rate panel);
+            likely causes are a down dependency (db/redis/storage)
+            or a bad deploy.
+
+# --- Pending runbook alerts (commented: series do not exist yet) ---
+#
+# Queue age p95 > 60 s (runbook). Needs per-job enqueue timestamps /
+# a detag_job_queue_wait_seconds histogram — lands with the E0.8
+# queue implementation (P0-075+). Intended rule:
+#   - alert: DetagQueueAgeHigh
+#     expr: histogram_quantile(0.95, sum by (le, queue) (rate(detag_job_queue_wait_seconds_bucket[5m]))) > 60
+#     for: 5m
+#     labels: { severity: page }
+#
+# Job failure > 5% / 15 min (runbook). Needs job outcome counters
+# from the E0.8 job state machine (P0-075+). Intended rule:
+#   - alert: DetagJobFailureRateHigh
+#     expr: sum(rate(detag_job_outcomes_total{outcome="failed"}[15m])) / sum(rate(detag_job_outcomes_total[15m])) > 0.05
+#     for: 15m
+#     labels: { severity: page }
+#
+# Redis down (runbook). Needs a redis_exporter scrape job (E0.5,
+# P0-044+). Intended rule:
+#   - alert: DetagRedisDown
+#     expr: up{job="redis"} == 0
+#     for: 2m
+#     labels: { severity: page }
+#
+# Disk > 80% (runbook). Needs node_exporter (E0.9 compose). Intended
+# rule:
+#   - alert: DetagDiskUsageHigh
+#     expr: 1 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) > 0.8
+#     for: 10m
+#     labels: { severity: ticket }
+#
+# Backup older than 26 h (runbook). Needs the backup job + its
+# freshness metric (Phase 5). Intended rule:
+#   - alert: DetagBackupStale
+#     expr: time() - detag_backup_last_success_seconds > 93600
+#     for: 0m
+#     labels: { severity: ticket }

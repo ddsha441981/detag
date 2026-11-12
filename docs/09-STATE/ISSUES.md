@@ -17,6 +17,11 @@
 - Chosen default: job-outcome/storage/Redis/backup panels are omitted (not faked as "No data" queries) and listed as gaps in `ops/grafana/README.md`; they land with E0.8/E0.4/E0.5/Phase 2.
 - Status: open
 
+### ASSUMPTION-005 [assumption] Prometheus "targets up" unverified live until E0.9 (P0-031)
+- Date: 2026-11-12 · Ticket: P0-031
+- Assumption: the P0-031 AC "targets up" cannot be verified live today — no Prometheus runs on this VM and the compose stack lands in E0.9 (P0-085..P0-090). "Rules load" IS verified for real: promtool 3.5.0 (downloaded from the official GitHub release into `.scratch/tools/`, not vendored) reports the config valid, 1 rule file found, 2 rules found; plus the static validator in CI. The scrape targets are the api's /metrics (verified serving by P0-026's tests) and Prometheus itself; both are confirmed up when the stack lands.
+- Status: open
+
 ### ASSUMPTION-001 [assumption] `just dev` is a partial stack until E0.9/E0.4 land (P0-012)
 - Date: 2026-11-12 · Ticket: P0-012
 - Assumption: `just dev` (scripts/dev.sh) starts what exists today (api + worker via `cargo run`, /healthz wait) and reports compose deps, /readyz, migrations and seed as pending with their ticket ids — it does not fake a full stack. The Phase 0 exit gate re-verifies `just dev` against the full stack once P0-036 (migrations), P0-043 (seed) and P0-085..P0-090 (compose) land.

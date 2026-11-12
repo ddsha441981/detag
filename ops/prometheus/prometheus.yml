@@ -1,0 +1,32 @@
+# Prometheus config (P0-031, NFR-62).
+#
+# Scrape targets use localhost because the dev compose stack runs
+# with host networking (ADR-0014): the api's /metrics server binds
+# loopback 127.0.0.1:PF_METRICS_PORT (default 9090, ASSUMPTION-003),
+# so a Prometheus container on the host network reaches it at
+# localhost:9090. E0.9 revisits this if bridge networking lands
+# (then the target becomes the `api` service name).
+#
+# Port note: Prometheus itself listens on 9091 in compose
+# (--web.listen-address=:9091) so it does not clash with the api's
+# 9090 metrics port. The `prometheus` job below scrapes that port.
+#
+# Alertmanager is intentionally NOT configured (disabled by default):
+# the rules in alerts.yml still evaluate and are visible in the
+# Prometheus UI/API; notification routing lands when the team wires
+# an Alertmanager/receiver (E0.9).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - alerts.yml
+
+scrape_configs:
+  - job_name: detag-api
+    static_configs:
+      - targets: ["localhost:9090"]
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9091"]

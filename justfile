@@ -98,6 +98,22 @@ env-check:
 dashboards-check:
     python3 scripts/validate_dashboards.py
 
+# Validate Prometheus config + alerts (P0-031, NFR-62): static
+# validator (YAML, scrape jobs, rule completeness, PromQL
+# allow-list) plus promtool check config/rules when promtool is
+# available (download a Prometheus release tarball and put promtool
+# on PATH, or use .scratch/tools/promtool). Absent promtool only
+# warns — the static validator is the enforced gate.
+prometheus-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    python3 scripts/validate_prometheus.py
+    if command -v promtool >/dev/null 2>&1; then PROMTOOL=promtool;
+    elif [ -x .scratch/tools/promtool ]; then PROMTOOL=.scratch/tools/promtool;
+    else echo "prometheus-check: promtool not found (static checks only)"; exit 0; fi
+    "$PROMTOOL" check config ops/prometheus/prometheus.yml
+    "$PROMTOOL" check rules ops/prometheus/alerts.yml
+
 # Regenerate the PF_* settings reference table (P0-024). The table is
 # generated from .env.example (name + dev default) and the runbook env
 # table (used-by); never edit docs/06-DELIVERY/04-config-reference.md
