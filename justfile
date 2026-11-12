@@ -143,9 +143,19 @@ smoke args="":
 smoke-ping:
     cargo run --quiet -p detag-worker --bin smoke-ping
 
-# Generate deterministic golden fixtures (lands in P0-093).
+# Generate deterministic golden fixtures (P0-093): 24 marked images +
+# 12 clean controls, 3 videos, expected-metrics envelopes, SHA256SUMS.
+# Needs Pillow + numpy + ffmpeg (see fixtures/README.md for the
+# reproducibility contract and the pinned versions).
 fixtures-gen:
-    @echo "pending: fixture generator lands in P0-093" >&2; exit 1
+    python3 scripts/fixtures_gen.py
+
+# Fail if committed fixtures drift from the generator (P0-093; CI runs
+# this). Regenerates to a temp dir and compares bytes (images always;
+# videos only when ffmpeg matches the recorded version — otherwise
+# stream properties via ffprobe), envelope sha/bytes fields, SHA256SUMS.
+fixtures-check:
+    python3 scripts/fixtures_gen.py --check
 
 # Regenerate the committed OpenAPI document from code (P0-067).
 # The spec is generated, never hand-edited: `just openapi-check`

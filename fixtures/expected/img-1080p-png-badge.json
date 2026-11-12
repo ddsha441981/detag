@@ -1,0 +1,31 @@
+{
+  "bytes": 1051006,
+  "file": "images/img-1080p-png-badge.png",
+  "fixture": "img-1080p-png-badge",
+  "format": "png",
+  "gates": {
+    "format": "preserved",
+    "jpeg_reencode_chroma": "4:4:4",
+    "jpeg_reencode_quality_min": 95,
+    "png_untouched_pixel": "bit-exact",
+    "psnr_unmasked_db_min": 38.0,
+    "resolution": "identical",
+    "ssim_unmasked_min": 0.98,
+    "webp_reencode_quality_min": 90
+  },
+  "generator": "scripts/fixtures_gen.py",
+  "generator_version": 1,
+  "height": 1080,
+  "kind": "image",
+  "mark": "badge",
+  "measured": null,
+  "seed": 20262112,
+  "sha256": "f1ebcef6f85664fc37c27e9eb2a243e9e9d6cc410fb390ad70f404f2e3346550",
+  "source": "synthesized",
+  "tool_versions": {
+    "ffmpeg": "8.1.2",
+    "numpy": "1.26.4",
+    "pillow": "10.2.0"
+  },
+  "width": 1920
+}

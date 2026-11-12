@@ -1,0 +1,42 @@
+{
+  "audio_hz": 440,
+  "bytes": 23532188,
+  "codec": "h264",
+  "duration_s": 30,
+  "encode": {
+    "crf": 23,
+    "pix_fmt": "yuv420p",
+    "preset": "medium",
+    "threads": 1
+  },
+  "file": "videos/vid-1080p-30s-badge.mp4",
+  "fixture": "vid-1080p-30s-badge",
+  "format": "mp4",
+  "fps": 30,
+  "gates": {
+    "audio": "stream-copy bit-exact",
+    "codec": "h264",
+    "duration_within_frames": 1,
+    "encode_crf_max": 16,
+    "encode_preset": "slow",
+    "ms_ssim_fallback_min": 0.97,
+    "pix_fmt": "yuv420p",
+    "resolution_fps": "identical",
+    "vmaf_min": 93
+  },
+  "generator": "scripts/fixtures_gen.py",
+  "generator_version": 1,
+  "height": 1080,
+  "kind": "video",
+  "mark": "badge",
+  "measured": null,
+  "seed": 20266112,
+  "sha256": "170d58b5df51b937a19e2e830e0962917afeeeaf60d8855e2175ba4e8babc7e6",
+  "source": "synthesized",
+  "tool_versions": {
+    "ffmpeg": "8.1.2",
+    "numpy": "1.26.4",
+    "pillow": "10.2.0"
+  },
+  "width": 1920
+}

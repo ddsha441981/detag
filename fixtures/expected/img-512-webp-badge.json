@@ -1,0 +1,31 @@
+{
+  "bytes": 54988,
+  "file": "images/img-512-webp-badge.webp",
+  "fixture": "img-512-webp-badge",
+  "format": "webp",
+  "gates": {
+    "format": "preserved",
+    "jpeg_reencode_chroma": "4:4:4",
+    "jpeg_reencode_quality_min": 95,
+    "png_untouched_pixel": "bit-exact",
+    "psnr_unmasked_db_min": 38.0,
+    "resolution": "identical",
+    "ssim_unmasked_min": 0.98,
+    "webp_reencode_quality_min": 90
+  },
+  "generator": "scripts/fixtures_gen.py",
+  "generator_version": 1,
+  "height": 512,
+  "kind": "image",
+  "mark": "badge",
+  "measured": null,
+  "seed": 20261112,
+  "sha256": "c2cc47e42feb669c4bf5f92c9c7ba41a0a7620ee6bab79982accc9ddf14de2ac",
+  "source": "synthesized",
+  "tool_versions": {
+    "ffmpeg": "8.1.2",
+    "numpy": "1.26.4",
+    "pillow": "10.2.0"
+  },
+  "width": 512
+}

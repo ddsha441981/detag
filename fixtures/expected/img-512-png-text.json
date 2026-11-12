@@ -1,0 +1,31 @@
+{
+  "bytes": 219287,
+  "file": "images/img-512-png-text.png",
+  "fixture": "img-512-png-text",
+  "format": "png",
+  "gates": {
+    "format": "preserved",
+    "jpeg_reencode_chroma": "4:4:4",
+    "jpeg_reencode_quality_min": 95,
+    "png_untouched_pixel": "bit-exact",
+    "psnr_unmasked_db_min": 38.0,
+    "resolution": "identical",
+    "ssim_unmasked_min": 0.98,
+    "webp_reencode_quality_min": 90
+  },
+  "generator": "scripts/fixtures_gen.py",
+  "generator_version": 1,
+  "height": 512,
+  "kind": "image",
+  "mark": "text",
+  "measured": null,
+  "seed": 20261112,
+  "sha256": "19a8e0233fb282119d67b109b1251fba82a10a416fc93003e71d194ac4ab7589",
+  "source": "synthesized",
+  "tool_versions": {
+    "ffmpeg": "8.1.2",
+    "numpy": "1.26.4",
+    "pillow": "10.2.0"
+  },
+  "width": 512
+}
