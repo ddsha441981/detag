@@ -151,12 +151,12 @@
   - **AC:**
     - [x] tests green incl. aggregated-error case
 
-- [ ] **P0-017** — Error taxonomy
+- [x] **P0-017** — Error taxonomy
   - **Type:** feat · **Area:** core/config · **Est:** M · **Deps:** P0-016 · **Prio:** P1
   - **Spec:** AppError enum (thiserror) with PF-codes per api-spec ranges; problem+json mapper; prod profile never leaks internals (trace-only).
   - **AC:**
-    - [ ] each variant maps to status+code+title
-    - [ ] prod body shape tested
+    - [x] each variant maps to status+code+title
+    - [x] prod body shape tested
 
 - [ ] **P0-018** — Error mapping tests
   - **Type:** test · **Area:** core/config · **Est:** S · **Deps:** P0-017 · **Prio:** P1
