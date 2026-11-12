@@ -64,6 +64,30 @@ The per-service fragments (`compose.{db,redis,minio}.yml`) stay as
 the VM-local host-networking path (ADR-0014). Live `up` waits for
 CI/E0.9's smoke (P0-090, DOCKER-001).
 
+### Dev loop (P0-086)
+
+`just dev` is the entrypoint: compose stack (base+dev) when docker
+runs, native postgres/redis + native api/worker binaries on this VM
+(DOCKER-001), then migrate + seed, then the URLs. Hot reload runs
+on the HOST, not in a container — neither bacon nor cargo-watch is
+installed on this VM; install one of them to get it:
+
+```bash
+cargo install bacon --locked            # or: cargo install cargo-watch --locked
+bacon test                               # re-runs the test suite on every save
+cargo watch -x 'test --workspace'        # same loop with cargo-watch
+```
+
+Rules of the loop: the watcher rebuilds and re-runs tests on the
+host; the compose stack is untouched (its api/worker are release
+images — rebuild them with `docker compose build` after a change
+that must be reflected in a container). Seeded data comes from
+`just seed` (idempotent — run it twice, the second run changes
+nothing). Dev URLs: api :8080, `/docs` Swagger UI, web placeholder
+:3000, MinIO console :9001, MailHog UI :8025, metrics api :9090 and
+worker :9092. Mail sent by the api in dev lands in MailHog — never
+in a real inbox.
+
 ## Environment variables (PF_*)
 
 | Var | Used by | Default (dev) | Notes |

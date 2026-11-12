@@ -1,0 +1,78 @@
+# compose.dev.yml — dev overrides for the Detag stack (P0-086).
+#
+# Layered over ops/compose.base.yml — NEVER used alone: this file only
+# overrides base services (+ mailhog), and on its own the services it
+# touches would be incomplete (no image/build).
+#
+#   docker compose -f ops/compose.base.yml -f ops/compose.dev.yml --profile dev --env-file .env up -d --wait
+#
+# The --profile dev matters: the base file's `web` placeholder is
+# dev-only, so without it the stack has no web service.
+#
+# What "dev conveniences" means here:
+# - Host access: the data ports are published so host-side tools work
+#   (`just migrate`, `just seed`, psql, redis-cli, smoke-ping):
+#   postgres 5432, redis 6379, minio S3 9000 + console 9001, worker
+#   metrics 9092 (smoke-ping polls it from the host), api metrics
+#   9090. The api port 8080 is already published in base.
+# - MailHog: SMTP on the internal network (the api's PF_SMTP_HOST
+#   points at it), UI on :8025. No real mail ever leaves the stack.
+# - Swagger: the api serves /docs because PF_ENVIRONMENT=dev (base
+#   default, P0-067) — no extra service, just the flag.
+# - Relaxed limits: none. The base file sets no resource limits and
+#   this file adds none (prod's mem caps land in compose.prod.yml,
+#   P0-087). The redis 256 MB maxmemory cap is a base dev default.
+# - Seeded data: `just migrate && just seed` from the host after `up`
+#   (the seed example is idempotent, P0-043).
+# - Hot reload (bacon / cargo-watch) runs on the HOST, not in a
+#   container — see the runbook's "Dev loop" section. The api/worker
+#   in compose are release images; iterate on the host binaries
+#   (`just dev` native path) or rebuild the images.
+#
+# Live verification is deferred to CI (DOCKER-001: containers cannot
+# start on this VM). What IS verified here: `docker compose config`
+# renders base+dev (see `just compose-dev-check`).
+services:
+  postgres:
+    # Host-side psql / migrate / seed.
+    ports:
+      - "5432:5432"
+
+  redis:
+    # Host-side redis-cli + smoke-ping (PF_REDIS_URL=localhost:6379).
+    ports:
+      - "6379:6379"
+
+  minio:
+    # S3 API for host-side tools + the console UI (dev only — prod
+    # never publishes the console; P0-087).
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: detag-mailhog
+    networks:
+      - internal
+    # UI only — SMTP :1025 stays internal (the api reaches it as
+    # mailhog:1025; nothing on the host needs to send mail).
+    ports:
+      - "8025:8025"
+
+  api:
+    # Metrics for host-side debugging (8080 is already in base).
+    # SMTP goes to MailHog, not localhost (P0-086): inside the
+    # container localhost is the api container itself.
+    ports:
+      - "9090:9090"
+    environment:
+      PF_SMTP_HOST: mailhog
+      PF_SMTP_PORT: 1025
+      # PF_ENVIRONMENT stays dev (base default) so /docs is served.
+
+  worker:
+    # Metrics for host-side debugging — and for smoke-ping, which
+    # runs on the host and polls the worker /metrics (P0-082/P0-090).
+    ports:
+      - "9092:9092"

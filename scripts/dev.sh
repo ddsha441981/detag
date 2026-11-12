@@ -13,16 +13,24 @@
 #      redis (ops/compose.redis.yml, P0-046) — same shape: `up -d
 #      --wait`, then a redis-cli ping wait loop; native redis on
 #      :6379 is the fallback when docker cannot run containers.
-#      compose deps (ops/compose.dev.yml) — pending P0-085..P0-090.
+#      compose deps (ops/compose.base.yml + ops/compose.dev.yml,
+#      P0-085/P0-086) — attempted when docker answers; on this VM it
+#      never does (DOCKER-001), so the native path below takes over.
+#      NOTE (P0-086): on a docker-working machine the fragment
+#      postgres/redis above already hold :5432/:6379 and the
+#      container names, so the base+dev `up` fails on the conflict
+#      and this script keeps the fragment + native-api hybrid. The
+#      real restructure (try base+dev first, run api/worker in
+#      containers when it succeeds) is Phase-0-exit-gate work — the
+#      dev file's conveniences are verified statically until then
+#      (`just compose-dev-check`).
 #   3. cargo build of the workspace, then start api + worker in the
 #      background (logs in .scratch/dev/).
 #   4. wait for /healthz (api, exists since P0-002) and /readyz (db
 #      component since P0-035, redis component since P0-046;
 #      storage/models land in E0.7, P0-063).
 #   5. migrations (migrations/ dir) — pending P0-036.
-#   6. seed (ops/seed.sql) — pending P0-043. Assumption (logged in
-#      docs/09-STATE/ISSUES.md): P0-043 provides ops/seed.sql; if it uses
-#      a different artifact, this gate gets updated in that ticket.
+#   6. seed (just seed, P0-043) — plans + feature flags, idempotent.
 #   7. print URLs + a PARTIAL STACK summary when steps were skipped.
 #
 # The command stays in the foreground: Ctrl-C stops api + worker.
@@ -78,11 +86,21 @@ if [ -f ops/compose.db.yml ] && docker info >/dev/null 2>&1; then
 elif [ -f ops/compose.db.yml ]; then
     note_pending "DOCKER-001" "compose postgres (docker cannot run containers on this VM)"
 fi
-if [ -f ops/compose.dev.yml ]; then
-    echo "dev: starting compose deps..."
-    docker compose -f ops/compose.dev.yml up -d
+if docker info >/dev/null 2>&1; then
+    echo "dev: starting compose stack (base+dev)..."
+    if docker compose -f ops/compose.base.yml -f ops/compose.dev.yml --profile dev --env-file .env up -d --wait --wait-timeout 120; then
+        echo "dev: compose stack healthy"
+    else
+        # A failed start must not kill `just dev` (set -e): the native
+        # postgres/redis below can still satisfy the wait loops, and
+        # the native api/worker start in step 3. Clean the partial
+        # stack (it belongs to this project, not the fragments').
+        echo "dev: compose stack did not start — continuing with native services"
+        docker compose -f ops/compose.base.yml -f ops/compose.dev.yml --profile dev down >/dev/null 2>&1 || true
+        note_pending "DOCKER-001" "compose stack (docker cannot run containers on this VM)"
+    fi
 else
-    note_pending "P0-085..P0-090" "compose deps (ops/compose.dev.yml)"
+    note_pending "DOCKER-001" "compose stack (docker cannot run containers on this VM)"
 fi
 echo -n "dev: waiting for postgres on 127.0.0.1:5432 ..."
 for _ in $(seq 1 60); do
@@ -190,20 +208,24 @@ else
 fi
 
 # --- 6. seed ------------------------------------------------------------------
-if [ -f ops/seed.sql ]; then
-    echo "dev: seeding..."
-    just seed
-else
-    note_pending "P0-043" "seed data (ops/seed.sql)"
-fi
+# P0-043 provides `just seed` (the seed example: plans + feature
+# flags, idempotent). It runs against PF_DATABASE_URL — the compose
+# postgres when the stack is up (port published in dev), the native
+# postgres otherwise. (The old ops/seed.sql gate never landed; the
+# example is the seed mechanism.)
+echo "dev: seeding..."
+just seed
 
 # --- 7. URLs ------------------------------------------------------------------
 echo ""
 echo "dev: stack up"
 echo "  api:     $API_URL"
 echo "  healthz: $API_URL/healthz"
-echo "  web:     pending Phase 4 (Next.js console)"
-echo "  grafana: pending P0-085..P0-090 (compose)"
+echo "  docs:    $API_URL/docs (Swagger UI, dev only)"
+echo "  web:     http://127.0.0.1:3000 (console placeholder, P0-085)"
+echo "  minio:   http://127.0.0.1:9001 (console, dev only)"
+echo "  mailhog: http://127.0.0.1:8025 (dev only)"
+echo "  metrics: api :9090, worker :9092 (dev only)"
 if [ "${#PENDING[@]}" -gt 0 ]; then
     echo ""
     echo "dev: PARTIAL STACK — ${#PENDING[@]} step(s) skipped:"

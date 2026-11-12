@@ -229,6 +229,14 @@ compose-base-check:
     docker compose -f ops/compose.base.yml --profile dev --env-file .env.example config --services | grep -q '^web$'
     ! docker compose -f ops/compose.base.yml --profile prod --env-file .env.example config --services | grep -q '^web$'
 
+# Validate the dev compose override (P0-086): base+dev renders with the
+# dev conveniences (mailhog, published data/metrics ports, web). Static
+# only — it does not start containers. Requires the docker compose plugin.
+compose-dev-check:
+    docker compose -f ops/compose.base.yml -f ops/compose.dev.yml --profile dev --env-file .env.example config --quiet
+    docker compose -f ops/compose.base.yml -f ops/compose.dev.yml --profile dev --env-file .env.example config --services | grep -q '^mailhog$'
+    docker compose -f ops/compose.base.yml -f ops/compose.dev.yml --profile dev --env-file .env.example config --services | grep -q '^web$'
+
 # Image size gate (P0-083, NFR-63; P0-084 worker): build the api and
 # worker images and fail if either is over its ceiling (the check reads
 # the uncompressed size, a conservative proxy for the compressed limit —
