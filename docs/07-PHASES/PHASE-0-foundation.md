@@ -442,12 +442,13 @@
     - [x] expiry behavior tested
   - **Status:** `crates/storage/src/policy.rs`: `PresignPolicy` (defaults: part 600 s / token 900 s / results 6 h·24 h·72 h) + `PlanTier` parsed from `plans.code` (`free`/`pro`/`business`; unknown codes rejected, never defaulted). PUT part URLs: expiry configurable via new `PF_UPLOAD_PART_URL_TTL_SECS` (Settings field + `.env.example` + runbook env table + config-reference row; `just env-check` green, snapshot test updated) and guarded strictly below the token TTL — 900 s is refused at construction, 600 s accepted. GET result URLs: per-plan TTL from FR-J-09, explicitly exempt from the token-TTL guard (they are minted fresh per authenticated request and must outlive a 15-min token) and capped by the plan TTL (Free 7 h refused) and the 7-day SigV4 cap. Single-use: determined NOT supported — SigV4 has no such mechanism; `SINGLE_USE_SUPPORTED = false` (const-asserted) with compensating controls documented (short TTLs, one key per URL, upload ids die after complete/abort). Tests: 7 policy unit tests + a wiring test proving the policy's numbers are what the real S3 impl signs (`X-Amz-Expires=600` part / `21600` Free result, offline). `just verify` green on attempt 1.
 
-- [ ] **P0-056** — Key scheme + PII-free keys
+- [x] **P0-056** — Key scheme + PII-free keys
   - **Type:** feat · **Area:** storage · **Est:** M · **Deps:** P0-055 · **Prio:** P1
   - **Spec:** ADR-0011 layout {env}/{yyyy-mm}/{job_id}/{artifact}.{ext}; helper unit-tested; traversal rejected.
   - **AC:**
-    - [ ] no PII in keys
-    - [ ] traversal rejected
+    - [x] no PII in keys
+    - [x] traversal rejected
+  - **Status:** `crates/storage/src/keys.rs`: `storage_key(env, date, job_id, kind, ext)` builds `{env}/{yyyy-mm}/{job_id}/{stem}.{ext}` per ADR-0011; `ArtifactKind` covers the input plus the six `artifacts.type` values (`output|mask|preview_before|preview_after|report|batch_zip`), with fixed extensions enforced for `report.json` / `batch.zip` and caller-supplied (lowercased, shape-validated) extensions otherwise. No PII by construction: `env` must be `dev`/`staging`/`prod` (emails/usernames rejected), the date is a `NaiveDate`, the job id a `Uuid`, stems from the enum — the original filename lives in the DB row, never in the key; a property test asserts built keys are only `[a-z0-9-/._]`. Traversal rejected at construction (bad env/ext/`..`/slash/dot/whitespace/NUL) and again on read-back via `parse_storage_key`, which validates all four segments (env, `yyyy-mm` with month 01–12, UUID job id, known stem, fixed ext). Tests: 8 key tests (layout, distinct stems, lowercasing, fixed exts, traversal+PII rejection, PII-free property, parse round-trip, parse rejection of 10 malformed keys). `just verify` green on attempt 1.
 
 - [ ] **P0-057** — Multipart session mgmt
   - **Type:** feat · **Area:** storage · **Est:** S · **Deps:** P0-056 · **Prio:** P1
