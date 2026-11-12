@@ -250,6 +250,16 @@ compose-prod-check:
     docker compose -f ops/compose.base.yml -f ops/compose.prod.yml --profile prod --env-file .env.example config | grep -q 'PF_ENVIRONMENT: prod'
     docker compose -f ops/compose.base.yml -f ops/compose.prod.yml --profile prod --env-file .env.example config | grep -q 'memory: "2147483648"'
 
+# Validate healthchecks everywhere (P0-088): every service except the
+# one-shot bootstrap has a healthcheck (api/worker via their
+# Dockerfiles), each inside the 120 s smoke budget, and the
+# depends_on graph waits on healthy/completed services. Static only —
+# it renders both profiles, it does not start containers (the live
+# `up --wait` check waits for CI/E0.9's smoke, P0-090). Requires the
+# docker compose plugin.
+compose-health-check:
+    python3 scripts/check_compose_health.py
+
 # Image size gate (P0-083, NFR-63; P0-084 worker): build the api and
 # worker images and fail if either is over its ceiling (the check reads
 # the uncompressed size, a conservative proxy for the compressed limit —

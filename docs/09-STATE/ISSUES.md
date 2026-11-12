@@ -45,7 +45,7 @@
 - Symptom: `crates/core/tests/pubsub_live.rs:179` failed once during the P0-060 `just verify` run (attempt 1 red); attempt 2 green with no code change. Single occurrence so far — not yet a pattern.
 - Cause (suspected): timing-sensitive Redis pubsub test under load, same family as FLAKY-001. P0-060 touches only storage/GC code and does not change pubsub.
 - Update 2026-11-12 (P0-071): second occurrence — `just verify` attempt 2 red in `pubsub_live`, attempt 3 green with no code change; the test passes in isolation. P0-071 touches only api test code and cannot affect pubsub. Two occurrences now, still timing-only — keep watching; a third occurrence should promote it to a hardening ticket like FLAKY-001.
-- Update 2026-11-12 (P0-082): THIRD occurrence — `slow_consumer_drops_safely` failed in `just verify` attempt 1, passed on retry with no code change (P0-082 touches only worker code and cannot affect pubsub). Per the watch rule this now qualifies for a hardening ticket — file one in the Phase 1 hardening pass; until then re-running `just verify` is the workaround.
+- Update 2026-11-12 (P0-088): fourth occurrence — `slow_consumer_drops_safely` failed in `just verify` attempt 1, passed on retry with no code change (329 passed, 0 failed). P0-088 touches only compose/ops/docs/scripts and cannot affect pubsub. Still the known timing race — no new evidence.
 - Status: open — promoted to hardening-ticket candidate (see update above); until then re-running `just verify` is the workaround.
 
 ### ASSUMPTION-004 [assumption] Dashboards validated statically; "visible in Grafana" unverified until E0.9 (P0-030)

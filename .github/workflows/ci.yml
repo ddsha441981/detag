@@ -110,6 +110,8 @@ jobs:
         run: just compose-dev-check
       - name: compose-prod-check (base+prod renders with caddy, api unpublished)
         run: just compose-prod-check
+      - name: compose-health-check (every service has a healthcheck, 120s budget)
+        run: just compose-health-check
       - name: migrate (clean migrate on the empty CI database, twice for idempotency)
         run: |
           just migrate

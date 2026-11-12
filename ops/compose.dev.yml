@@ -59,6 +59,15 @@ services:
     # mailhog:1025; nothing on the host needs to send mail).
     ports:
       - "8025:8025"
+    # Healthcheck (P0-088): mailhog:1.0.1 is alpine-based, so busybox
+    # wget is in the image. The messages API answers 200 with an
+    # empty list when no mail has arrived yet.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8025/api/v2/messages"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   api:
     # The api port is published in dev only (P0-087 moved it out of

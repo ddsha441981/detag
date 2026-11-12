@@ -40,6 +40,23 @@ services:
     ports:
       - "80:80"
       - "443:443"
+    # The edge must not go healthy before the api it proxies to
+    # (P0-088): `up --wait` then reports a working stack, not just
+    # a listening socket.
+    depends_on:
+      api:
+        condition: service_healthy
+    # Healthcheck (P0-088): the caddy image ships curl (alpine +
+    # ca-certificates + curl, see its Dockerfile). It probes /healthz
+    # THROUGH the proxy, so a healthy caddy means the whole edge path
+    # works — if the api is down, caddy reports unhealthy too, and
+    # `docker compose ps` shows the api unhealthy alongside it.
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     environment:
       DOMAIN: ${PF_DOMAIN:-localhost}
     volumes:

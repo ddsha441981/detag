@@ -174,6 +174,13 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      # The bucket must exist before the api serves: /readyz reports
+      # storage down until the bootstrap creates it (P0-088). The
+      # bootstrap exits 0 in seconds once minio is healthy, and a
+      # failed bootstrap blocks the api loudly instead of serving
+      # with a missing bucket.
+      bootstrap:
+        condition: service_completed_successfully
     # No ports published here: dev publishes :8080 directly (P0-086);
     # prod reaches the api only via caddy (P0-087). The metrics port
     # is never published from base — Prometheus scrapes it over the
@@ -203,8 +210,10 @@ services:
       PF_LOG_LEVEL: ${PF_LOG_LEVEL:-info}
       PF_OTEL_ENDPOINT: ${PF_OTEL_ENDPOINT:-}
     # Healthcheck comes from the image (Dockerfile.api HEALTHCHECK on
-    # /healthz); compose uses it automatically. P0-088 audits that
-    # every service has one.
+    # /healthz); compose uses it automatically. The check script
+    # (scripts/check_compose_health.py, P0-088) verifies the
+    # Dockerfile directly — `docker compose config` cannot see an
+    # image healthcheck until the image is built.
 
   worker:
     build:
@@ -221,6 +230,10 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      # Same bucket ordering as the api (P0-088): the worker must not
+      # consume jobs before the bootstrap creates the bucket.
+      bootstrap:
+        condition: service_completed_successfully
     environment:
       PF_METRICS_HOST: 0.0.0.0
       PF_WORKER_METRICS_PORT: ${PF_WORKER_METRICS_PORT:-9092}
@@ -246,7 +259,9 @@ services:
     volumes:
       - models:/models
     # Healthcheck comes from the image (Dockerfile.worker HEALTHCHECK
-    # on /metrics :9092); compose uses it automatically.
+    # on /metrics :9092); compose uses it automatically. Verified
+    # from the Dockerfile by scripts/check_compose_health.py (P0-088),
+    # like the api's — see the note above.
 
   # Console placeholder (dev only — P0-085): the Next.js console
   # lands in Phase 4. Until then this serves a stub page on the dev
@@ -263,7 +278,14 @@ services:
       - "3000:80"
     volumes:
       - ./web-placeholder/index.html:/usr/share/nginx/html/index.html:ro
-    # Healthcheck lands with P0-088 (every service has one).
+    # Healthcheck (P0-088): nginx:1.27-alpine is alpine-based, so
+    # busybox wget is in the image. The stub page must answer 200.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
 
 networks:
   edge:

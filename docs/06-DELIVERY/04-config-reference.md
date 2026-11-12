@@ -11,6 +11,7 @@
 | `PF_API_HOST` | `127.0.0.1` | api |
 | `PF_API_PORT` | `8080` | api |
 | `PF_DATABASE_URL` | `postgres://pf:pf@localhost:5432/pf` | api, worker |
+| `PF_DOMAIN` | `localhost` | caddy (compose) |
 | `PF_ENGINE_GPU` | `0` | worker/engine |
 | `PF_ENGINE_MODELS_DIR` | `./models` | worker/engine |
 | `PF_ENGINE_TILES_MAX` | `1024` | worker/engine |

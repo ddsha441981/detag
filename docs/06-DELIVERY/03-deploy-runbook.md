@@ -100,6 +100,40 @@ docker compose -f ops/compose.base.yml -f ops/compose.prod.yml --profile prod --
   `PF_ENVIRONMENT: prod`, and the worker's 2g cap). Live `up` waits
   for CI/E0.9's smoke (P0-090, DOCKER-001).
 
+### Healthchecks (P0-088)
+
+Every service except the one-shot bootstrap has a healthcheck, and
+`docker compose up -d --wait` blocks until all of them are healthy.
+`just smoke` (P0-090) uses `--wait-timeout 120` — it fails if any
+service is still unhealthy after 120 s. Each check's worst case to
+healthy (start period + interval x retries) is inside that budget;
+`just compose-health-check` enforces all of this statically (it
+renders both profiles and reads the api/worker checks out of the
+Dockerfiles, because `docker compose config` cannot see an image
+HEALTHCHECK until the image is built).
+
+| Service | Check | What it proves |
+| --- | --- | --- |
+| postgres | `pg_isready` (5s x 10, start 10s) | the database accepts connections |
+| redis | `redis-cli ping` (5s x 10, start 10s) | the cache answers |
+| minio | `curl -f /minio/health/live` (5s x 10, start 10s) | object storage is live |
+| api | image HEALTHCHECK on `/healthz` (10s x 3, start 10s) | the api serves (see "Health endpoints" below) |
+| worker | image HEALTHCHECK on `/metrics` :9092 (10s x 3, start 10s) | the worker process + metrics server are up |
+| web (dev) | `wget --spider /` (5s x 10, start 5s) | the stub page answers 200 |
+| mailhog (dev) | `wget --spider :8025/api/v2/messages` (5s x 10, start 10s) | the fake inbox API answers |
+| caddy (prod) | `curl -f /healthz` through the proxy (5s x 10, start 10s) | the whole edge path works — a healthy caddy means caddy + api both up; if the api is down, caddy reports unhealthy too and `docker compose ps` shows the api unhealthy alongside it |
+
+Startup ordering (`depends_on`): the api and worker wait for
+postgres/redis/minio `service_healthy` AND for the bootstrap
+`service_completed_successfully` — the bucket must exist before the
+api serves (`/readyz` reports storage down until it does) or the
+worker consumes jobs; a failed bootstrap blocks the api loudly
+instead of serving with a missing bucket. Caddy waits for the api
+`service_healthy`. The bootstrap itself is one-shot (`restart:
+"no"`) and has no healthcheck by design — its completion is the
+signal. Live `up --wait` waits for CI/E0.9's smoke (P0-090,
+DOCKER-001).
+
 ### Dev loop (P0-086)
 
 `just dev` is the entrypoint: compose stack (base+dev) when docker
