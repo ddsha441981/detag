@@ -83,8 +83,16 @@ jobs:
         run: python3 scripts/validate_dashboards.py
       - name: prometheus-check (config + alert rules)
         run: python3 scripts/validate_prometheus.py
+      - name: Install just (task runner, needed by the steps below)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
       - name: compose-db-check (Postgres compose file validates)
         run: just compose-db-check
+      - name: migrate (clean migrate on the empty CI database, twice for idempotency)
+        run: |
+          just migrate
+          just migrate
       - name: Install nextest + llvm-cov
         uses: taiki-e/install-action@v2
         with:

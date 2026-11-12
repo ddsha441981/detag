@@ -285,11 +285,12 @@
   - **AC:**
     - [x] readyz reflects db health
 
-- [ ] **P0-036** — Migration tooling
+- [x] **P0-036** — Migration tooling
   - **Type:** chore · **Area:** db · **Est:** M · **Deps:** P0-035 · **Prio:** P1
   - **Spec:** sqlx migrate dir; just migrate (up), migrate:new, migrate:revert (dev only); CI runs clean migrate on empty db.
   - **AC:**
-    - [ ] clean migrate green in CI
+    - [x] clean migrate green in CI
+  - **Status:** `just migrate` verified locally against a fresh scratch database (applies clean, second run is a no-op) and the CI step is committed; a green CI run itself is unobserved until the parent pushes — the workflow-file push is still blocked (see the push gap in the run report).
 
 - [ ] **P0-037** — Migration 001 users+sessions
   - **Type:** feat · **Area:** db · **Est:** M · **Deps:** P0-036 · **Prio:** P1

@@ -70,9 +70,22 @@ dev:
 bench:
     @echo "pending: benches land in P0-097" >&2; exit 1
 
-# Apply sqlx migrations (tooling lands in P0-036).
+# Apply pending sqlx migrations from migrations/ (P0-036, embedded
+# Migrator — no sqlx-cli needed). Uses PF_DATABASE_URL (dev default
+# when unset). Idempotent: a second run applies nothing.
 migrate:
-    @echo "pending: migration tooling lands in P0-036" >&2; exit 1
+    cargo run --quiet -p detag-core --example migrate -- up
+
+# Create a new reversible migration pair (P0-036):
+# migrations/<UTC timestamp>_<name>.up.sql + .down.sql.
+migrate-new name:
+    cargo run --quiet -p detag-core --example migrate -- new {{name}}
+
+# Revert the last applied migration (P0-036). DEV ONLY — the runner
+# refuses any database that is not localhost, and only reversible
+# migrations (an .up.sql/.down.sql pair) can revert.
+migrate-revert:
+    cargo run --quiet -p detag-core --example migrate -- revert
 
 # Seed plans, feature flags, admin invite (lands in P0-043).
 seed:

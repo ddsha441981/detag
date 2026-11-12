@@ -143,21 +143,7 @@ fi
 # --- 5. migrations ------------------------------------------------------------
 if [ -d migrations ] && ls migrations/*.sql >/dev/null 2>&1; then
     echo "dev: applying migrations..."
-    # The migrate recipe is still the P0-036 stub (exits 1 with a
-    # "pending" message) while migration files already exist (P0-022's
-    # 0001_feature_flags.sql) — a bare `just migrate` under `set -e`
-    # would kill `just dev` before it ever reports "stack up". Swallow
-    # ONLY the stub's exact message; any other failure is fatal.
-    # P0-036 removes this special case when the tooling lands: then a
-    # failed migrate must fail the dev command.
-    if ! migrate_out=$(just migrate 2>&1); then
-        if echo "$migrate_out" | grep -q "pending: migration tooling lands in P0-036"; then
-            note_pending "P0-036" "migrations (migrations/)"
-        else
-            echo "$migrate_out" >&2
-            exit 1
-        fi
-    fi
+    just migrate
 else
     note_pending "P0-036" "migrations (migrations/)"
 fi
