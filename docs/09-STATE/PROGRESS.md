@@ -38,7 +38,7 @@
 2. P0-080 — Heartbeat + worker metrics
 3. P0-081 — Graceful drain
 4. P0-082 — Worker smoke job
-5. P0-083 — Queue dashboards
+5. P0-083 — Dockerfile.api
 
 ## Bench history (append-only)
 
