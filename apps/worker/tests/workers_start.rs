@@ -28,6 +28,7 @@ fn test_config() -> WorkerConfig {
             .unwrap_or_else(|_| "redis://localhost:6379".to_string()),
         concurrency: 1,
         namespace_prefix: format!("pf:test-queue-{}", Uuid::now_v7()),
+        dlq_prefix: format!("pf:test-dlq-{}", Uuid::now_v7()),
     }
 }
 

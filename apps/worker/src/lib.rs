@@ -5,6 +5,7 @@
 //! lives here so integration tests (`apps/worker/tests/`)
 //! can drive it without spawning the binary.
 
+pub mod dlq;
 pub mod envelope;
 pub mod queue_hooks;
 pub mod registry;

@@ -41,6 +41,7 @@
 //! so equal jobs spread across the window instead of
 //! thundering-herding on the same second.
 
+use crate::dlq::DeadLetterSink;
 use crate::envelope::JobEnvelope;
 use crate::queue_hooks::QueueHooks;
 use apalis::prelude::*;
@@ -224,16 +225,25 @@ pub struct RetryLayer<K> {
     policy: RetryPolicy,
     sink: K,
     hooks: QueueHooks,
+    dlq: Arc<dyn DeadLetterSink + Send + Sync>,
     queue: &'static str,
 }
 
 impl<K> RetryLayer<K> {
-    /// A layer for `queue` with `policy`, event `sink` and metric `hooks`.
-    pub fn new(policy: RetryPolicy, sink: K, hooks: QueueHooks, queue: &'static str) -> Self {
+    /// A layer for `queue` with `policy`, event `sink`, metric
+    /// `hooks` and dead-letter `dlq`.
+    pub fn new(
+        policy: RetryPolicy,
+        sink: K,
+        hooks: QueueHooks,
+        dlq: Arc<dyn DeadLetterSink + Send + Sync>,
+        queue: &'static str,
+    ) -> Self {
         Self {
             policy,
             sink,
             hooks,
+            dlq,
             queue,
         }
     }
@@ -251,6 +261,7 @@ where
             policy: self.policy,
             sink: self.sink.clone(),
             hooks: self.hooks.clone(),
+            dlq: self.dlq.clone(),
             queue: self.queue,
         }
     }
@@ -268,6 +279,7 @@ pub struct RetryService<S, K> {
     policy: RetryPolicy,
     sink: K,
     hooks: QueueHooks,
+    dlq: Arc<dyn DeadLetterSink + Send + Sync>,
     queue: &'static str,
 }
 
@@ -293,6 +305,7 @@ where
         let policy = self.policy;
         let sink = self.sink.clone();
         let hooks = self.hooks.clone();
+        let dlq = self.dlq.clone();
         let queue = self.queue;
         Box::pin(async move {
             let job_id = req.args.job_id;
@@ -306,13 +319,28 @@ where
                     Err(err) => {
                         // An abort from the handler itself is
                         // final — never retry it. It still goes to
-                        // dead (the ack path), so count it.
+                        // dead (the ack path), so count it and file
+                        // it in the DLQ like any other death.
                         if matches!(err, Error::Abort(_)) {
                             hooks.dead(queue);
+                            dlq.quarantine(
+                                &req.args,
+                                queue,
+                                "aborted by handler",
+                                Some(&err.to_string()),
+                            )
+                            .await;
                             return Err(err);
                         }
                         if !policy.should_retry(attempt) {
                             hooks.dead(queue);
+                            dlq.quarantine(
+                                &req.args,
+                                queue,
+                                "retries exhausted",
+                                Some(&err.to_string()),
+                            )
+                            .await;
                             tracing::error!(
                                 job_id = %job_id,
                                 kind = %kind,
@@ -375,6 +403,7 @@ pub struct RetryExhausted {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dlq::test_support::RecordingDeadLetterSink;
     use crate::envelope::JobEnvelope;
     use detag_core::metrics::Metrics;
     use std::sync::Mutex;
@@ -530,11 +559,13 @@ mod tests {
         let calls = inner.calls.clone();
         let metrics = Metrics::new();
         let hooks = crate::queue_hooks::QueueHooks::new(metrics.queue().clone());
+        let dlq = RecordingDeadLetterSink::default();
         let mut service = RetryService {
             inner,
             policy: fast_policy(5),
             sink: sink.clone(),
             hooks,
+            dlq: Arc::new(dlq.clone()),
             queue: "pipeline",
         };
         let started = Instant::now();
@@ -576,11 +607,13 @@ mod tests {
         let calls = inner.calls.clone();
         let metrics = Metrics::new();
         let hooks = crate::queue_hooks::QueueHooks::new(metrics.queue().clone());
+        let dlq = RecordingDeadLetterSink::default();
         let mut service = RetryService {
             inner,
             policy: fast_policy(3),
             sink: sink.clone(),
             hooks,
+            dlq: Arc::new(dlq.clone()),
             queue: "cleanup",
         };
         let outcome = service.call(request()).await;
@@ -615,6 +648,17 @@ mod tests {
             "the 2 retries counted:\n{}",
             metrics.gather()
         );
+        // The death is filed in the DLQ with its payload snapshot.
+        let letters = dlq.letters.lock().expect("letters lock");
+        assert_eq!(letters.len(), 1, "one dead letter");
+        assert_eq!(letters[0].0, "cleanup", "filed under the queue");
+        assert_eq!(letters[0].1.kind, "ping");
+        assert_eq!(letters[0].2, "retries exhausted");
+        assert!(
+            letters[0].3.as_deref().unwrap_or_default().contains("boom"),
+            "the last error travels with the letter: {:?}",
+            letters[0].3
+        );
     }
 
     #[tokio::test]
@@ -644,11 +688,13 @@ mod tests {
         let sink = RecordingSink::default();
         let metrics = Metrics::new();
         let hooks = crate::queue_hooks::QueueHooks::new(metrics.queue().clone());
+        let dlq = RecordingDeadLetterSink::default();
         let mut service = RetryService {
             inner: AbortingService,
             policy: fast_policy(5),
             sink: sink.clone(),
             hooks,
+            dlq: Arc::new(dlq.clone()),
             queue: "pipeline",
         };
         let outcome = service.call(request()).await;
@@ -657,5 +703,9 @@ mod tests {
             sink.events.lock().expect("events lock").is_empty(),
             "an abort is not a retry — no event"
         );
+        // ...but the abort is still a death: it is filed in the DLQ.
+        let letters = dlq.letters.lock().expect("letters lock");
+        assert_eq!(letters.len(), 1, "one dead letter for the abort");
+        assert_eq!(letters[0].2, "aborted by handler");
     }
 }

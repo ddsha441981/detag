@@ -54,8 +54,8 @@ fn route_table_has_no_duplicates() {
     }
     assert_eq!(
         ROUTE_TABLE.len(),
-        62,
-        "ROUTE_TABLE must list the spec's 62 routes (auth 16 + uploads 4 + jobs 9 + billing 12 + admin 19 + meta 2)"
+        63,
+        "ROUTE_TABLE must list the spec's 63 routes (auth 16 + uploads 4 + jobs 9 + billing 12 + admin 20 + meta 2)"
     );
 }
 

@@ -103,6 +103,7 @@ Delivery: `PF-Signature: sha256=<hmac(secret, body+timestamp)>`, `PF-Timestamp` 
 | POST | `/v1/admin/users/{id}/impersonate` | reason; audited; returns scoped token |
 | GET | `/v1/admin/jobs?status=&kind=` | browse + inspect raw params/report |
 | POST | `/v1/admin/jobs/{id}/reprocess` · `/cancel` | audited |
+| GET | `/v1/admin/dlq?queue=&limit=` | dead-letter queue: quarantined jobs with payload snapshot (P0-078 stub — Phase 4 wires UI) |
 | GET/PUT | `/v1/admin/flags` | feature-flag editor |
 | GET/PUT | `/v1/admin/plans` | plan/entitlement editor |
 | GET | `/v1/admin/audit?actor=&action=` | audit query |

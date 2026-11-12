@@ -34,6 +34,7 @@ pub fn router() -> Router<AppState> {
                 .route("/jobs", get(stub))
                 .route("/jobs/{id}/reprocess", post(stub))
                 .route("/jobs/{id}/cancel", post(stub))
+                .route("/dlq", get(stub))
                 .route("/flags", get(stub).put(stub))
                 .route("/plans", get(stub).put(stub))
                 .route("/audit", get(stub))

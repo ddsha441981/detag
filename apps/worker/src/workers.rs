@@ -19,10 +19,11 @@
 //! envelope to the [`JobRegistry`](crate::registry::JobRegistry),
 //! which maps the kind to a handler (P0-076) or quarantines an
 //! unknown kind. The handler is wrapped in the P0-077 retry
-//! layer (per-queue policy, backoff, abort-to-dead). The DLQ
-//! (P0-078) and graceful drain (P0-081) extend this flow —
-//! nothing enqueues jobs in Phase 0, so it never runs in
-//! production today.
+//! layer (per-queue policy, backoff, abort-to-dead). Anything
+//! quarantined — or dead after retries — is filed in the DLQ
+//! (P0-078) with its payload snapshot. Graceful drain (P0-081)
+//! extends this flow — nothing enqueues jobs in Phase 0, so it
+//! never runs in production today.
 //!
 //! Storage defaults in force (apalis-redis `Config::default`):
 //! 100 ms poll, 10-job buffer, 5 max retries, 30 s keep-alive,
@@ -30,6 +31,7 @@
 //! retry count is the storage default — P0-077 sets the
 //! per-queue policy.
 
+use crate::dlq::{DeadLetterSink, RedisDeadLetterSink, DLQ_PREFIX};
 use crate::envelope::JobEnvelope;
 use crate::queue_hooks::{QueueHooks, QUEUES};
 use crate::registry::{DispatchOutcome, JobRegistry};
@@ -38,6 +40,8 @@ use apalis::prelude::*;
 use apalis_redis::{Config as RedisConfig, RedisStorage};
 use detag_core::config::Settings;
 use detag_core::db::DbPool;
+use detag_core::redis::{create_pool, RedisPoolConfig};
+use std::sync::Arc;
 
 /// Redis key prefix for the apalis queues
 /// (`pf:queue:{queue}:{suffix}`).
@@ -46,7 +50,8 @@ pub const QUEUE_NAMESPACE_PREFIX: &str = "pf:queue";
 /// What [`build_monitor`] needs. Built from [`Settings`] in
 /// production (`from_settings`); tests pass their own values
 /// (notably a unique `namespace_prefix`, so test jobs never
-/// land in the dev queues).
+/// land in the dev queues, and a unique `dlq_prefix`, so test
+/// letters never land in the dev DLQ).
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
     /// Redis URL (PF_REDIS_URL).
@@ -55,6 +60,8 @@ pub struct WorkerConfig {
     pub concurrency: usize,
     /// Namespace prefix for the apalis queues.
     pub namespace_prefix: String,
+    /// Key prefix for the dead-letter sets (`pf:dlq` in prod).
+    pub dlq_prefix: String,
 }
 
 impl WorkerConfig {
@@ -64,6 +71,7 @@ impl WorkerConfig {
             redis_url: settings.redis_url.clone(),
             concurrency: settings.worker_concurrency,
             namespace_prefix: QUEUE_NAMESPACE_PREFIX.to_string(),
+            dlq_prefix: DLQ_PREFIX.to_string(),
         }
     }
 
@@ -75,8 +83,9 @@ impl WorkerConfig {
 }
 
 /// Per-worker context, injected into every handler call: which
-/// queue this worker serves, the metrics hooks, and the kind
-/// registry that dispatches the envelope.
+/// queue this worker serves, the metrics hooks, the kind
+/// registry that dispatches the envelope, and the dead-letter
+/// sink that records quarantines.
 #[derive(Clone, Debug)]
 pub struct WorkerContext {
     /// The queue this worker serves (`pipeline`, ...).
@@ -85,6 +94,8 @@ pub struct WorkerContext {
     pub hooks: QueueHooks,
     /// Kind → handler map (P0-076).
     pub registry: JobRegistry,
+    /// Dead-letter sink (P0-078).
+    pub dlq: Arc<dyn DeadLetterSink + Send + Sync>,
 }
 
 /// Building the monitor failed. The Redis URL is never echoed —
@@ -94,6 +105,9 @@ pub enum WorkerError {
     /// The Redis connection could not be established.
     #[error("cannot connect to Redis (PF_REDIS_URL)")]
     RedisConnect(#[from] apalis_redis::RedisError),
+    /// The DLQ pool could not be built (bad PF_REDIS_URL).
+    #[error("cannot build the DLQ pool (PF_REDIS_URL)")]
+    DlqPool(#[from] detag_core::redis::RedisPoolError),
 }
 
 /// Build the monitor: connect once to Redis, then one
@@ -110,7 +124,8 @@ pub enum WorkerError {
 /// connection manager).
 ///
 /// Each worker's handler is wrapped in the P0-077 retry layer
-/// (per-queue policy + `job_events` sink from `pool`).
+/// (per-queue policy + `job_events` sink from `pool`). The DLQ
+/// pool (P0-078) is built once here and shared by every worker.
 pub async fn build_monitor(
     config: &WorkerConfig,
     hooks: QueueHooks,
@@ -118,6 +133,11 @@ pub async fn build_monitor(
 ) -> Result<Monitor, WorkerError> {
     let conn = apalis_redis::connect(config.redis_url.as_str()).await?;
     let sink = PostgresRetryEventSink::new(pool.clone());
+    let dlq_pool = create_pool(&config.redis_url, &RedisPoolConfig::default())?;
+    let dlq: Arc<dyn DeadLetterSink + Send + Sync> = Arc::new(RedisDeadLetterSink::new(
+        dlq_pool,
+        config.dlq_prefix.clone(),
+    ));
     let mut monitor = Monitor::new();
     for queue in QUEUES {
         let storage = RedisStorage::new_with_config(
@@ -129,6 +149,7 @@ pub async fn build_monitor(
                 queue,
                 hooks: hooks.clone(),
                 registry: JobRegistry::new(),
+                dlq: dlq.clone(),
             };
             let worker = WorkerBuilder::new(format!("{queue}-{replica}"))
                 .data(ctx)
@@ -136,6 +157,7 @@ pub async fn build_monitor(
                     RetryPolicy::for_queue(queue),
                     sink.clone(),
                     hooks.clone(),
+                    dlq.clone(),
                     queue,
                 ))
                 .backend(storage.clone())
@@ -147,15 +169,24 @@ pub async fn build_monitor(
 }
 
 /// Handler: version-check, hash-check, record the dequeue,
-/// dispatch by kind. A handler error propagates so apalis
-/// retries it under the P0-077 policy. A job this build cannot
-/// trust — unknown version, or a params hash that does not match
-/// the payload — is never executed and never retried: it is
-/// quarantined (counted + logged) and acknowledged. Retrying
-/// the same bytes cannot fix either failure.
+/// dispatch by kind. A handler error propagates so the P0-077
+/// retry layer retries it. A job this build cannot trust —
+/// unknown version, or a params hash that does not match the
+/// payload — is never executed and never retried: it is
+/// quarantined (counted + logged + filed in the DLQ with its
+/// payload snapshot) and acknowledged. Retrying the same bytes
+/// cannot fix either failure.
 async fn handle_envelope(job: JobEnvelope, ctx: Data<WorkerContext>) -> Result<(), Error> {
     if let Err(err) = job.check_version() {
         ctx.hooks.quarantined(ctx.queue);
+        ctx.dlq
+            .quarantine(
+                &job,
+                ctx.queue,
+                &format!("unsupported envelope version {}", job.version),
+                None,
+            )
+            .await;
         tracing::error!(
             job_id = %job.job_id,
             kind = %job.kind,
@@ -167,6 +198,9 @@ async fn handle_envelope(job: JobEnvelope, ctx: Data<WorkerContext>) -> Result<(
     }
     if !job.verify_params_hash() {
         ctx.hooks.quarantined(ctx.queue);
+        ctx.dlq
+            .quarantine(&job, ctx.queue, "params_hash mismatch", None)
+            .await;
         tracing::error!(
             job_id = %job.job_id,
             kind = %job.kind,
@@ -186,6 +220,9 @@ async fn handle_envelope(job: JobEnvelope, ctx: Data<WorkerContext>) -> Result<(
             );
         }
         DispatchOutcome::Quarantined { kind } => {
+            ctx.dlq
+                .quarantine(&job, ctx.queue, &format!("unknown kind {kind}"), None)
+                .await;
             tracing::info!(
                 job_id = %job.job_id,
                 kind = %kind,

@@ -1199,6 +1199,7 @@ dependencies = [
  "apalis",
  "apalis-redis",
  "chrono",
+ "deadpool-redis",
  "detag-core",
  "libc",
  "serde",
