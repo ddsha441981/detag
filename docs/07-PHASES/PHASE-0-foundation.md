@@ -128,11 +128,11 @@
     - [x] CI green on main
     - [x] artifacts uploaded
 
-- [ ] **P0-014** — Toolchain docs
+- [x] **P0-014** — Toolchain docs
   - **Type:** docs · **Area:** repo · **Est:** S · **Deps:** P0-013 · **Prio:** P1
   - **Spec:** Document pinned toolchain, MSRV, cargo-deny policy, release flow, version-update procedure (ADR on majors) in CONTRIBUTING.
   - **AC:**
-    - [ ] docs committed
+    - [x] docs committed
 
 ---
 
