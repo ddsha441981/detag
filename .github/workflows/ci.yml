@@ -112,6 +112,8 @@ jobs:
         run: just compose-prod-check
       - name: compose-health-check (every service has a healthcheck, 120s budget)
         run: just compose-health-check
+      - name: compose-env-check (compose vars wired from .env.example, no literal secrets)
+        run: just compose-env-check
       - name: migrate (clean migrate on the empty CI database, twice for idempotency)
         run: |
           just migrate

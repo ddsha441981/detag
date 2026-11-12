@@ -61,7 +61,16 @@ and inter-service URLs use service DNS names (`postgres`, `redis`,
 `minio`), never localhost. Validate with `just compose-base-check`
 (renders for no profile, dev and prod; asserts web is dev-only).
 The per-service fragments (`compose.{db,redis,minio}.yml`) stay as
-the VM-local host-networking path (ADR-0014). Live `up` waits for
+the VM-local host-networking path (ADR-0014). Env wiring is gated
+by `just compose-env-check` (P0-089): every `${VAR}` in every
+`ops/*.yml` must be a `.env.example` key with a matching default,
+every secret-named env value must be a `${...}` interpolation (no
+literal secrets in yml), and `$${VAR}` shell escapes must name a
+var the same service sets. One documented exception: the
+bootstrap's `PF_S3_ENDPOINT` defaults to `http://minio:9000` (the
+service DNS name) while `.env.example` defaults to
+`http://localhost:9000` (the host-side default) — container vs
+host, both correct in their runtime. Live `up` waits for
 CI/E0.9's smoke (P0-090, DOCKER-001).
 
 ### Prod stack (P0-087)

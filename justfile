@@ -260,6 +260,15 @@ compose-prod-check:
 compose-health-check:
     python3 scripts/check_compose_health.py
 
+# Validate compose env wiring (P0-089): every ${VAR} in every
+# ops/*.yml is a .env.example key with a matching default, every
+# secret-named env value is a ${...} interpolation (no literal
+# secrets in yml), and $${VAR} shell escapes name a var the same
+# service sets. Static only — it parses the files, it never starts
+# a container.
+compose-env-check:
+    python3 scripts/check_compose_env.py
+
 # Image size gate (P0-083, NFR-63; P0-084 worker): build the api and
 # worker images and fail if either is over its ceiling (the check reads
 # the uncompressed size, a conservative proxy for the compressed limit —
