@@ -108,6 +108,8 @@ jobs:
         run: just compose-base-check
       - name: compose-dev-check (base+dev renders with mailhog + web)
         run: just compose-dev-check
+      - name: compose-prod-check (base+prod renders with caddy, api unpublished)
+        run: just compose-prod-check
       - name: migrate (clean migrate on the empty CI database, twice for idempotency)
         run: |
           just migrate

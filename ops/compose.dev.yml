@@ -61,10 +61,12 @@ services:
       - "8025:8025"
 
   api:
-    # Metrics for host-side debugging (8080 is already in base).
-    # SMTP goes to MailHog, not localhost (P0-086): inside the
-    # container localhost is the api container itself.
+    # The api port is published in dev only (P0-087 moved it out of
+    # base: prod reaches the api only via caddy). Metrics for
+    # host-side debugging (smoke-ping does not need it — it polls the
+    # worker /metrics — but a dev wants to curl it).
     ports:
+      - "${PF_API_PORT:-8080}:8080"
       - "9090:9090"
     environment:
       PF_SMTP_HOST: mailhog

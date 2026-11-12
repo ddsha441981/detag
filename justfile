@@ -237,6 +237,19 @@ compose-dev-check:
     docker compose -f ops/compose.base.yml -f ops/compose.dev.yml --profile dev --env-file .env.example config --services | grep -q '^mailhog$'
     docker compose -f ops/compose.base.yml -f ops/compose.dev.yml --profile dev --env-file .env.example config --services | grep -q '^web$'
 
+# Validate the prod compose override (P0-087): base+prod renders with
+# caddy as the only entry point (api port unpublished, data ports
+# unpublished), PF_ENVIRONMENT: prod, mem caps, restart policies and log
+# rotation. Static only — it does not start containers (the live `up`
+# waits for CI/E0.9's smoke, P0-090). Requires the docker compose plugin.
+compose-prod-check:
+    docker compose -f ops/compose.base.yml -f ops/compose.prod.yml --profile prod --env-file .env.example config --quiet
+    docker compose -f ops/compose.base.yml -f ops/compose.prod.yml --profile prod --env-file .env.example config --services | grep -q '^caddy$'
+    ! docker compose -f ops/compose.base.yml -f ops/compose.prod.yml --profile prod --env-file .env.example config --services | grep -q '^web$'
+    ! docker compose -f ops/compose.base.yml -f ops/compose.prod.yml --profile prod --env-file .env.example config | grep -q 'published: "8080"'
+    docker compose -f ops/compose.base.yml -f ops/compose.prod.yml --profile prod --env-file .env.example config | grep -q 'PF_ENVIRONMENT: prod'
+    docker compose -f ops/compose.base.yml -f ops/compose.prod.yml --profile prod --env-file .env.example config | grep -q 'memory: "2147483648"'
+
 # Image size gate (P0-083, NFR-63; P0-084 worker): build the api and
 # worker images and fail if either is over its ceiling (the check reads
 # the uncompressed size, a conservative proxy for the compressed limit —

@@ -1,0 +1,128 @@
+# compose.prod.yml — prod overrides for the Detag stack (P0-087).
+#
+# Layered over ops/compose.base.yml — NEVER used alone: this file only
+# overrides base services (+ caddy), and on its own the services it
+# touches would be incomplete (no image/build).
+#
+#   docker compose -f ops/compose.base.yml -f ops/compose.prod.yml --profile prod --env-file .env up -d --wait
+#
+# The --profile prod matters: the base file's `web` placeholder is
+# dev-only, so prod has no web service.
+#
+# What "prod" means here:
+# - Caddy edge (auto-TLS): the only entry point. Caddy listens on
+#   :80/:443 and proxies everything to the api (ops/caddy/Caddyfile).
+#   The api's port is NOT published in prod — the base file does not
+#   publish it either (dev publishes :8080 directly; P0-087 moved it
+#   out of base). Nothing else is published: postgres/redis/minio
+#   stay on the internal network, unreacheable from outside.
+# - Internal isolation: PF_ENVIRONMENT: prod (so /docs is never served,
+#   P0-067); the MinIO console is not published (dev publishes :9001).
+# - Resource limits (mem caps, P0-087): sized for the 4 vCPU / 8 GB
+#   VPS in the runbook — api 1g, worker 2g (engine models), postgres
+#   1g, redis 256m (matches its maxmemory cap), minio 1g, caddy 256m;
+#   ~5.5g total, leaving headroom for the host.
+# - Restart policies: unless-stopped for every long-running service
+#   (the one-shot bootstrap keeps restart: "no" from base).
+# - Log rotation: json-file, 10m x 3 files per service (30 MB max).
+# - Backups (pg_dump + minio mirror cron) are a runbook procedure,
+#   not a compose service — see docs/06-DELIVERY/03-deploy-runbook.md.
+#
+# Live verification is deferred to CI (DOCKER-001: containers cannot
+# start on this VM). What IS verified here: `docker compose config`
+# renders base+prod (see `just compose-prod-check`).
+services:
+  caddy:
+    image: caddy:2.11-alpine
+    container_name: detag-caddy
+    networks:
+      - edge
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${PF_DOMAIN:-localhost}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  api:
+    environment:
+      PF_ENVIRONMENT: prod
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  worker:
+    environment:
+      PF_ENVIRONMENT: prod
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  postgres:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  redis:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  minio:
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+volumes:
+  caddy_data:
+    name: detag_caddy_data
+  caddy_config:
+    name: detag_caddy_config

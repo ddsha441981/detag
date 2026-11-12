@@ -174,10 +174,10 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
-    # The api port is published; the metrics port is NOT — Prometheus
-    # scrapes it over the internal network (P0-088 wires that up).
-    ports:
-      - "${PF_API_PORT:-8080}:8080"
+    # No ports published here: dev publishes :8080 directly (P0-086);
+    # prod reaches the api only via caddy (P0-087). The metrics port
+    # is never published from base — Prometheus scrapes it over the
+    # internal network (P0-088 wires that up).
     environment:
       # Bind hosts (P0-085): 0.0.0.0 inside the container — 127.0.0.1
       # here would be the container's own loopback, unreachable from

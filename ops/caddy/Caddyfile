@@ -1,0 +1,12 @@
+# Caddyfile — Detag edge proxy (P0-087).
+#
+# DOMAIN comes from the compose environment (PF_DOMAIN, default
+# localhost). Auto-HTTPS: Caddy provisions a certificate when DOMAIN
+# is a public DNS name; localhost stays plain HTTP. No TLS config
+# here by design — Caddy's automatic HTTPS is the feature.
+#
+# Everything proxies to the api (the console lands in Phase 4; until
+# then there is no web service in prod, so there is no web route).
+{$DOMAIN} {
+	reverse_proxy api:8080
+}

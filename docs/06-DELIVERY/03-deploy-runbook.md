@@ -3,10 +3,10 @@
 ## First deploy (single VPS)
 
 1. Provision Ubuntu LTS, 4 vCPU / 8 GB / 100 GB SSD, Docker + compose plugin installed.
-2. Clone repo, copy `ops/compose.prod.yml`; create `.env` from `.env.example`:
-   - Required: `PF_JWT_SECRET` (64B random), `PF_DATABASE_URL`, `PF_REDIS_URL`, `PF_S3_*` (or bundled MinIO), `PF_PUBLIC_BASE_URL`, `PF_STRIPE_SECRET_KEY` (+ webhook secret), SMTP vars.
+2. Clone repo, create `.env` from `.env.example`:
+   - Required: `PF_JWT_SECRET` (64B random), `PF_DATABASE_URL`, `PF_REDIS_URL`, `PF_S3_*` (or bundled MinIO), `PF_PUBLIC_BASE_URL`, `PF_DOMAIN` (the public domain caddy serves; localhost = plain HTTP), `PF_STRIPE_SECRET_KEY` (+ webhook secret), SMTP vars.
    - Feature flags default OFF (razorpay, gpu, provenance_strip).
-3. `docker compose up -d` → `just migrate deploy` → create admin: `docker compose exec api pf-admin-create --email you@example.com` (prints one-time setup link).
+3. `docker compose -f ops/compose.base.yml -f ops/compose.prod.yml --profile prod --env-file .env up -d --wait` → `just migrate deploy` → create admin: `docker compose -f ops/compose.base.yml -f ops/compose.prod.yml --profile prod exec api pf-admin-create --email you@example.com` (prints one-time setup link).
 4. Caddy front: automatic HTTPS for the domain; only caddy + web + api are on the `edge` network; db/redis/minio on `internal` only.
 5. Verify: `/healthz` 200, `/readyz` 200, register test user, upload test image, job succeeds, quality report shows pass.
 6. Backups: cron `ops/backup.sh` (pg_dump + minio mirror to off-host storage) nightly; verify restore doc step below.
@@ -64,6 +64,42 @@ The per-service fragments (`compose.{db,redis,minio}.yml`) stay as
 the VM-local host-networking path (ADR-0014). Live `up` waits for
 CI/E0.9's smoke (P0-090, DOCKER-001).
 
+### Prod stack (P0-087)
+
+`ops/compose.prod.yml` layers over the base (never alone — it only
+overrides base services, plus caddy):
+
+```sh
+docker compose -f ops/compose.base.yml -f ops/compose.prod.yml --profile prod --env-file .env up -d --wait
+```
+
+- **Caddy edge (auto-TLS):** `caddy:2.11-alpine` (pinned, verified
+  via the Hub API) listens on :80/:443 and is the only entry point —
+  it reverse-proxies everything to the api (`ops/caddy/Caddyfile`).
+  `PF_DOMAIN` (default `localhost`) is the domain caddy serves:
+  localhost stays plain HTTP; a public DNS name gets a certificate
+  provisioned automatically. Set `PF_PUBLIC_BASE_URL` to match
+  (`https://<domain>`).
+- **Internal isolation:** nothing but :80/:443 is published — the
+  api port is unpublished in prod (dev publishes :8080 directly,
+  P0-086), postgres/redis/minio stay on the `internal` network, the
+  MinIO console is not published, and `PF_ENVIRONMENT: prod` means
+  `/docs` is never served (P0-067). The console lands in Phase 4;
+  until then there is no web service in prod.
+- **Resource limits (mem caps):** sized for the 4 vCPU / 8 GB VPS
+  above — api 1g, worker 2g (engine models), postgres 1g, redis
+  256m (matches its maxmemory cap), minio 1g, caddy 256m; ~5.5g
+  total, leaving headroom for the host.
+- **Restart policies:** `unless-stopped` for every long-running
+  service (the one-shot minio bootstrap keeps `restart: "no"`).
+- **Log rotation:** json-file, `10m` x 3 files per service (30 MB
+  max). Backups (pg_dump + minio mirror cron) are a runbook
+  procedure, not a compose service — see step 6 above.
+- Validate with `just compose-prod-check` (renders base+prod;
+  asserts caddy present, web absent, the api port unpublished,
+  `PF_ENVIRONMENT: prod`, and the worker's 2g cap). Live `up` waits
+  for CI/E0.9's smoke (P0-090, DOCKER-001).
+
 ### Dev loop (P0-086)
 
 `just dev` is the entrypoint: compose stack (base+dev) when docker
@@ -98,6 +134,7 @@ in a real inbox.
 | `PF_S3_ENDPOINT`, `PF_S3_BUCKET`, `PF_S3_ACCESS_KEY`, `PF_S3_SECRET_KEY`, `PF_S3_REGION` | storage | MinIO localhost:9000 | private bucket required |
 | `PF_JWT_SECRET` | api | dev-fixed | 64B in prod; rotation = dual-verify window |
 | `PF_PUBLIC_BASE_URL` | api | http://localhost:8080 | used in signed URLs |
+| `PF_DOMAIN` | caddy (compose) | localhost | public domain caddy serves (P0-087): localhost = plain HTTP; a public DNS name gets auto-HTTPS; prod sets the real domain and PF_PUBLIC_BASE_URL to match |
 | `PF_API_PORT` | api | 8080 | port the api binds on PF_API_HOST |
 | `PF_API_HOST` | api | 127.0.0.1 | IP the api binds on (P0-085): loopback natively; compose sets 0.0.0.0 — inside a container 127.0.0.1 is the container's own loopback, unreachable from other containers or published ports |
 | `PF_METRICS_HOST` | api, worker | 127.0.0.1 | IP the internal /metrics servers bind on (P0-085): same rule as PF_API_HOST |
