@@ -24,10 +24,19 @@
 #
 # Env: every var is explicit `environment:` with a `${VAR:-default}`
 # matching `.env.example` — no `env_file:`, so the file validates with
-# no `.env` present. Inter-service URLs use service DNS names
+# no `.env` present. EXCEPTION (P0-105, secrets policy): secret vars
+# (`PF_JWT_SECRET`, `PF_S3_ACCESS_KEY`, `PF_S3_SECRET_KEY`,
+# `PF_POSTGRES_PASSWORD`) are BARE `${VAR}` references with NO default
+# — a literal default here would also be prod's default, since this
+# file layers under prod too. Their dev values come from the env file
+# (`--env-file .env`, copied from `.env.example` — placeholders only);
+# prod MUST provide real values in its own `.env` (a missing secret
+# fails the deploy fast: postgres/MinIO refuse to start).
+# `scripts/check_compose_secrets.py` (`just compose-secrets-check`)
+# enforces this. Inter-service URLs use service DNS names
 # (postgres/redis/minio), never localhost: inside a container
-# localhost is the container itself. The full wiring audit + the
-# no-literal-secrets grep gate land in P0-089.
+# localhost is the container itself. The full wiring audit landed in
+# P0-089; the no-literal-secrets gate lands here (P0-105).
 #
 # Live verification is deferred to CI (DOCKER-001: containers cannot
 # start on this VM). What IS verified here: `docker compose config`
@@ -46,7 +55,7 @@ services:
     command: ["postgres", "-c", "log_min_duration_statement=50ms"]
     environment:
       POSTGRES_USER: ${PF_POSTGRES_USER:-pf}
-      POSTGRES_PASSWORD: ${PF_POSTGRES_PASSWORD:-pf}
+      POSTGRES_PASSWORD: ${PF_POSTGRES_PASSWORD}
       POSTGRES_DB: ${PF_POSTGRES_DB:-pf}
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -100,8 +109,8 @@ services:
       - internal
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
-      MINIO_ROOT_USER: ${PF_S3_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${PF_S3_SECRET_KEY:-minioadmin}
+      MINIO_ROOT_USER: ${PF_S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${PF_S3_SECRET_KEY}
     volumes:
       - miniadata:/data
     healthcheck:
@@ -129,8 +138,8 @@ services:
       # container localhost is the bootstrap container itself.
       PF_S3_ENDPOINT: ${PF_S3_ENDPOINT:-http://minio:9000}
       PF_S3_BUCKET: ${PF_S3_BUCKET:-detag-dev}
-      PF_S3_ACCESS_KEY: ${PF_S3_ACCESS_KEY:-minioadmin}
-      PF_S3_SECRET_KEY: ${PF_S3_SECRET_KEY:-minioadmin}
+      PF_S3_ACCESS_KEY: ${PF_S3_ACCESS_KEY}
+      PF_S3_SECRET_KEY: ${PF_S3_SECRET_KEY}
     volumes:
       # The lifecycle config (P0-060): applied with `mc ilm import`
       # below. Path is relative to this compose file (ops/).
@@ -195,16 +204,16 @@ services:
       PF_METRICS_PORT: ${PF_METRICS_PORT:-9090}
       # Built from the same POSTGRES_* vars as the postgres service,
       # so the URL always matches the database. (A password with URL
-      # special characters needs URL-encoding — dev default `pf` is
-      # safe; P0-089 audits this.)
-      PF_DATABASE_URL: postgres://${PF_POSTGRES_USER:-pf}:${PF_POSTGRES_PASSWORD:-pf}@postgres:5432/${PF_POSTGRES_DB:-pf}
+      # special characters needs URL-encoding — the dev password `pf`
+      # (compose.dev.yml) is safe; P0-089 audits this.)
+      PF_DATABASE_URL: postgres://${PF_POSTGRES_USER:-pf}:${PF_POSTGRES_PASSWORD}@postgres:5432/${PF_POSTGRES_DB:-pf}
       PF_REDIS_URL: redis://redis:6379
       PF_S3_ENDPOINT: http://minio:9000
       PF_S3_BUCKET: ${PF_S3_BUCKET:-detag-dev}
-      PF_S3_ACCESS_KEY: ${PF_S3_ACCESS_KEY:-minioadmin}
-      PF_S3_SECRET_KEY: ${PF_S3_SECRET_KEY:-minioadmin}
+      PF_S3_ACCESS_KEY: ${PF_S3_ACCESS_KEY}
+      PF_S3_SECRET_KEY: ${PF_S3_SECRET_KEY}
       PF_S3_REGION: ${PF_S3_REGION:-us-east-1}
-      PF_JWT_SECRET: ${PF_JWT_SECRET:-dev-fixed}
+      PF_JWT_SECRET: ${PF_JWT_SECRET}
       PF_PUBLIC_BASE_URL: ${PF_PUBLIC_BASE_URL:-http://localhost:8080}
       PF_ENVIRONMENT: ${PF_ENVIRONMENT:-dev}
       PF_LOG_LEVEL: ${PF_LOG_LEVEL:-info}
@@ -237,12 +246,12 @@ services:
     environment:
       PF_METRICS_HOST: 0.0.0.0
       PF_WORKER_METRICS_PORT: ${PF_WORKER_METRICS_PORT:-9092}
-      PF_DATABASE_URL: postgres://${PF_POSTGRES_USER:-pf}:${PF_POSTGRES_PASSWORD:-pf}@postgres:5432/${PF_POSTGRES_DB:-pf}
+      PF_DATABASE_URL: postgres://${PF_POSTGRES_USER:-pf}:${PF_POSTGRES_PASSWORD}@postgres:5432/${PF_POSTGRES_DB:-pf}
       PF_REDIS_URL: redis://redis:6379
       PF_S3_ENDPOINT: http://minio:9000
       PF_S3_BUCKET: ${PF_S3_BUCKET:-detag-dev}
-      PF_S3_ACCESS_KEY: ${PF_S3_ACCESS_KEY:-minioadmin}
-      PF_S3_SECRET_KEY: ${PF_S3_SECRET_KEY:-minioadmin}
+      PF_S3_ACCESS_KEY: ${PF_S3_ACCESS_KEY}
+      PF_S3_SECRET_KEY: ${PF_S3_SECRET_KEY}
       PF_S3_REGION: ${PF_S3_REGION:-us-east-1}
       PF_WORKER_CONCURRENCY: ${PF_WORKER_CONCURRENCY:-4}
       PF_WORKER_QUEUE_NAMESPACE: ${PF_WORKER_QUEUE_NAMESPACE:-pf:queue}

@@ -113,6 +113,8 @@ jobs:
           just templates-check
       - name: compose-db-check (Postgres compose file validates)
         run: just compose-db-check
+      - name: compose-secrets-check (no literal secrets in compose, P0-105)
+        run: just compose-secrets-check
       - name: compose-redis-check (Redis compose file validates)
         run: just compose-redis-check
       - name: compose-base-check (base renders for dev/prod, web is dev-only)

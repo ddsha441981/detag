@@ -208,6 +208,7 @@ in a real inbox.
 | `PF_REDIS_URL` | api, worker | redis://localhost:6379 | |
 | `PF_S3_ENDPOINT`, `PF_S3_BUCKET`, `PF_S3_ACCESS_KEY`, `PF_S3_SECRET_KEY`, `PF_S3_REGION` | storage | MinIO localhost:9000 | private bucket required |
 | `PF_JWT_SECRET` | api | dev-fixed | 64B in prod; rotation = dual-verify window |
+| `PF_RATE_LIMIT_IP_BURST`, `PF_RATE_LIMIT_IP_REFILL_PER_MIN`, `PF_RATE_LIMIT_ROUTE_BURST`, `PF_RATE_LIMIT_ROUTE_REFILL_PER_MIN` | api | 120 / 120 / 600 / 600 | token-bucket caps, per-IP + per-route (P0-103); refill 0 = never refills |
 | `PF_PUBLIC_BASE_URL` | api | http://localhost:8080 | used in signed URLs |
 | `PF_DOMAIN` | caddy (compose) | localhost | public domain caddy serves (P0-087): localhost = plain HTTP; a public DNS name gets auto-HTTPS; prod sets the real domain and PF_PUBLIC_BASE_URL to match |
 | `PF_API_PORT` | api | 8080 | port the api binds on PF_API_HOST |
@@ -271,6 +272,104 @@ until v1.0.0 is declared (see the release checklist).
 1. `docker compose` previous image tags (keep last 3 tagged images).
 2. Migrations: additive ones are compatible with previous app version — rolling back the image is enough. Contract migrations are never released in the same window as features.
 3. If queue stuck: `just queue::requeue-stuck` (visibility-timeout sweep — see "Visibility timeout (NFR-21)" below; the ticket spells it with a single colon, just only accepts the double-colon form).
+
+## Secret rotation (P0-105, drafted)
+
+Status: DRAFTED, not rehearsed. The procedures below are the
+intended ones; the Phase 5 hardening ticket rehearses them on
+staging with evidence ("JWT dual-key window procedure,
+stripe/smtp/s3 key rotation"). Until the rehearsal, treat any
+step that touches a live credential as owner-supervised.
+
+Principles:
+
+- A leaked credential rotates IMMEDIATELY (not on the next
+  schedule): rotate first, file an S1 issue, then purge history
+  only with owner approval (see `.gitleaks.toml` + CONTRIBUTING
+  "Secrets policy").
+- Rotation never means downtime for the api: the new credential
+  is introduced alongside the old one, traffic moves to it, and
+  only then is the old one revoked. Never delete the old
+  credential before the new one is proven live.
+- Secrets live only in the deployment `.env` (never committed,
+  never in logs). Prod must set a real 64-byte `PF_JWT_SECRET`
+  — the dev default (`dev-fixed`) must never reach prod. Known
+  gap (P0-105): the api does NOT fail fast in prod on the
+  placeholder default — the runbook checklist is the only guard
+  today; a boot-time guard is a Phase 5 hardening candidate.
+
+### JWT — dual-verify window
+
+DRAFTED procedure; the code does NOT exist yet. Bearer auth
+lands in Phase 1 (P1-016) — today `auth.rs` only classifies
+tokens. The procedure below is what P1-016 implements, and
+Phase 5 rehearses:
+
+1. Generate a new 64-byte random secret.
+2. Deploy it as the SECONDARY secret: the verifier accepts
+   tokens signed by either the current or the secondary secret,
+   but new tokens are still signed with the current one.
+3. Promote: new tokens are signed with the new secret; the old
+   secret stays accepted for verification.
+4. Wait out the window — longer than the maximum token TTL, so
+   every token signed with the old secret has expired.
+5. Retire: remove the old secret from the verifier, deploy,
+   verify that a token signed with the old secret is rejected
+   and a fresh login works.
+
+Session impact: JWTs are stateless, so there is no server-side
+revocation list — a token signed with the old secret keeps
+working until the window ends (step 4), then fails and the
+client re-logs-in. The exact secondary-secret env var name is
+set by P1-016's implementation; this section names the
+procedure, not the variable.
+
+### S3 keys (MinIO, bundled)
+
+The app's `PF_S3_ACCESS_KEY` / `PF_S3_SECRET_KEY` are the
+MinIO root credentials in the bundled setup (base compose maps
+them to `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`):
+
+1. Generate a new access-key / secret pair.
+2. Update `.env` on the host (never commit, never paste into a
+   ticket).
+3. Restart MinIO, then rolling-restart api + worker.
+4. Verify end to end: an upload completes, a job runs, a
+   result URL renders.
+5. Verify the OLD pair no longer authenticates (`mc alias set`
+   with the old secret must fail), then consider the rotation
+   done.
+
+Caveat for the rehearsal: MinIO reads the root credentials
+from the environment at boot, but on an EXISTING data
+directory the stored root credentials may win over the new
+env values — the Phase 5 rehearsal must confirm the behavior
+for the deployed MinIO version. If the new pair does not take,
+the fallback is a dedicated app user (`mc admin user add`
+with a bucket-scoped policy) instead of the root pair, and
+the api/worker point at that user from then on.
+
+### Postgres password
+
+1. `ALTER ROLE pf WITH PASSWORD '<new>';` on the live database.
+2. Update `PF_POSTGRES_PASSWORD` and `PF_DATABASE_URL` in
+   `.env` (they must match — the URL is built from the same
+   vars).
+3. Rolling-restart api + worker; verify `/readyz` reports the
+   database component healthy.
+4. The old password stops working at step 1 — there is no
+   dual-password window for Postgres, so do this in a low-
+   traffic window.
+
+### Payment keys (Stripe / Razorpay)
+
+Rotate in the provider dashboard (new secret key, new webhook
+signing secret), update `.env`, restart the api, verify a test
+checkout. The webhook endpoint secret must be rotated on BOTH
+sides: the provider's webhook endpoint settings and
+`PF_STRIPE_WEBHOOK_SECRET` — a mismatch fails signature
+verification and the webhook is rejected (safe, but billing
+events stop flowing until they match).
 
 ## Restore drill (NFR-22, rehearsed once in Phase 5)
 

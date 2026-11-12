@@ -45,6 +45,12 @@ deny:
 secrets:
     gitleaks detect --source . --config .gitleaks.toml --verbose
 
+# No literal secrets in compose (P0-105): secret vars in base/prod
+# must be bare ${VAR} refs; dev-only files may carry the documented
+# placeholders (pf/minioadmin/dev-fixed) and nothing else.
+compose-secrets-check:
+    python3 scripts/check_compose_secrets.py
+
 # Coverage report (llvm-cov, lcov). Floors per docs/05-QUALITY/01-test-strategy.md.
 # Report-only: prints the per-crate table via scripts/coverage_gate.py
 # and exits 0 even below a floor (Phase 0/1 mode per P0-098). The gate

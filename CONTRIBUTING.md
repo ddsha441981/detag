@@ -96,6 +96,13 @@ locally and CI runs it on every push/PR. The rules:
   (`.github/workflows/ci.yml`), and the pre-commit hook runs
   `gitleaks protect --staged`. Install the hook once per checkout:
   `./scripts/install-hooks.sh`. Local full scan: `just secrets`.
+- Compose files never carry a literal secret either (P0-105):
+  secret vars in `ops/compose.base.yml` / `compose.prod.yml` are
+  bare `${VAR}` references (their dev values come from the env
+  file, `--env-file .env`, copied from `.env.example`); dev-only
+  compose files may carry the documented placeholders (`pf`,
+  `minioadmin`, `dev-fixed`) and nothing else. `just
+  compose-secrets-check` enforces it (CI runs it in verify).
 - If a real secret ever lands in history: rotate the credential
   immediately, file an S1 issue, and purge it from history only with
   owner approval (history rewrite is destructive).
