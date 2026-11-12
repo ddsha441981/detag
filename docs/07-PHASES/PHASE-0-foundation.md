@@ -420,12 +420,13 @@
 
 ## E0.6 — Storage (area: storage)
 
-- [ ] **P0-053** — StorageProvider trait
+- [x] **P0-053** — StorageProvider trait
   - **Type:** feat · **Area:** storage · **Est:** M · **Deps:** — · **Prio:** P1
   - **Spec:** Trait: presign_put_part/get, multipart init/complete/abort, head, delete, list_by_prefix; S3 impl via aws-sdk-s3; MinIO target for dev.
   - **AC:**
-    - [ ] trait + impl compile
-    - [ ] unit-tested with fixtures
+    - [x] trait + impl compile
+    - [x] unit-tested with fixtures
+  - **Status:** `crates/storage` now holds the real trait (`src/provider.rs`: `StorageProvider` with native `async fn`, matching the `FlagStore` house style; `StorageError` — `NotFound`/`Invalid`/`InvalidConfig`/`Backend` with PII-free Display, provider message kept as source for logs; shared `validate_key`/`validate_part_number`/`validate_expiry`/`validate_upload_id` helpers). `src/s3.rs`: `S3Storage` via aws-sdk-s3 1.155.0 (static credentials, path-style URLs, `force_path_style(true)` so MinIO and S3 share one code path; `NoSuchUpload` → idempotent abort / `Invalid` on complete; head 404 → `NotFound`; list pages with `continuation_token`). `src/memory.rs`: in-memory fake modelling the control plane only (no bytes stored; `memory://detag.test/` presigned URLs; `complete` derives the ETag from part ETags) for API/worker unit tests. Tests: 13 unit (incl. presign URL-shape tests that run fully offline — presigning is local HMAC signing) + 4 contract tests in `tests/storage_contract.rs` run against the fake; the same contract must pass unchanged against any conforming implementation (incl. a future live-MinIO harness). `aws-sdk-s3` + `aws-smithy-types` added as workspace deps; `cargo search` confirmed the sparse index works through the proxy (the earlier `curl` 403 was the crates.io API path, not cargo). Follow-up (not in this ticket's AC): `StorageError` → `AppError` mapping lands with the first API caller (P0-055). `just verify` green on attempt 2 (attempt 1 red — the failing test was not captured before the retry overwrote the log; no storage test failed in the green run, and FLAKY-001 is the only known flaky test).
 
 - [ ] **P0-054** — MinIO in compose
   - **Type:** chore · **Area:** storage · **Est:** S · **Deps:** P0-053 · **Prio:** P1
