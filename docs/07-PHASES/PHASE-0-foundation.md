@@ -229,11 +229,11 @@
     - [x] exporter starts with endpoint set
     - [x] no-op without
 
-- [ ] **P0-028** — HTTP metrics middleware
+- [x] **P0-028** — HTTP metrics middleware
   - **Type:** feat · **Area:** observability · **Est:** M · **Deps:** P0-027 · **Prio:** P1
   - **Spec:** Requests total, duration histogram by route-template+method+status, inflight gauge; route templates only (no raw ids in labels).
   - **AC:**
-    - [ ] histograms present with template labels
+    - [x] histograms present with template labels
 
 - [ ] **P0-029** — Job/queue metrics hooks
   - **Type:** feat · **Area:** observability · **Est:** S · **Deps:** P0-028 · **Prio:** P1
