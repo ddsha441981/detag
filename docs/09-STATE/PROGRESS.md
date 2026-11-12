@@ -5,14 +5,14 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-002
+- **Current ticket:** P0-006
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
 ## Phase status
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 1 / 108 | — |
+| 0 | Foundation & Platform Baseline | 5 / 108 | — |
 | 1 | Identity & Billing | 0 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
@@ -24,7 +24,7 @@
 
 | Signal | Value |
 | --- | --- |
-| `just verify` | not yet defined (justfile lands P0-005); cargo build + clippy green on P0-001 |
+| `just verify` | green (fmt + clippy -D warnings + tests; smoke excluded per ADR-0017 until P0-090) |
 | Coverage (core/engine/api) | — / — / — |
 | Golden suite | — |
 | Bench snapshot (image 4K p95 / video factor) | — |
@@ -33,11 +33,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-002 — Scaffold crate skeletons
-2. P0-003 — Formatting + lint policy
-3. P0-004 — Repo hygiene files
-4. P0-005 — justfile task runner
-5. P0-006 — Commit conventions + CI check
+1. P0-006 — Commit conventions + CI check
+2. P0-007 — cargo-deny setup
+3. P0-008 — gitleaks secret scanning
+4. P0-009 — Issue/PR templates
+5. P0-010 — Release tooling (cocogitto)
 
 ## Bench history (append-only)
 

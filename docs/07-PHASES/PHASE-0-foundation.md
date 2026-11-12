@@ -46,34 +46,34 @@
     - [x] clippy -D warnings clean on empty crates
     - [x] toolchain pinned and CI-ready
 
-- [ ] **P0-002** — Scaffold crate skeletons
+- [x] **P0-002** — Scaffold crate skeletons
   - **Type:** chore · **Area:** repo · **Est:** S · **Deps:** P0-001 · **Prio:** P1
   - **Spec:** Each member compiles: api has axum bootstrap stub, worker a tokio main, crates have lib.rs with module placeholders per 04-ENGINEERING/02-repo-layout.md.
   - **AC:**
-    - [ ] cargo run -p api prints startup line
-    - [ ] trivial cargo test passes per crate
-    - [ ] no clippy warnings
+    - [x] cargo run -p api prints startup line
+    - [x] trivial cargo test passes per crate
+    - [x] no clippy warnings
 
-- [ ] **P0-003** — Formatting + lint policy
+- [x] **P0-003** — Formatting + lint policy
   - **Type:** chore · **Area:** repo · **Est:** S · **Deps:** P0-002 · **Prio:** P1
   - **Spec:** rustfmt.toml (max_width 100), clippy config, `just fmt` / `just lint`; allow-attribute policy documented in coding standards (justification comment required).
   - **AC:**
-    - [ ] fmt + lint targets run clean
-    - [ ] policy documented
+    - [x] fmt + lint targets run clean
+    - [x] policy documented
 
-- [ ] **P0-004** — Repo hygiene files
+- [x] **P0-004** — Repo hygiene files
   - **Type:** chore · **Area:** repo · **Est:** S · **Deps:** P0-003 · **Prio:** P1
   - **Spec:** .gitignore, .editorconfig, LICENSE (Apache-2.0; owner may veto via DECISIONS.md), CONTRIBUTING.md pointing at this kit, PR template with DoD checklist from 04-ENGINEERING/03-definition-of-done.md.
   - **AC:**
-    - [ ] files present
-    - [ ] PR template lists DoD items
+    - [x] files present
+    - [x] PR template lists DoD items
 
-- [ ] **P0-005** — justfile task runner
+- [x] **P0-005** — justfile task runner
   - **Type:** chore · **Area:** repo · **Est:** S · **Deps:** P0-004 · **Prio:** P1
   - **Spec:** Targets: dev, verify, test, bench, migrate, seed, smoke, fixtures:gen; verify chains fmt+lint+test+smoke; each target documented in comments.
   - **AC:**
-    - [ ] just verify runs all gates
-    - [ ] documented
+    - [x] just verify runs all gates
+    - [x] documented
 
 - [ ] **P0-006** — Commit conventions + CI check
   - **Type:** chore · **Area:** repo · **Est:** S · **Deps:** P0-005 · **Prio:** P1
