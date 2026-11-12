@@ -158,11 +158,11 @@
     - [x] each variant maps to status+code+title
     - [x] prod body shape tested
 
-- [ ] **P0-018** — Error mapping tests
+- [x] **P0-018** — Error mapping tests
   - **Type:** test · **Area:** core/config · **Est:** S · **Deps:** P0-017 · **Prio:** P1
   - **Spec:** Variant-to-response table test; debug vs prod body shape; request_id propagation into bodies.
   - **AC:**
-    - [ ] table test green
+    - [x] table test green
 
 - [ ] **P0-019** — Request-id middleware
   - **Type:** feat · **Area:** core/config · **Est:** S · **Deps:** P0-018 · **Prio:** P1

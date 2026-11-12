@@ -577,4 +577,341 @@ mod tests {
             assert_eq!(problem.detail, "the requested resource was not found");
         }
     }
+
+    // -- P0-018: variant-to-response table test ---------------------------
+    //
+    // This table is the independent oracle for the mapping: every row is
+    // typed by hand from the api spec + the P0-017 design decisions. If a
+    // match arm in code()/status()/title()/default_detail() drifts, this
+    // test fails on the exact row. Add a row here for every new variant
+    // (the count assertion enforces it).
+
+    /// (variant, code, status, title, default detail) for all variants.
+    fn response_table() -> Vec<(AppError, &'static str, u16, &'static str, &'static str)> {
+        use AppError::*;
+        vec![
+            (
+                Unauthenticated,
+                "PF-1001",
+                401,
+                "unauthenticated",
+                "authentication is required for this resource",
+            ),
+            (
+                Forbidden,
+                "PF-1002",
+                403,
+                "forbidden",
+                "you do not have permission for this resource",
+            ),
+            (
+                RefreshReuse,
+                "PF-1007",
+                401,
+                "refresh_token_reused",
+                "refresh token reuse detected; all sessions have been revoked",
+            ),
+            (
+                EmailNotVerified,
+                "PF-1009",
+                403,
+                "email_not_verified",
+                "email verification is required before creating jobs",
+            ),
+            (
+                InvalidToken,
+                "PF-1010",
+                401,
+                "invalid_token",
+                "the access token is invalid",
+            ),
+            (
+                ExpiredToken,
+                "PF-1011",
+                401,
+                "expired_token",
+                "the access token has expired",
+            ),
+            (
+                UnsupportedMediaType,
+                "PF-2001",
+                415,
+                "unsupported_media_type",
+                "this media type is not accepted",
+            ),
+            (
+                ValidationFailed,
+                "PF-2002",
+                400,
+                "validation_failed",
+                "the request failed validation",
+            ),
+            (
+                PayloadTooLarge,
+                "PF-2003",
+                413,
+                "payload_too_large",
+                "the request exceeds the size limit",
+            ),
+            (
+                PartChecksumMismatch,
+                "PF-2004",
+                400,
+                "part_checksum_mismatch",
+                "an upload part failed its checksum",
+            ),
+            (
+                DimensionsExceeded,
+                "PF-2005",
+                413,
+                "dimensions_exceeded",
+                "the image dimensions exceed the limit",
+            ),
+            (
+                ArchiveRejected,
+                "PF-2006",
+                400,
+                "archive_rejected",
+                "the archive was rejected",
+            ),
+            (
+                DecodeBudgetExceeded,
+                "PF-2007",
+                413,
+                "decode_budget_exceeded",
+                "the image is too large to decode",
+            ),
+            (
+                InvalidHints,
+                "PF-2008",
+                400,
+                "invalid_hints",
+                "the mask hints are invalid",
+            ),
+            (
+                ResultExpired,
+                "PF-2009",
+                410,
+                "result_expired",
+                "the result has expired",
+            ),
+            (
+                NotFound,
+                "PF-2010",
+                404,
+                "not_found",
+                "the requested resource was not found",
+            ),
+            (
+                Conflict,
+                "PF-2011",
+                409,
+                "conflict",
+                "the request conflicts with the current state",
+            ),
+            (
+                QuotaImagesExceeded,
+                "PF-3001",
+                429,
+                "quota_images_exceeded",
+                "image quota exceeded; upgrade your plan for more",
+            ),
+            (
+                QuotaVideoSecondsExceeded,
+                "PF-3002",
+                429,
+                "quota_video_seconds_exceeded",
+                "video-seconds quota exceeded; upgrade your plan for more",
+            ),
+            (
+                FeatureNotEntitled,
+                "PF-3003",
+                403,
+                "feature_not_entitled",
+                "your plan does not include this feature; upgrade to use it",
+            ),
+            (
+                RetryAttemptsExceeded,
+                "PF-3004",
+                409,
+                "retry_attempts_exceeded",
+                "the retry limit for this job was reached",
+            ),
+            (
+                QueueFull,
+                "PF-3005",
+                429,
+                "queue_full",
+                "the system is busy; retry shortly",
+            ),
+            (
+                StorageHeadroomExceeded,
+                "PF-3006",
+                429,
+                "storage_headroom_exceeded",
+                "storage headroom exceeded; free space or upgrade your plan",
+            ),
+            (
+                RateLimited,
+                "PF-3007",
+                429,
+                "rate_limited",
+                "too many requests; retry after the reset window",
+            ),
+            (
+                AttestationMissing,
+                "PF-4001",
+                403,
+                "attestation_missing",
+                "an ownership attestation is required to create this job",
+            ),
+            (
+                QualityGateFailed,
+                "PF-4002",
+                422,
+                "quality_gate_failed",
+                "the output failed the quality gates; see the job report",
+            ),
+            (
+                ResourceBudgetExceeded,
+                "PF-4005",
+                500,
+                "resource_budget_exceeded",
+                "the job exceeded its resource budget and was stopped",
+            ),
+            (
+                RoundtripMismatch,
+                "PF-4006",
+                500,
+                "roundtrip_mismatch",
+                "the pipeline produced an inconsistent result; the job failed",
+            ),
+            (
+                OutputMismatch,
+                "PF-4007",
+                500,
+                "output_mismatch",
+                "the encoded output did not match expectations",
+            ),
+            (
+                ProvenanceStripDenied,
+                "PF-4101",
+                403,
+                "provenance_strip_denied",
+                "provenance stripping is not enabled for this request",
+            ),
+            (
+                Internal,
+                "PF-5000",
+                500,
+                "internal_error",
+                "an internal error occurred",
+            ),
+            (
+                DatabaseUnavailable,
+                "PF-5001",
+                503,
+                "database_unavailable",
+                "the database is temporarily unavailable",
+            ),
+            (
+                InvalidStateTransition,
+                "PF-5002",
+                409,
+                "invalid_state_transition",
+                "this transition is not allowed",
+            ),
+        ]
+    }
+
+    /// AC: the variant-to-response table test. Exact code, status, title
+    /// and default detail for every variant, plus the full JSON body
+    /// (type URL, status, code, title, detail) in both profiles.
+    #[test]
+    fn variant_to_response_table() {
+        let table = response_table();
+        assert_eq!(table.len(), 33, "a variant is missing from the table");
+        assert_eq!(
+            table.len(),
+            all_variants().len(),
+            "table and variant list disagree"
+        );
+        let mut codes: Vec<&str> = table.iter().map(|(_, c, _, _, _)| *c).collect();
+        codes.sort_unstable();
+        codes.dedup();
+        assert_eq!(codes.len(), 33, "two variants share a code");
+
+        for (err, code, status, title, detail) in &table {
+            assert_eq!(err.code(), *code, "{code}");
+            assert_eq!(err.status(), *status, "{code}");
+            assert_eq!(err.title(), *title, "{code}");
+            assert_eq!(err.default_detail(), *detail, "{code}");
+            for profile in [Profile::Development, Profile::Production] {
+                let problem = err.to_problem(profile, Some("01JTABLE"), None);
+                let json = problem.to_json();
+                assert_eq!(
+                    json["type"],
+                    format!("https://docs.pureframe.dev/errors/{code}"),
+                    "{code}"
+                );
+                assert_eq!(json["title"], *title, "{code}");
+                assert_eq!(json["status"], *status, "{code}");
+                assert_eq!(json["code"], *code, "{code}");
+                assert_eq!(json["detail"], *detail, "{code}");
+                assert_eq!(json["request_id"], "01JTABLE", "{code}");
+            }
+        }
+    }
+
+    /// Debug vs prod body shape, same error + same caller detail: the
+    /// two bodies agree on everything except `detail` — dev shows the
+    /// caller text, prod shows the safe default and no trace of it.
+    #[test]
+    fn debug_vs_prod_body_shape() {
+        let caller = "sql: connection refused at 10.0.0.4:5432 (password=SECRET)";
+        let dev = AppError::DatabaseUnavailable.to_problem(
+            Profile::Development,
+            Some("01JDEBUGVSPROD"),
+            Some(caller),
+        );
+        let prod = AppError::DatabaseUnavailable.to_problem(
+            Profile::Production,
+            Some("01JDEBUGVSPROD"),
+            Some(caller),
+        );
+        assert_eq!(dev.code, prod.code);
+        assert_eq!(dev.status, prod.status);
+        assert_eq!(dev.title, prod.title);
+        assert_eq!(dev.problem_type, prod.problem_type);
+        assert_eq!(dev.request_id, prod.request_id);
+        assert_eq!(dev.detail, caller);
+        assert_eq!(prod.detail, "the database is temporarily unavailable");
+        assert!(!prod.detail.contains("10.0.0.4"), "leaked: {}", prod.detail);
+        assert!(!prod.detail.contains("SECRET"), "leaked: {}", prod.detail);
+        assert_ne!(dev.detail, prod.detail);
+        // JSON level: same keys, different detail value.
+        let dev_json = dev.to_json();
+        let prod_json = prod.to_json();
+        assert_eq!(dev_json["code"], prod_json["code"]);
+        assert_eq!(dev_json["detail"], caller);
+        assert_eq!(
+            prod_json["detail"],
+            "the database is temporarily unavailable"
+        );
+    }
+
+    /// Request-id propagation into bodies: present in dev and prod when
+    /// known, omitted from the JSON entirely when unknown.
+    #[test]
+    fn request_id_propagates_into_bodies() {
+        for profile in [Profile::Development, Profile::Production] {
+            let with_id = AppError::NotFound.to_problem(profile, Some("01JREQID123"), None);
+            assert_eq!(with_id.request_id.as_deref(), Some("01JREQID123"));
+            assert_eq!(with_id.to_json()["request_id"], "01JREQID123");
+
+            let without_id = AppError::NotFound.to_problem(profile, None, None);
+            assert!(without_id.request_id.is_none());
+            assert!(without_id.to_json().get("request_id").is_none());
+        }
+    }
 }

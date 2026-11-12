@@ -5,14 +5,14 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-018
+- **Current ticket:** P0-019
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
 ## Phase status
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 17 / 108 | — |
+| 0 | Foundation & Platform Baseline | 18 / 108 | — |
 | 1 | Identity & Billing | 0 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
@@ -33,11 +33,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-018 — Error mapping tests
-2. P0-019 — Request-id middleware
-3. P0-020 — Typed settings fail-fast report
-4. P0-021 — Static feature flags
-5. P0-022 — DB-backed flags + cache
+1. P0-019 — Request-id middleware
+2. P0-020 — Typed settings fail-fast report
+3. P0-021 — Static feature flags
+4. P0-022 — DB-backed flags + cache
+5. P0-023 — Graceful shutdown
 
 ## Bench history (append-only)
 
