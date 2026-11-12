@@ -5,7 +5,7 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-062
+- **Current ticket:** P0-063
 - **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007).
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
@@ -13,7 +13,7 @@
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 59 / 108 | — |
+| 0 | Foundation & Platform Baseline | 60 / 108 | — |
 | 1 | Identity & Billing | 0 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
@@ -34,11 +34,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-062 — Storage ops section
-2. P0-063 — Axum server bootstrap
-3. P0-064 — Router module pattern
-4. P0-065 — Middleware chain
-5. P0-066 — Health endpoints
+1. P0-063 — Axum server bootstrap
+2. P0-064 — Router module pattern
+3. P0-065 — Middleware chain
+4. P0-066 — Health endpoints
+5. P0-067 — OpenAPI scaffold
 
 ## Bench history (append-only)
 

@@ -487,11 +487,12 @@
     - [x] suite green offline
   - **Status:** `crates/storage/tests/storage_integration.rs`: one shared suite (`run_suite`) over `&impl StorageProvider`, run offline against `MemoryStorage` (2 tests: `offline_memory_fake` runs all six cases, `live_minio_testcontainers` SKIPs without `PF_TEST_LIVE_MINIO=1`) and live against `S3Storage` on a testcontainers MinIO (`minio/minio:latest`, port 9000, `WaitFor::message_on_stdout("API: http://")`, scratch bucket `detag-test-<uuid-v7>`, removed afterwards). Cases: multipart happy path (init → presign → complete 2 parts → head → scoped list → delete), part mismatch (unknown upload id / empty parts / empty ETag / part 0 → `Invalid`, then the correct complete still works), presign expiry (`X-Amz-Expires` in the URL, 0 and >7 d rejected), delete idempotence, key traversal (6 bad keys rejected on every method, nothing created), list scoping + sort order. One genuine backend difference is designed in, not papered over: real S3 verifies part ETags against uploaded bytes, so cases get ETags through a `PartSource` — fabricated for the fake, real SDK `upload_part` calls for MinIO (5 MiB first part, S3's non-final minimum). testcontainers 0.28 added as a dev-dep (API verified against the vendored crate source; `cargo check --tests` green). Live leg logged as ASSUMPTION-011: compile-checked only here, first real run in CI (DOCKER-001). `just verify` green on attempt 1.
 
-- [ ] **P0-062** — Storage ops section
+- [x] **P0-062** — Storage ops section
   - **Type:** docs · **Area:** storage · **Est:** S · **Deps:** P0-061 · **Prio:** P1
   - **Spec:** Buckets, keys, lifecycle, cost note, local console, pointing at R2/S3 (endpoint override).
   - **AC:**
-    - [ ] runbook section committed
+    - [x] runbook section committed
+  - **Status:** `## Storage operations` added to `docs/06-DELIVERY/03-deploy-runbook.md` (before the P0-060 lifecycle section, which it cross-references): buckets (one per env, `detag-<env>`, private always, creation is ops — the client never creates one), keys (ADR-0011 layout + the seven stems, pointers to `keys.rs`/`checksum.rs`/`media.rs`), presigned flows (TTL table pointer to `policy.rs`, single-use honestly marked unsupported), local MinIO console (`:9001`, dev-only, login + `mc` command block), cost note (MinIO $0 beyond disk; R2 Standard $0.015/GB-mo, IA $0.01, free tier 10 GB-mo + 1M Class A + 10M Class B, zero egress — Cloudflare docs checked 2026-11-12; S3 ≈$0.023/GB-mo + $0.09/GB egress after 100 GB free, marked verify-at-deploy; egress is the number to watch), and storage-down playbook (fail-closed design rule, flagged as enforced with the Phase 2/3 API error mapping — not claimed as current behaviour). All referenced paths verified to exist. `just verify` green on attempt 1.
 
 ---
 

@@ -195,6 +195,139 @@ redis-cli --scan --pattern 'pf:ratelimit:*' | wc -l   # keys per namespace
   only, no password; production needs a password and the
   `internal` network (see "First deploy" above).
 
+## Storage operations
+
+The object store holds every byte that is not in Postgres:
+uploads (inputs), job artifacts (outputs, masks, previews,
+reports, batch zips). One bucket per environment, named
+`detag-<env>` — dev is `detag-dev` today (`.env.example`,
+`PF_S3_BUCKET`). The bucket is always private: objects are
+reached only through presigned URLs (P0-055), never through a
+public policy — `scripts/check_minio_policy.py` fails CI if
+that ever changes. Retention lives in the next section
+("Storage lifecycle & retention"); this section is the
+day-to-day operating half.
+
+### Buckets
+
+- **Dev:** MinIO in `ops/compose.minio.yml` (`minio/minio:latest`,
+  host networking per ADR-0014, named volume `detag_miniodata`
+  for `/data`). The bootstrap service creates the bucket and
+  locks it private (`mc mb --ignore-existing`, then
+  `mc anonymous set none`) and applies the lifecycle JSON.
+  `docker compose -f ops/compose.minio.yml up -d --wait`.
+- **Staging / prod:** the bucket must already exist before the
+  api/worker start (bucket creation is an ops concern — the
+  `S3Storage` client never creates one). Create it with the
+  provider console or CLI, private, with the lifecycle JSON from
+  `ops/minio/lifecycle.json` applied (see the next section).
+- **Pointing at R2 / S3 (endpoint override):** only the env
+  changes — the code is backend-agnostic (`S3Storage`, one code
+  path, `force_path_style(true)`):
+  - R2: `PF_S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com`,
+    `PF_S3_REGION=auto` (R2 ignores region for signing, but the
+    field must be non-empty), `PF_S3_ACCESS_KEY` /
+    `PF_S3_SECRET_KEY` are an R2 API token (Object Read & Write
+    on the bucket — never an admin token on the server).
+  - S3: `PF_S3_ENDPOINT=https://s3.<region>.amazonaws.com`,
+    `PF_S3_REGION=<region>`, keys are an IAM user/role with
+    `s3:Get/Put/DeleteObject` + `ListBucket` on the bucket only.
+  - The client forces path-style URLs, which MinIO, R2 and S3
+    all accept today. If S3 ever drops path-style support, the
+    fix is one flag in `S3Storage::new` — not a redesign.
+- **Never** point two environments at one bucket, and never
+  point dev at a prod bucket: keys carry only `{env}/{yyyy-mm}/`
+  (ADR-0011), so a shared bucket would mix environments in one
+  listing and one lifecycle rule.
+
+### Keys
+
+Layout (ADR-0011, P0-056): `{env}/{yyyy-mm}/{job_id}/{stem}.{ext}`
+— e.g. `prod/2026-11/019aa1b2-…/output.png`. No PII by
+construction: the environment is `dev`/`staging`/`prod`, the
+date is a `NaiveDate`, the job id a UUID, the stem one of the
+seven `ArtifactKind` values (`input` plus the six
+`artifacts.type` values: `output`, `mask`, `preview_before`,
+`preview_after`, `report`, `batch_zip`); the original filename
+lives in the `uploads` row, never in the key.
+`crates/storage/src/keys.rs` builds and parses keys
+(`parse_storage_key` re-validates every segment on read-back),
+and `crates/core/src/checksum.rs` + `media.rs` own the
+verify-on-complete steps (sha256 per part, PF-2004 on mismatch;
+magic-byte sniff, PF-2001 on unknown type).
+
+### Presigned flows (operator view)
+
+Part PUT URLs live 600 s, the token 900 s, result GET URLs
+6 h / 24 h / 72 h by plan (Free / Pro / Business) — the numbers
+live in `crates/storage/src/policy.rs` (`PresignPolicy`) and
+`PF_UPLOAD_PART_URL_TTL_SECS`. SigV4 URLs are single-use in
+no sense at all (`SINGLE_USE_SUPPORTED = false`): the
+compensating controls are the short TTLs, one key per URL, and
+upload ids dying after complete/abort. If a URL leaks, it dies
+with its TTL — there is nothing to revoke; rotate the bucket
+credentials only if the keys themselves leak.
+
+### Local console (MinIO, dev only)
+
+`http://localhost:9001` — log in with `PF_S3_ACCESS_KEY` /
+`PF_S3_SECRET_KEY` (`minioadmin` / `minioadmin` in dev). Use it
+to eyeball the bucket: object list, a single object's metadata,
+and the bucket's anonymous policy (must read `none`). The
+console is dev-only: the prod compose file (E0.9) must not
+expose it. Prefer `mc` for anything repeatable:
+
+```bash
+mc alias set detag "$PF_S3_ENDPOINT" "$PF_S3_ACCESS_KEY" "$PF_S3_SECRET_KEY"
+mc ls detag/"$PF_S3_BUCKET"                 # top level (env prefixes)
+mc du detag/"$PF_S3_BUCKET"                 # size by prefix
+mc ilm list detag/"$PF_S3_BUCKET"           # the applied lifecycle rule
+mc anonymous get detag/"$PF_S3_BUCKET"      # must be `none`
+```
+
+### Cost note
+
+The retention design keeps stored bytes tiny on purpose —
+results die after 6–72 h, inputs after 3 days at most — so the
+bill is dominated by requests and egress, not storage:
+
+- **MinIO (dev):** $0 beyond the disk it sits on. Watch the
+  named volume: MinIO refuses writes when the disk fills, so
+  `mc du` + host disk alerts are the monitoring, and growing
+  the volume is the fix.
+- **R2:** Standard $0.015/GB-month, Infrequent Access
+  $0.01/GB-month, free tier 10 GB-month + 1M Class A + 10M
+  Class B ops/month, and **zero egress fees** (figures from
+  Cloudflare's R2 docs/pricing, checked 2026-11-12). For this
+  workload — short-lived objects, downloads as the product —
+  zero egress is the reason R2 is the default prod candidate.
+- **S3:** Standard ≈ $0.023/GB-month in us-east-1, requests
+  ≈ $0.0004–$0.005 per 1,000 depending on class, egress
+  $0.09/GB after the first 100 GB/month free (verify at deploy
+  — AWS pricing moves). Egress is the number to watch: every
+  result download is egress, and a viral job's output is
+  downloaded far more than it is stored.
+- **What would change the bill:** keeping inputs past 3 days
+  (don't — the ILM ceiling forbids it), storing previews at
+  full resolution (they're derived artifacts, same TTL), or a
+  GC outage letting orphans accumulate (the GC's dry-run count
+  is the canary — see the next section).
+
+### When storage is down
+
+Design rule (enforcement lands with the API error mapping,
+Phase 2/3): the api/worker must fail closed on a down store —
+no silent local fallback, no writing uploads to disk. Check, in
+order:
+`docker compose -f ops/compose.minio.yml ps` (or the MinIO
+health endpoint `http://localhost:9000/minio/health/live`),
+`mc alias set` + `mc ls` (credentials vs connectivity),
+disk space on the MinIO host, then the api logs for the
+`StorageError` source (the PII-free Display names the kind;
+the source has the backend's message). Never "fix" a down
+store by pointing the app at another bucket's data — restore
+the store.
+
 ## Storage lifecycle & retention
 
 Two layers, because neither alone can express the retention
