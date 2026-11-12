@@ -115,11 +115,11 @@
   - **AC:**
     - [x] env:check green
 
-- [ ] **P0-012** — Dev bootstrap (just dev)
+- [x] **P0-012** — Dev bootstrap (just dev)
   - **Type:** chore · **Area:** repo · **Est:** S · **Deps:** P0-011 · **Prio:** P1
   - **Spec:** One command starts compose deps, waits for readyz components, runs migrations, seeds, prints URLs.
   - **AC:**
-    - [ ] fresh clone: just dev reaches healthy stack
+    - [x] fresh clone: just dev reaches healthy stack
 
 - [ ] **P0-013** — CI smoke pipeline
   - **Type:** test · **Area:** repo · **Est:** M · **Deps:** P0-012 · **Prio:** P1

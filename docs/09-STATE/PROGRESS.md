@@ -5,14 +5,14 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-012
+- **Current ticket:** P0-013
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
 ## Phase status
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 11 / 108 | — |
+| 0 | Foundation & Platform Baseline | 12 / 108 | — |
 | 1 | Identity & Billing | 0 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
@@ -33,11 +33,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-012 — Dev bootstrap (just dev)
-2. P0-013 — CI smoke pipeline
-3. P0-014 — Toolchain docs
-4. P0-015 — Settings loader
-5. P0-016 — Settings tests
+1. P0-013 — CI smoke pipeline
+2. P0-014 — Toolchain docs
+3. P0-015 — Settings loader
+4. P0-016 — Settings tests
+5. P0-017 — Error taxonomy
 
 ## Bench history (append-only)
 

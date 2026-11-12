@@ -56,9 +56,10 @@ verify: fmt-check lint test
 # --- Phase 0 stubs: implemented by their own tickets (fail loudly until then) ---
 
 # Start the full dev stack (compose deps, wait healthy, migrate, seed).
-# Implemented in P0-012.
+# Implemented in P0-012; steps whose tickets have not landed yet are
+# reported as pending by scripts/dev.sh (see docs/09-STATE/ISSUES.md).
 dev:
-    @echo "pending: 'just dev' lands in P0-012 (compose files land in E0.9)" >&2; exit 1
+    bash scripts/dev.sh
 
 # Run Criterion benches (scaffold lands in P0-097).
 bench:
