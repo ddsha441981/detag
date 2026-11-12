@@ -143,6 +143,7 @@ jobs:
         run: |
           mkdir -p target/llvm-cov
           cargo llvm-cov --workspace --lcov --output-path target/llvm-cov/lcov.info
+          python3 scripts/coverage_gate.py
       - name: Upload test results + coverage
         if: always()
         uses: actions/upload-artifact@v4

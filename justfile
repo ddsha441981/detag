@@ -46,9 +46,26 @@ secrets:
     gitleaks detect --source . --config .gitleaks.toml --verbose
 
 # Coverage report (llvm-cov, lcov). Floors per docs/05-QUALITY/01-test-strategy.md.
+# Report-only: prints the per-crate table via scripts/coverage_gate.py
+# and exits 0 even below a floor (Phase 0/1 mode per P0-098). The gate
+# is `just coverage-gate` — OFF until Phase 2, when CI flips to it.
+# NOTE: llvm-cov rebuilds the workspace instrumented and re-runs the
+# whole suite — ~12 min on this VM. The lcov.info it writes is the
+# input to the gate script, so a plain `cargo llvm-cov` run can be
+# checked later with `python3 scripts/coverage_gate.py`.
 coverage:
     mkdir -p target/llvm-cov
     cargo llvm-cov --workspace --lcov --output-path target/llvm-cov/lcov.info
+    python3 scripts/coverage_gate.py
+
+# Coverage gate (P0-098): same report, but exits 1 if any crate is
+# below its floor. OFF until Phase 2 — do not wire this into CI or
+# `just verify` before the Phase 2 ticket flips the switch (see the
+# test-strategy doc, "Coverage floors").
+coverage-gate:
+    mkdir -p target/llvm-cov
+    cargo llvm-cov --workspace --lcov --output-path target/llvm-cov/lcov.info
+    python3 scripts/coverage_gate.py --gate
 
 # Release dry-run: prints the next version implied by the commits, writes
 # nothing (P0-010). Generate the changelog stub with `just changelog`.

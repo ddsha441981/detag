@@ -16,6 +16,28 @@
 
 crates/core >= 85%, crates/engine >= 80%, apps/api >= 75%, apps/worker >= 70%. Web: critical flows covered by e2e, no unit-floor.
 
+- **Report:** `just coverage` — runs the whole suite under llvm-cov
+  (~12 min on the dev VM; the instrumented rebuild dominates) and
+  prints the per-crate table via `scripts/coverage_gate.py`, which
+  reads `target/llvm-cov/lcov.info` and counts production sources
+  only (`crates/<name>/src/`, `apps/<name>/src/` — test/bench/example
+  files are instrumented too but are not what the floors measure).
+  The CI verify job runs the same script in report mode after its
+  own llvm-cov step, so the per-crate table lands in the CI log and
+  `lcov.info` is uploaded as an artifact.
+- **Gate (OFF until Phase 2):** `just coverage-gate` — same report,
+  but exits 1 if any crate is below its floor. The Phase 2 ticket
+  flips CI to the gate; until then a below-floor crate is printed as
+  `BELOW FLOOR` and the run still exits 0 ("report-only"). Do not
+  wire the gate into CI or `just verify` before that ticket.
+- **First report (P0-098, 13 Nov 2026):** core 96.7% (4438/4589),
+  engine 99.1% (111/112), api 92.7% (793/855), worker 83.8%
+  (1212/1447) — all above their floors. Note the engine number is
+  nearly vacuous: the engine is a placeholder with 112 production
+  lines; the denominator (and the floor's meaning) arrives with the
+  Phase 2 engine. Re-measure after every engine ticket, not just at
+  the gate flip.
+
 ## Golden media suite (source of truth for "quality did not drop")
 
 Fixtures in `fixtures/` (all synthesized in-house or permissively licensed):
