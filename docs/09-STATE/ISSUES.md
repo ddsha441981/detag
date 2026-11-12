@@ -39,6 +39,7 @@
 - Update 2026-11-12 (P0-082): recurred in `just verify` attempt 1 (full workspace run), passed in the next full run with no code change (324 passed, 0 failed). P0-082 touches only worker code. Still the known race — no new evidence.
 - Update 2026-11-12 (P0-084): recurred again in `just verify` attempt 1 (0.11 s, Connection reset by peer — the exact known signature), passed in the next full run with no code change (328 passed, 0 failed). P0-084 touches worker/engine code; the failing test is api-only. Still the known race — no new evidence.
 - Update 2026-11-12 (P0-087): recurred in `just verify` attempt 1 (0.11 s, Connection reset by peer — the exact known signature), passed in the next full run with no code change (329 passed, 0 failed). P0-087 touches only compose/ops/docs and cannot affect api shutdown. Still the known race — no new evidence.
+- Update 2026-11-12 (P0-090): recurred hard — 3 consecutive `just verify` failures (attempts 1–2 red, attempt 3 green, 330 passed, 0 failed) plus 3/3 standalone failures in between, then 5/5 standalone passes with no code change. Same 0.11 s / Connection-reset signature throughout; the streaks track machine load (failures cluster right after heavy cargo builds). P0-090 DOES touch api/worker shutdown code (SHUTDOWN-001 fix below) — ruled out as a regression: the test passed standalone immediately after the fix, passed in the parallel run, and passed 5/5 standalone after the streak; the fix only moves the timeout, the drain path itself is unchanged. Still the known race — no new evidence.
 
 ### FLAKY-002 [flaky] `slow_consumer_drops_safely` failed once, passed on retry (P0-060)
 - Date: 2026-11-12 · Ticket: P0-060
@@ -104,7 +105,12 @@
 
 ## Closed issues (keep for history; prune to last 50)
 
-(none yet)
+### SHUTDOWN-001 [bug] api + worker self-terminate ~30 s after startup with no signal (P0-090) — FIXED
+- Date: 2026-11-12 · Ticket: P0-090 · Severity: S2 (would restart-loop both services in production)
+- Symptom: during the `just smoke --skip-up` proof, the api and worker died ~30 s after startup with no signal sent — api: "detag-api shutdown timed out after 30s; forcing exit", worker: "drain timed out" exactly 30.066 s after "started", both exit 1. Three identical deaths across three proof attempts; the ping leg could not complete because the binaries died during the smoke-ping cargo build.
+- Cause: `tokio::time::timeout(SHUTDOWN_TIMEOUT, ...)` wrapped the WHOLE server/monitor run from startup, not the post-signal drain — api `main.rs` (`timeout(30s, join!(api_server, metrics_server))`) and worker `main.rs` (`timeout(drain_timeout, monitor.run_with_signal(...))`). With no signal the servers run forever, so the timeout fired at 30 s unconditionally. Nothing had ever run either binary past 30 s on this VM (dev runs, probes and tests all finish inside the window), so the bug was invisible until the smoke proof.
+- Fix (in the P0-090 commit): both mains now spawn the servers/monitor as a task, wait for the signal with no timeout, and apply the timeout only to the drain after the signal; a server/monitor erroring on its own still ends the process promptly (new `End`/`Drain` enums, single exit path). Regression test `stays_up_past_shutdown_timeout_without_signal` (api, ~32 s: still answers /healthz past the timeout, then SIGTERM exits 0). The smoke proof then went green end-to-end. Side fix in the same test file: each test now takes its own `PF_METRICS_PORT` (parallel runs previously shared the default 9090 and the second api failed to bind).
+- Status: fixed (P0-090) — the regression test + the CI smoke job guard it (the CI smoke build alone exceeds 30 s, so a recurrence fails the job).
 
 ## Trend notes
 

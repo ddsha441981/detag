@@ -143,6 +143,38 @@ instead of serving with a missing bucket. Caddy waits for the api
 signal. Live `up --wait` waits for CI/E0.9's smoke (P0-090,
 DOCKER-001).
 
+### Smoke (P0-090)
+
+`just smoke` is the end-to-end proof the stack works: it brings up
+the dev stack (`docker compose up -d --wait --wait-timeout 120` —
+compose itself fails when any service is still unhealthy after
+120 s, P0-088), applies migrations, waits for `/healthz` 200 and
+`/readyz` 200 (60 s each), enqueues a ping job with `just
+smoke-ping` (P0-082) and asserts the worker processes it, then
+prints the stack URLs. It runs in CI as its own `smoke` job (no
+service containers — compose publishes :5432/:6379 itself). Exit 0
+only when every step passed; on failure it prints `docker compose
+ps` + the api/worker logs so the diagnosis is in the CI log.
+
+- `just smoke --skip-up` — skip the compose up + migrate and
+  prove the wait/ping/URL legs against an already-up stack (a
+  previous up, or the native stack from `just dev`). On a partial
+  native stack `/readyz` may report storage/models down (no MinIO
+  on this VM) — the script then fails only when db or redis is
+  down, and warns about the rest.
+- `just smoke --down` — tear the compose stack down at the end.
+- This VM cannot run the full smoke: containers cannot start here
+  (DOCKER-001), so the `up` step fails loudly and only
+  `--skip-up` is provable locally.
+
+When smoke fails, diagnose in this order: (1) `docker compose ps`
+— which service is unhealthy; (2) that service's logs (`docker
+compose logs api` / `worker` / `postgres` / ...); (3) `curl
+localhost:8080/readyz` — the per-component table names the down
+dependency and its latency; (4) if the ping leg failed but the
+stack is healthy, `just smoke-ping` on its own prints the observed
+redis/worker state on stderr.
+
 ### Dev loop (P0-086)
 
 `just dev` is the entrypoint: compose stack (base+dev) when docker

@@ -153,24 +153,62 @@ async fn main() {
         Ok::<(), std::io::Error>(())
     };
     let drain_timeout = Duration::from_secs(settings.worker_drain_timeout_secs);
-    let drained_cleanly = match tokio::time::timeout(
-        drain_timeout,
-        monitor.run_with_signal(wait_shutdown(Arc::clone(&shutdown))),
-    )
-    .await
-    {
-        Ok(Ok(())) => {
+    // Graceful drain (P0-081, fixed P0-090): the drain timeout
+    // bounds only the drain AFTER the signal. It used to wrap the
+    // whole monitor run, so the worker logged "drain timed out"
+    // exactly 30 s after startup even with no signal — the smoke
+    // proof caught it (both binaries died mid-smoke; in compose
+    // they would restart-loop forever). The monitor runs in a
+    // spawned task so the drain can be awaited with a timeout
+    // once the signal arrives; a monitor erroring on its own
+    // still ends the process promptly.
+    let mut monitor_task =
+        tokio::spawn(monitor.run_with_signal(wait_shutdown(Arc::clone(&shutdown))));
+    enum Drain {
+        Clean,
+        MonitorError(String),
+        TaskFailed(String),
+        Timeout,
+    }
+    let drain = tokio::select! {
+        _ = shutdown.notified() => {
+            // Signal arrived: the monitor is draining; bound it.
+            // (timeout of the JoinHandle adds one Result layer.)
+            match tokio::time::timeout(drain_timeout, monitor_task).await {
+                Ok(Ok(Ok(()))) => Drain::Clean,
+                Ok(Ok(Err(err))) => Drain::MonitorError(err.to_string()),
+                Ok(Err(err)) => Drain::TaskFailed(err.to_string()),
+                Err(_) => Drain::Timeout,
+            }
+        }
+        result = &mut monitor_task => {
+            // The monitor exited on its own before any signal —
+            // stop the heartbeat/metrics tasks too, then report.
+            shutdown.notify_waiters();
+            match result {
+                Ok(Ok(())) => Drain::Clean,
+                Ok(Err(err)) => Drain::MonitorError(err.to_string()),
+                Err(err) => Drain::TaskFailed(err.to_string()),
+            }
+        }
+    };
+    let drained_cleanly = match drain {
+        Drain::Clean => {
             tracing::info!(
                 in_flight = drain_inflight.load(Ordering::SeqCst),
                 "worker drained"
             );
             true
         }
-        Ok(Err(err)) => {
+        Drain::MonitorError(err) => {
             tracing::error!(error = %err, "worker monitor exited with an error");
             false
         }
-        Err(_) => {
+        Drain::TaskFailed(err) => {
+            tracing::error!(error = %err, "worker monitor task failed");
+            false
+        }
+        Drain::Timeout => {
             tracing::error!(
                 in_flight = drain_inflight.load(Ordering::SeqCst),
                 drain_timeout_secs = settings.worker_drain_timeout_secs,

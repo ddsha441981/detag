@@ -152,3 +152,28 @@ jobs:
           tool: just
       - name: api image < 150 MB, worker image < 200 MB (NFR-63, P0-083/P0-084)
         run: just image-size-check
+
+  smoke:
+    # Compose smoke (P0-090): up the dev stack, wait for healthz/readyz,
+    # ping the pipeline, print URLs. Own job (no service containers):
+    # compose publishes :5432/:6379 itself, which would clash with the
+    # verify job's postgres/redis services. Runs on docker-capable
+    # runners only — on this VM docker cannot run containers, so the
+    # script fails loudly there (DOCKER-001).
+    runs-on: ubuntu-latest
+    env:
+      # sqlx `query!` macros compile offline from the checked-in
+      # `.sqlx/` data (P0-041); the smoke-ping build must not need a
+      # live database at compile time.
+      SQLX_OFFLINE: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install just (task runner)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - name: smoke (compose up, healthz/readyz, ping job, P0-090)
+        run: |
+          cp .env.example .env
+          just smoke

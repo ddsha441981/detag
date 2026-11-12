@@ -58,25 +58,56 @@ async fn main() {
     let wait_shutdown = |shutdown: Arc<Notify>| async move {
         shutdown.notified().await;
     };
-    // Graceful shutdown (P0-023): a stuck drain is cut off after
-    // SHUTDOWN_TIMEOUT and the process exits non-zero rather than
-    // hanging a deploy. The pool closes first (P0-035): in-flight
-    // queries finish, idle connections drop, then the servers stop.
+    // Graceful shutdown (P0-023, fixed P0-090): SHUTDOWN_TIMEOUT
+    // bounds only the drain AFTER the signal. It used to wrap the
+    // whole server run (`timeout(SHUTDOWN_TIMEOUT, join!(...))`),
+    // so the api force-exited 30 s after startup even with no
+    // signal — the smoke proof caught it (both binaries died
+    // mid-smoke; in compose they would restart-loop forever).
+    // The servers run in a spawned task so the drain can be
+    // awaited with a timeout once the signal arrives; a server
+    // erroring on its own still ends the process promptly.
+    // The pool closes first (P0-035): in-flight queries finish,
+    // idle connections drop, then the servers stop.
     let api_server =
         axum::serve(listener, app).with_graceful_shutdown(wait_shutdown(Arc::clone(&shutdown)));
     let metrics_server = axum::serve(metrics_listener, metrics_router(metrics))
         .with_graceful_shutdown(wait_shutdown(Arc::clone(&shutdown)));
-    let drained = tokio::time::timeout(SHUTDOWN_TIMEOUT, async {
-        tokio::join!(api_server, metrics_server)
-    })
-    .await;
-    match drained {
-        Ok((Ok(()), Ok(()))) => {
+    let mut servers = tokio::spawn(async move { tokio::join!(api_server, metrics_server) });
+    enum End {
+        Clean,
+        ServeFailed(std::io::Result<()>, std::io::Result<()>),
+        TaskFailed(tokio::task::JoinError),
+        DrainTimeout,
+    }
+    let end = tokio::select! {
+        _ = shutdown.notified() => {
+            // Signal arrived: the servers are draining; bound it.
+            match tokio::time::timeout(SHUTDOWN_TIMEOUT, servers).await {
+                Ok(Ok((Ok(()), Ok(())))) => End::Clean,
+                Ok(Ok((api, metrics))) => End::ServeFailed(api, metrics),
+                Ok(Err(err)) => End::TaskFailed(err),
+                Err(_) => End::DrainTimeout,
+            }
+        }
+        result = &mut servers => {
+            // A server exited on its own (serve error) before any
+            // signal — report it, don't wait for a signal that may
+            // never come.
+            match result {
+                Ok((Ok(()), Ok(()))) => End::Clean,
+                Ok((api, metrics)) => End::ServeFailed(api, metrics),
+                Err(err) => End::TaskFailed(err),
+            }
+        }
+    };
+    match end {
+        End::Clean => {
             pool.close().await;
             shutdown_telemetry();
             tracing::info!("shut down gracefully");
         }
-        Ok((api, metrics)) => {
+        End::ServeFailed(api, metrics) => {
             pool.close().await;
             if let Err(err) = api {
                 eprintln!("detag-api serve error: {err}");
@@ -86,7 +117,11 @@ async fn main() {
             }
             std::process::exit(1);
         }
-        Err(_) => {
+        End::TaskFailed(err) => {
+            eprintln!("detag-api server task failed: {err}");
+            std::process::exit(1);
+        }
+        End::DrainTimeout => {
             eprintln!("detag-api shutdown timed out after {SHUTDOWN_TIMEOUT:?}; forcing exit");
             std::process::exit(1);
         }

@@ -65,8 +65,9 @@ changelog:
 test:
     cargo test --workspace
 
-# Verify gate: fmt + clippy + tests. (Compose smoke is `just smoke`, kept
-# separate until P0-090 lands it; see ADR-0017 in docs/09-STATE/DECISIONS.md.)
+# Verify gate: fmt + clippy + tests. (Compose smoke is `just smoke`,
+# kept separate: it needs a working docker daemon, which this VM does
+# not have (DOCKER-001); see ADR-0017 in docs/09-STATE/DECISIONS.md.)
 verify: fmt-check lint test
     @echo "verify OK: fmt + clippy + tests green (smoke: see 'just smoke')"
 
@@ -126,11 +127,14 @@ sqlx-prepare-check:
 seed:
     cargo run --quiet -p detag-core --example seed
 
-# Compose smoke: up, health checks, enqueue ping job, assert processed.
-# Lands in P0-090; see ADR-0017 for why `verify` does not call it yet.
-# It will call the `smoke-ping` bin (P0-082) against the compose stack.
-smoke:
-    @echo "pending: smoke script lands in P0-090 (blocked: docker image pulls, see docs/09-STATE/ISSUES.md)" >&2; exit 1
+# Compose smoke (P0-090): up the dev stack, wait for healthz/readyz,
+# enqueue a ping job, assert processed, print URLs. Runs in CI
+# (the `smoke` job); on this VM docker cannot run containers, so
+# the full run fails loudly (DOCKER-001) and the wait/ping/URL legs
+# are provable with --skip-up against the native stack (`just dev`
+# in another shell). See scripts/smoke.sh.
+smoke args="":
+    bash scripts/smoke.sh {{args}}
 
 # Native-stack smoke probe (P0-082): enqueue a ping job on the
 # pipeline queue and assert the worker processes it. Run with the
@@ -324,5 +328,6 @@ gen-config-table:
 config-table-check:
     python3 scripts/gen_config_table.py --check
 
-# Full gate incl. smoke, for use once P0-090 lands.
+# Full gate incl. smoke (P0-090 landed it; docker-capable machines only —
+# on this VM docker cannot run containers, DOCKER-001).
 verify-full: verify smoke

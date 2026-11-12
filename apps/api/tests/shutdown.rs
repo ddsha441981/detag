@@ -7,7 +7,17 @@
 //! it, a graceful one drains it. SIGINT shares the same code path
 //! (`shutdown_signal` selects on both), so only SIGTERM is exercised
 //! here: it is the signal orchestrators send.
+//!
+//! P0-090 regression: `tokio::time::timeout(SHUTDOWN_TIMEOUT, ...)`
+//! used to wrap the whole server run, so the api force-exited 30 s
+//! after startup even with no signal (the smoke proof caught it:
+//! both binaries died mid-smoke). The timeout now bounds only the
+//! post-signal drain — `stays_up_past_shutdown_timeout_without_signal`
+//! below proves it. It sleeps past the timeout on purpose (~32 s);
+//! that is the price of a direct test for a bug that would
+//! restart-loop the api in production.
 
+use detag_core::shutdown::SHUTDOWN_TIMEOUT;
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -15,7 +25,10 @@ use tokio::net::TcpStream;
 use tokio::time::{sleep, timeout};
 
 /// A free port, found by binding :0 and releasing it. The api binds
-/// it immediately after, so the race window is negligible.
+/// it immediately after, so the race window is negligible. Each test
+/// takes its own api AND metrics ports so the tests stay
+/// parallel-safe (two apis on the default metrics port would fail
+/// to bind — caught when the second test in this file landed, P0-090).
 fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
         .expect("bind :0 for a free port")
@@ -70,8 +83,10 @@ async fn wait_for_exit(child: &mut Child) -> std::process::ExitStatus {
 #[tokio::test]
 async fn sigterm_drains_in_flight_request_and_exits_zero() {
     let port = free_port();
+    let metrics_port = free_port();
     let mut child = Command::new(env!("CARGO_BIN_EXE_detag-api"))
         .env("PF_API_PORT", port.to_string())
+        .env("PF_METRICS_PORT", metrics_port.to_string())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -118,6 +133,39 @@ async fn sigterm_drains_in_flight_request_and_exits_zero() {
     drop(stream);
 
     // AC: exit 0 once the last connection drains.
+    let status = wait_for_exit(&mut child).await;
+    assert!(
+        status.success(),
+        "api must exit 0 after SIGTERM, got {status}"
+    );
+}
+
+/// P0-090: with NO signal the api must stay up past
+/// SHUTDOWN_TIMEOUT — the timeout bounds only the post-signal
+/// drain. (Before the fix this failed: the api force-exited
+/// 30 s after startup.) The graceful path must still work
+/// afterwards: SIGTERM then exits 0 promptly.
+#[tokio::test]
+async fn stays_up_past_shutdown_timeout_without_signal() {
+    let port = free_port();
+    let metrics_port = free_port();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_detag-api"))
+        .env("PF_API_PORT", port.to_string())
+        .env("PF_METRICS_PORT", metrics_port.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn detag-api");
+    wait_for_healthz(port).await;
+
+    // Past the timeout, with margin — the server must still answer.
+    sleep(SHUTDOWN_TIMEOUT + Duration::from_secs(2)).await;
+    wait_for_healthz(port).await;
+
+    // And the graceful path still works after the fix.
+    let pid = child.id();
+    let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    assert_eq!(rc, 0, "SIGTERM to pid {pid} must succeed");
     let status = wait_for_exit(&mut child).await;
     assert!(
         status.success(),
