@@ -57,6 +57,7 @@
 //! the same outer layers a success does (CORS, secure headers,
 //! request id), so the mapper is innermost.
 
+pub mod auth;
 pub mod body_limit;
 pub mod cors;
 pub mod error_mapper;

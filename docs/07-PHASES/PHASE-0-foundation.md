@@ -548,11 +548,12 @@
     - [x] oversize rejected
   - **Status:** Already implemented by P0-065 — no new code in this ticket. The 1 MiB limit (`MAX_JSON_BODY_BYTES`, `body_limit.rs`) is applied per-module to every JSON route (auth, jobs, billing, admin, meta — `routes::api_router`), the uploads nest carries no limit layer (exempt structurally: upload bytes never transit the api, presigned S3 PUTs only), and the error mapper rewrites the limit layer's 413 to PF-2003 problem+json. Verified live in this ticket: the existing order tests prove 1 MiB+1 POST to `/v1/auth/login` → 413 + PF-2003 + request id + outer headers, and a 2 MiB POST to `/v1/uploads` → 501 (exempt, not 413); added one test proving the limit is global, not auth-only — 1 MiB+1 POST to `/v1/jobs` → 413 + PF-2003. `just verify` green on attempt 1.
 
-- [ ] **P0-070** — Auth extractor skeleton
+- [x] **P0-070** — Auth extractor skeleton
   - **Type:** feat · **Area:** api · **Est:** M · **Deps:** P0-069 · **Prio:** P1
   - **Spec:** AuthContext extractor: bearer jwt OR api-key OR session cookie (web), role field; unimplemented paths return 501 until Phase 1 fills them.
   - **AC:**
-    - [ ] extractor compiles + 501 paths documented
+    - [x] extractor compiles + 501 paths documented
+  - **Status:** New `apps/api/src/auth.rs`: `AuthContext { credential, role, verified }` + `Credential::{Bearer,ApiKey,Session,None}` + `Role::{Anonymous,User,Admin,Support}`, re-exported from the shared extractor set (`routes/extractors.rs`). Parsing is pure and precedence-ordered: `Authorization: Bearer` first (JWT-shaped — two dots — vs API key), then the `detag_refresh` cookie (name provisional — Phase 1 owns both sides and confirms it); non-Bearer schemes ignored, empty Bearer is no credential. `Debug` on `Credential` prints the kind with `[redacted]` — the value never reaches a log, a `Debug` rendering, or an error body. Phase 0 contract (documented in the module): NOTHING IS VERIFIED — `verified` is always `false`, role always `Anonymous`, and the extractor never rejects; the 501s live in the stub handlers (every `/v1` path still returns 501 `PF-5004`, P0-064) until Phase 1 replaces them with real handlers AND this extractor with real verification (none → 401 PF-1001, bad JWT → PF-1010, expired → PF-1011). Tests (10): classification (JWT/api-key/case-insensitive/trimmed), cookie parsing, Bearer-beats-cookie, no-credential, Debug redaction (incl. the whole `AuthContext`), and the extractor end to end through a probe handler. `just verify` green on attempt 2 (attempt 1 red on known FLAKY-001 only).
 
 - [ ] **P0-071** — Integration harness
   - **Type:** test · **Area:** api · **Est:** M · **Deps:** P0-070 · **Prio:** P1
