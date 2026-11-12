@@ -95,7 +95,7 @@ class TestRealRepo(unittest.TestCase):
         missing_doc, missing_mig = diff(migration_tables, doc_tables)
         self.assertEqual(missing_doc, set())
         self.assertEqual(missing_mig, set())
-        self.assertEqual(len(migration_tables), 19)
+        self.assertEqual(len(migration_tables), 20)
 
 
 if __name__ == "__main__":

@@ -25,6 +25,10 @@
 | `PF_METRICS_PORT` | api | 9090 | port the internal /metrics server binds on 127.0.0.1 |
 | `PF_ENVIRONMENT` | all | dev | dev \| stage \| prod; gates the Swagger UI (`/docs`, P0-067) — prod serves no `/docs` |
 | `PF_WORKER_CONCURRENCY` | worker | 4 | apalis workers per queue (pipeline, cleanup, email, reconciliation — P0-075); must be >= 1 |
+| `PF_WORKER_METRICS_PORT` | worker | 9092 | port the worker's internal /metrics server binds on 127.0.0.1 (P0-080) |
+| `PF_WORKER_HEARTBEAT_INTERVAL_SECS` | worker | 15 | how often the worker writes its heartbeat row (P0-080): pid, queues, in-flight count, started_at; must be >= 1 |
+| `PF_WORKER_DRAIN_TIMEOUT_SECS` | worker | 30 | graceful-drain bound (NFR-21, P0-081): after SIGTERM/SIGINT the worker finishes in-flight jobs for at most this long, then exits 1; un-acked jobs re-queue via the visibility timeout |
+| `PF_WORKER_QUEUE_NAMESPACE` | worker | pf:queue | Redis key namespace for the queues (P0-081): `pf:queue:{queue}`; point a test/staging worker at its own namespace so it never reads production jobs |
 | `PF_QUEUE_VISIBILITY_TIMEOUT_SECS` | worker | 300 | visibility timeout (NFR-21, P0-079): a dead worker's in-flight jobs are re-queued after this long without a keep-alive; must be > keep-alive |
 | `PF_QUEUE_KEEP_ALIVE_SECS` | worker | 30 | worker heartbeat interval (P0-079): a live worker re-registers its consumer this often, so a long job on a live worker is never re-queued; must be >= 1 and < visibility |
 | `PF_STRIPE_SECRET_KEY`, `PF_STRIPE_WEBHOOK_SECRET` | billing | test keys | live keys = owner action |
@@ -37,6 +41,7 @@
 | `PF_FEATURE_PROVENANCE_STRIP` | api | off | legal gate required |
 | `PF_LOG_LEVEL`, `PF_OTEL_ENDPOINT` | all | info, empty | OTLP/HTTP; `/v1/traces` appended when the endpoint has no path |
 | `PF_TEST_LIVE_MINIO` | tests | (empty = skip) | live-MinIO leg of the storage integration suite (P0-061); `1` runs it against testcontainers MinIO in CI |
+| `PF_TEST_CONTAINERS` | tests | (empty = skip) | testcontainers leg of the api integration suite (harness.rs); `1` runs it against real postgres/redis containers in CI |
 | `PF_WEB_ORIGIN` | api | (empty = CORS off) | the single browser origin allowed cross-origin (P0-065); empty disables CORS entirely; dev console: `http://localhost:3000` |
 
 ## Release flow (cocogitto, P0-010)

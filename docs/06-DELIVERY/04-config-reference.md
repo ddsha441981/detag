@@ -44,6 +44,7 @@
 | `PF_SMTP_USER` | (empty) | mailer |
 | `PF_STRIPE_SECRET_KEY` | `sk_test_placeholder` | billing |
 | `PF_STRIPE_WEBHOOK_SECRET` | `whsec_placeholder` | billing |
+| `PF_TEST_CONTAINERS` | (empty) | tests |
 | `PF_TEST_LIVE_MINIO` | (empty) | tests |
 | `PF_UPLOAD_PART_URL_TTL_SECS` | `600` | storage |
 | `PF_WEB_ORIGIN` | (empty) | api |
