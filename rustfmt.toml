@@ -1,0 +1,3 @@
+# Rust formatting policy (P0-003). `cargo fmt` / `just fmt` is a CI gate.
+max_width = 100
+edition = "2021"

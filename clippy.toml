@@ -1,0 +1,4 @@
+# Clippy policy (P0-003).
+# - MSRV matches rust-toolchain.toml (1.99).
+# - No `#[allow(...)]` without a justification comment (see CONTRIBUTING.md).
+msrv = "1.99"
