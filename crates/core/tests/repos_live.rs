@@ -52,6 +52,7 @@ fn drop_db_sql(db: &str) -> &'static str {
         "detag_p041_pool" => "DROP DATABASE IF EXISTS detag_p041_pool",
         "detag_p057_uploads" => "DROP DATABASE IF EXISTS detag_p057_uploads",
         "detag_p057_uploads_guarded" => "DROP DATABASE IF EXISTS detag_p057_uploads_guarded",
+        "detag_p058_uploads_hash" => "DROP DATABASE IF EXISTS detag_p058_uploads_hash",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -66,6 +67,7 @@ fn create_db_sql(db: &str) -> &'static str {
         "detag_p041_pool" => "CREATE DATABASE detag_p041_pool",
         "detag_p057_uploads" => "CREATE DATABASE detag_p057_uploads",
         "detag_p057_uploads_guarded" => "CREATE DATABASE detag_p057_uploads_guarded",
+        "detag_p058_uploads_hash" => "CREATE DATABASE detag_p058_uploads_hash",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -489,6 +491,73 @@ async fn uploads_transitions_are_guarded() {
             .is_none(),
         "completing an aborted upload must match nothing"
     );
+
+    teardown(pool, db).await;
+}
+
+#[tokio::test]
+async fn uploads_verified_hash_is_stored() {
+    let db = "detag_p058_uploads_hash";
+    let pool = setup(db).await;
+
+    let user = users::create(&pool, "hash@example.com", "h")
+        .await
+        .expect("create user");
+    // The creation-time claim (what the client reported) — here
+    // deliberately wrong, so the test proves the stored value is
+    // replaced by the server-computed one.
+    let claim = "0000000000000000000000000000000000000000000000000000000000000000";
+    let created = uploads::create(
+        &pool,
+        &uploads::NewUpload {
+            user_id: user.id,
+            kind: "image",
+            filename: "input.png",
+            bytes: 3,
+            sha256: claim,
+            mime: "image/png",
+            storage_key: "dev/2026-11/c/input.png",
+            parts: 1,
+        },
+    )
+    .await
+    .expect("create upload");
+    assert_eq!(created.sha256, claim);
+
+    // The server-computed hash (here: sha256("abc")) replaces the
+    // claim while the upload is still pending.
+    let verified = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    let stored = uploads::set_sha256(&pool, created.id, verified)
+        .await
+        .expect("set_sha256")
+        .expect("guard must match a pending upload");
+    assert_eq!(stored.sha256, verified);
+    let by_id = uploads::by_id(&pool, created.id)
+        .await
+        .expect("by_id")
+        .expect("upload must exist");
+    assert_eq!(by_id.sha256, verified);
+
+    // Once ready, the hash can no longer be overwritten.
+    uploads::set_status_guarded(&pool, created.id, "pending_parts", "ready")
+        .await
+        .expect("mark ready")
+        .expect("guard must match");
+    assert!(
+        uploads::set_sha256(
+            &pool,
+            created.id,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        )
+        .await
+        .expect("set_sha256 after ready")
+        .is_none(),
+        "storing a hash on a ready upload must match nothing"
+    );
+    assert!(uploads::set_sha256(&pool, Uuid::nil(), verified)
+        .await
+        .expect("set_sha256 unknown id")
+        .is_none());
 
     teardown(pool, db).await;
 }

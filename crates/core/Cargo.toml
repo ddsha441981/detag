@@ -23,6 +23,7 @@ url.workspace = true
 deadpool-redis.workspace = true
 sqlx.workspace = true
 uuid.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

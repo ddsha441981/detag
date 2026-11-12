@@ -105,6 +105,32 @@ pub async fn by_id(
     .map_err(RepoError::from_sqlx)
 }
 
+/// Store the server-computed whole-object sha256 (P0-058): the
+/// value [`crate::checksum::UploadVerifier::finish`] returns after
+/// every part verified. Guarded on `pending_parts` like
+/// [`set_status_guarded`] — the hash is stored during complete,
+/// before the row becomes ready — and returns `None` when the
+/// guard did not match. The stored value is the verified hash,
+/// not the client's creation-time claim.
+pub async fn set_sha256(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+    sha256: &str,
+) -> Result<Option<Upload>, RepoError> {
+    sqlx::query_as!(
+        Upload,
+        "UPDATE uploads SET sha256 = $2, updated_at = now()
+         WHERE id = $1 AND status = 'pending_parts'
+         RETURNING id, user_id, kind, filename, bytes, sha256, phash, mime, width, height,
+             duration_s, metadata, status, storage_key, parts, created_at, updated_at",
+        id,
+        sha256
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
 /// Move an upload from `from` to `to` (and bump `updated_at`),
 /// atomically: the UPDATE matches only a row still in `from`.
 /// Returns the updated row, or `None` when no row matched — the

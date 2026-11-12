@@ -2,6 +2,7 @@
 //! Module contents land with their epic tickets (E0.2 config/errors, E0.4 db, …).
 
 pub mod audit;
+pub mod checksum;
 pub mod config;
 pub mod db;
 pub mod error;
