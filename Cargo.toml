@@ -40,6 +40,7 @@ chrono = { version = "0.4", features = ["serde"] }
 figment = { version = "0.10", features = ["env", "toml"] }
 url = { version = "2", features = ["serde"] }
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "postgres", "migrate", "macros", "chrono", "uuid", "json"] }
+deadpool-redis = { version = "0.22", features = ["rt_tokio_1"] }
 
 [profile.release]
 lto = "thin"

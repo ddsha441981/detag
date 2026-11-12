@@ -1,20 +1,82 @@
-//! Redis health probe (P0-046): the `/readyz` redis component.
+//! Redis (P0-046, P0-047): health probe, connection manager, key helpers.
 //!
-//! Deliberately client-free: it speaks raw RESP over a TCP stream
-//! (`PING` → `+PONG`) instead of going through a redis client, so
-//! readiness can check redis before the connection manager exists.
-//! The real client (deadpool-redis pool, key helpers, TTLs) lands
-//! in P0-047 and will live in this module next to the probe.
+//! - [`redis_health`] — the `/readyz` redis component. Deliberately
+//!   client-free: it speaks raw RESP over a TCP stream (`PING` →
+//!   `+PONG`) instead of going through a redis client, so readiness
+//!   can check redis before the connection manager exists.
+//! - [`create_pool`] — the deadpool-redis connection manager
+//!   (P0-047): one pool per process, checked out per operation.
+//! - [`keys`] — the `pf:{ns}:{key}` naming convention + TTL constants.
 //!
 //! Only the `redis://` scheme is probed (plain TCP). A `rediss://`
 //! URL reports down with an explicit detail — TLS needs the client,
 //! not this probe.
 
+pub mod keys;
+
 use crate::db::ComponentHealth;
 use crate::telemetry::redact;
 use std::time::Duration;
+use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
+
+/// A deadpool-redis connection pool: one per process, checked out
+/// per operation (`pool.get().await`).
+pub type RedisPool = deadpool_redis::Pool;
+
+/// Pool sizing + timeouts (P0-047).
+#[derive(Debug, Clone)]
+pub struct RedisPoolConfig {
+    /// Maximum connections in the pool.
+    pub max_size: usize,
+    /// How long checkout waits for a free connection.
+    pub wait_timeout: Duration,
+    /// How long creating a new connection may take.
+    pub create_timeout: Duration,
+    /// How long a connection may sit idle before being recycled
+    /// (`None` = never recycle on idle).
+    pub recycle_timeout: Option<Duration>,
+}
+
+impl Default for RedisPoolConfig {
+    fn default() -> Self {
+        RedisPoolConfig {
+            max_size: 16,
+            wait_timeout: Duration::from_secs(2),
+            create_timeout: Duration::from_secs(2),
+            recycle_timeout: None,
+        }
+    }
+}
+
+/// Creating the pool failed. The display may contain the URL, so
+/// never log this error unredacted (P0-032: `redact()` first).
+#[derive(Debug, Error)]
+pub enum RedisPoolError {
+    /// The URL is malformed or the pool cannot be built from it.
+    #[error("invalid redis URL or pool config: {0}")]
+    CreatePool(#[from] deadpool_redis::CreatePoolError),
+}
+
+/// Build the connection pool for `redis_url` (P0-047).
+/// Fails fast on a malformed URL; an unreachable server is NOT an
+/// error here — deadpool connects lazily, and checkout reports it
+/// (`PoolError`) instead. Pass `&RedisPoolConfig::default()` for
+/// the dev defaults (16 connections, 2 s timeouts).
+pub fn create_pool(redis_url: &str, config: &RedisPoolConfig) -> Result<RedisPool, RedisPoolError> {
+    let mut cfg = deadpool_redis::Config::from_url(redis_url);
+    cfg.pool = Some(deadpool_redis::PoolConfig {
+        max_size: config.max_size,
+        timeouts: deadpool_redis::Timeouts {
+            wait: Some(config.wait_timeout),
+            create: Some(config.create_timeout),
+            recycle: config.recycle_timeout,
+        },
+        ..Default::default()
+    });
+    Ok(cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1))?)
+}
 
 /// Health probe for the `/readyz` redis component: TCP connect +
 /// `PING`, bounded by a 2 s timeout so a stuck server cannot hang

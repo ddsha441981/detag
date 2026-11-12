@@ -19,6 +19,7 @@ prometheus.workspace = true
 chrono.workspace = true
 figment.workspace = true
 url.workspace = true
+deadpool-redis.workspace = true
 sqlx.workspace = true
 uuid.workspace = true
 
