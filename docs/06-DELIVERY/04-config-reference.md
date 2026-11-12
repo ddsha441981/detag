@@ -32,6 +32,10 @@
 | `PF_QUEUE_VISIBILITY_TIMEOUT_SECS` | `300` | worker |
 | `PF_RAZORPAY_KEY` | `rzp_test_placeholder` | billing |
 | `PF_RAZORPAY_SECRET` | `placeholder` | billing |
+| `PF_RATE_LIMIT_IP_BURST` | `120` | api |
+| `PF_RATE_LIMIT_IP_REFILL_PER_MIN` | `120` | api |
+| `PF_RATE_LIMIT_ROUTE_BURST` | `600` | api |
+| `PF_RATE_LIMIT_ROUTE_REFILL_PER_MIN` | `600` | api |
 | `PF_REDIS_URL` | `redis://localhost:6379` | api, worker |
 | `PF_RESULTS_TTL_BUSINESS_H` | `72` | cleanup |
 | `PF_RESULTS_TTL_FREE_H` | `6` | cleanup |

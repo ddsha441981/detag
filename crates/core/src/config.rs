@@ -163,6 +163,26 @@ pub struct Settings {
     /// served in dev and stage only, never in prod (P0-067).
     /// Default dev.
     pub environment: String,
+    /// Env: PF_RATE_LIMIT_IP_BURST — per-IP token-bucket burst
+    /// (P0-103): how many requests one IP may make in a burst
+    /// before the bucket empties. Default 120. Must be >= 1.
+    /// Per-plan limits are open question #17, tuned in Phase 5 —
+    /// this is the global skeleton default, not a plan tier.
+    pub rate_limit_ip_burst: u64,
+    /// Env: PF_RATE_LIMIT_IP_REFILL_PER_MIN — per-IP token-bucket
+    /// refill (P0-103): tokens per minute (120 = a sustained
+    /// 2 req/s). Default 120. 0 = never refills (a fixed
+    /// allowance until the key expires).
+    pub rate_limit_ip_refill_per_min: u64,
+    /// Env: PF_RATE_LIMIT_ROUTE_BURST — per-route token-bucket
+    /// burst (P0-103): how many requests one route template
+    /// (`METHOD:/v1/<segment>`) may take in a burst, across all
+    /// clients. Default 600. Must be >= 1.
+    pub rate_limit_route_burst: u64,
+    /// Env: PF_RATE_LIMIT_ROUTE_REFILL_PER_MIN — per-route
+    /// token-bucket refill (P0-103): tokens per minute (600 = a
+    /// sustained 10 req/s). Default 600. 0 = never refills.
+    pub rate_limit_route_refill_per_min: u64,
     /// Env: PF_WORKER_CONCURRENCY — apalis workers per queue. Each
     /// of the four queues (pipeline, cleanup, email, reconciliation)
     /// runs this many workers (P0-075). Default 4. Must be >= 1.
@@ -249,6 +269,10 @@ impl Default for Settings {
             otel_endpoint: String::new(),
             web_origin: String::new(),
             environment: "dev".to_string(),
+            rate_limit_ip_burst: 120,
+            rate_limit_ip_refill_per_min: 120,
+            rate_limit_route_burst: 600,
+            rate_limit_route_refill_per_min: 600,
             worker_concurrency: 4,
             worker_metrics_port: 9092,
             worker_heartbeat_interval_secs: 15,
@@ -298,6 +322,16 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("otel_endpoint", "PF_OTEL_ENDPOINT"),
     ("web_origin", "PF_WEB_ORIGIN"),
     ("environment", "PF_ENVIRONMENT"),
+    ("rate_limit_ip_burst", "PF_RATE_LIMIT_IP_BURST"),
+    (
+        "rate_limit_ip_refill_per_min",
+        "PF_RATE_LIMIT_IP_REFILL_PER_MIN",
+    ),
+    ("rate_limit_route_burst", "PF_RATE_LIMIT_ROUTE_BURST"),
+    (
+        "rate_limit_route_refill_per_min",
+        "PF_RATE_LIMIT_ROUTE_REFILL_PER_MIN",
+    ),
     ("worker_concurrency", "PF_WORKER_CONCURRENCY"),
     ("worker_metrics_port", "PF_WORKER_METRICS_PORT"),
     (
@@ -397,6 +431,10 @@ impl Settings {
             otel_endpoint: field!(otel_endpoint, String),
             web_origin: field!(web_origin, String),
             environment: field!(environment, String),
+            rate_limit_ip_burst: field!(rate_limit_ip_burst, u64),
+            rate_limit_ip_refill_per_min: field!(rate_limit_ip_refill_per_min, u64),
+            rate_limit_route_burst: field!(rate_limit_route_burst, u64),
+            rate_limit_route_refill_per_min: field!(rate_limit_route_refill_per_min, u64),
             worker_concurrency: field!(worker_concurrency, usize),
             worker_metrics_port: field!(worker_metrics_port, u16),
             worker_heartbeat_interval_secs: field!(worker_heartbeat_interval_secs, u64),
@@ -488,6 +526,12 @@ impl Settings {
         }
         if self.engine_tiles_max == 0 {
             invalid("PF_ENGINE_TILES_MAX", "must be >= 1".to_string());
+        }
+        if self.rate_limit_ip_burst == 0 {
+            invalid("PF_RATE_LIMIT_IP_BURST", "must be >= 1".to_string());
+        }
+        if self.rate_limit_route_burst == 0 {
+            invalid("PF_RATE_LIMIT_ROUTE_BURST", "must be >= 1".to_string());
         }
         if self.worker_concurrency == 0 {
             invalid("PF_WORKER_CONCURRENCY", "must be >= 1".to_string());
@@ -947,6 +991,38 @@ mod tests {
         env::set_var("PF_WORKER_CONCURRENCY", "2");
         let settings = Settings::load_from(None).expect("2 must load");
         assert_eq!(settings.worker_concurrency, 2);
+    }
+
+    /// P0-103: rate-limit defaults are ip 120 burst / 120 per min
+    /// and route 600 burst / 600 per min; a zero burst fails
+    /// naming the var (a zero refill is legal — a fixed allowance).
+    #[test]
+    fn rate_limit_defaults_and_zero_burst_fails() {
+        let _env = clean_env();
+        let settings = Settings::load_from(None).expect("defaults must load");
+        assert_eq!(settings.rate_limit_ip_burst, 120);
+        assert_eq!(settings.rate_limit_ip_refill_per_min, 120);
+        assert_eq!(settings.rate_limit_route_burst, 600);
+        assert_eq!(settings.rate_limit_route_refill_per_min, 600);
+        env::set_var("PF_RATE_LIMIT_IP_BURST", "0");
+        let err = Settings::load_from(None).expect_err("0 burst must fail");
+        assert!(
+            err.to_string().contains("PF_RATE_LIMIT_IP_BURST"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_RATE_LIMIT_IP_BURST", "5");
+        env::set_var("PF_RATE_LIMIT_ROUTE_BURST", "0");
+        let err = Settings::load_from(None).expect_err("0 route burst must fail");
+        assert!(
+            err.to_string().contains("PF_RATE_LIMIT_ROUTE_BURST"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_RATE_LIMIT_ROUTE_BURST", "3");
+        env::set_var("PF_RATE_LIMIT_IP_REFILL_PER_MIN", "0");
+        let settings = Settings::load_from(None).expect("0 refill must load");
+        assert_eq!(settings.rate_limit_ip_burst, 5);
+        assert_eq!(settings.rate_limit_route_burst, 3);
+        assert_eq!(settings.rate_limit_ip_refill_per_min, 0);
     }
 
     /// P0-079: visibility timeout defaults to 300 s and keep-alive

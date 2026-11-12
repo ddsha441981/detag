@@ -3,8 +3,10 @@
 //!
 //! These are primitives, not policy: the limits themselves are
 //! per-plan defaults in config (open question #17, tuned in
-//! Phase 5) and the HTTP layer (429 + `X-RateLimit-*` headers,
-//! api spec) lands with Phase 1 auth. Callers pick a scope (the
+//! Phase 5). The HTTP layer over them (429 + `X-RateLimit-*`
+//! headers, the middleware in `apps/api/src/rate_limit.rs`)
+//! landed in P0-103; Phase 1 auth adds the user/api-key scope
+//! resolution on top of it. Callers pick a scope (the
 //! `{scope}` in the `pf:ratelimit:{scope}:{id}` key — e.g.
 //! `jobs_create`, `auth_login`, `api_key:{prefix}`) and an id
 //! (user id, key prefix, or IP hash), and the primitive answers
@@ -142,6 +144,13 @@ impl TokenBucket {
             capacity,
             refill_per_sec,
         })
+    }
+
+    /// The burst capacity (for the `X-RateLimit-Limit` header —
+    /// the caller reports the limit it enforces, not a value it
+    /// re-derives from the settings).
+    pub fn capacity(&self) -> f64 {
+        self.capacity
     }
 
     /// TTL for an idle bucket key: long enough for an empty bucket

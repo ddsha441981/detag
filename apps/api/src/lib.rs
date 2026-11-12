@@ -48,8 +48,9 @@
 //! | 4 | `docs_csp` middleware | Replaces the CSP with the docs CSP on `/docs` responses only (P0-102) — the Swagger UI needs same-origin scripts/styles, which the api's `default-src 'none'` would block. It sits OUTSIDE the secure-headers layer so its replacement wins on the way out; every other path passes through untouched. |
 //! | 5 | `secure_headers` middleware | Stamps the header table (nosniff, `X-Frame-Options`, `Referrer-Policy`, CSP) on every response the inner layers produce — stubs, mapped errors, 404s — plus HSTS when the deployment is TLS-terminated (stage/prod, P0-102). Outside the error mapper so a rewritten body still gets the headers. |
 //! | 6 | `http_metrics` middleware | The request timer starts here, so it covers the error mapper, the body-limit rejections, and the handler. If it wrapped only the handler, middleware time would be invisible to the latency metrics. |
-//! | 7 | `error_mapper` middleware | Innermost middleware: it rewrites framework 400/404/413/415/422 responses into problem+json. It must sit INSIDE the body-limit layer (which lives per-module in `routes::api_router`, P0-065) so it sees the 413 the limit generates, and inside CORS/secure-headers/request-id so the rewritten response still gets ACAO, the secure-header table, and `X-Request-Id` on its way out. |
-//! | 8 | Routes + `State<AppState>` | Innermost: handlers. State is not a layer — `with_state` attaches it to the router, so handlers can extract it regardless of layer position. The body-limit layer is applied per-module here (every module except uploads — see `routes::api_router`). |
+//! | 7 | `rate_limit` middleware | Spends one token from the IP bucket and one from the route bucket per `/v1` request (P0-103); a denial answers 429 + problem+json with `Retry-After` without calling the next layer. Inside http-metrics so its 429s are timed, inside secure-headers so a 429 still gets the header table, inside request-id so the 429 body carries the request id, and outside the error mapper because it renders its own problem body. |
+//! | 8 | `error_mapper` middleware | Innermost middleware: it rewrites framework 400/404/413/415/422 responses into problem+json. It must sit INSIDE the body-limit layer (which lives per-module in `routes::api_router`, P0-065) so it sees the 413 the limit generates, and inside CORS/secure-headers/request-id so the rewritten response still gets ACAO, the secure-header table, and `X-Request-Id` on its way out. |
+//! | 9 | Routes + `State<AppState>` | Innermost: handlers. State is not a layer — `with_state` attaches it to the router, so handlers can extract it regardless of layer position. The body-limit layer is applied per-module here (every module except uploads — see `routes::api_router`). |
 //!
 //! Principles for the next layers: a layer can only see
 //! state/extensions added outside it; the timer must wrap
@@ -66,6 +67,7 @@ pub mod http_metrics;
 pub mod metrics;
 pub mod openapi;
 pub mod problem;
+pub mod rate_limit;
 pub mod request_id;
 pub mod routes;
 pub mod secure_headers;
@@ -92,6 +94,10 @@ pub struct AppState {
     pub storage: S3Storage,
     /// The loaded settings (ports, URLs, TTLs, flags).
     pub settings: Arc<Settings>,
+    /// The rate-limit policy (P0-103): the IP + route token
+    /// buckets built once from the settings, so the middleware
+    /// does not rebuild them per request.
+    pub rate_limit: rate_limit::RateLimitPolicy,
     /// Time source: [`SystemClock`] in production, a frozen
     /// [`ManualClock`](detag_core::clock::ManualClock) in tests.
     pub clock: Arc<dyn Clock>,
@@ -137,6 +143,7 @@ impl AppState {
             redis,
             storage,
             settings: Arc::new(settings.clone()),
+            rate_limit: rate_limit::RateLimitPolicy::from_settings(settings),
             clock: Arc::new(SystemClock),
         })
     }
@@ -170,6 +177,16 @@ pub fn build_router(state: AppState, metrics: Metrics) -> Router {
     router
         .with_state(state)
         .layer(middleware::from_fn(error_mapper::error_mapper_middleware))
+        // The rate limiter sits inside http-metrics (its 429s are
+        // timed like any response) and outside the error mapper
+        // (it renders its own problem+json body, so the mapper
+        // never sees the denial). Inside secure headers so a 429
+        // still gets the header table, and inside request-id so
+        // the 429 body carries the request id.
+        .layer(middleware::from_fn_with_state(
+            headers_state.clone(),
+            rate_limit::rate_limit_middleware,
+        ))
         .layer(middleware::from_fn(http_metrics::http_metrics_middleware))
         .layer(middleware::from_fn_with_state(
             headers_state,

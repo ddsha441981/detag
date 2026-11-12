@@ -27,7 +27,7 @@ Conventions first; endpoint tables are the contract. OpenAPI is generated from c
   (email shape, filename sanitize, public-only URL); handlers take
   `ValidatedJson<T>` (see `04-ENGINEERING/04-adding-an-endpoint.md`).
 - Error code ranges: PF-1xxx auth/session, PF-2xxx upload/media, PF-3xxx quota/billing, PF-4xxx engine/quality/compliance, PF-5xxx system.
-- Rate limits: headers `X-RateLimit-Limit`, `-Remaining`, `-Reset`. Overage = 429 + problem+json.
+- Rate limits: headers `X-RateLimit-Limit` (burst), `-Remaining`, `-Reset` (unix time when one token is available again). Overage = 429 + problem+json (PF-3007) + `Retry-After` (seconds until one token). Scopes (P0-103): per-IP and per-route (`METHOD:/v1/<segment>`) token buckets; per-user / per-API-key scopes land with Phase 1 auth. Health/meta routes are exempt. Defaults: IP 120 burst / 120 per min, route 600 burst / 600 per min (`PF_RATE_LIMIT_*`).
 - Idempotency: `Idempotency-Key` header honored on `POST /v1/jobs`, `POST /v1/uploads`, payment endpoints (24 h window).
 - Pagination: cursor-based — `?limit=&cursor=`, response `{"items": [...], "next_cursor": "..."}`.
 - Quota headers on job-creating routes: `X-Quota-Images-Remaining`, `X-Quota-Video-Seconds-Remaining`.

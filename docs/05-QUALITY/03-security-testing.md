@@ -30,7 +30,7 @@ For every `/v1` endpoint × role {anonymous, user-A, user-B, support, admin, api
 - Webhook SSRF: endpoint URL must resolve to public HTTPS; private/link-local CIDRs denied; redirect-following disabled; tested with a listener on 169.254.169.254-style address.
 - Outbound webhook HMAC: constant-time compare; replay window enforced; tampered payload rejected.
 - Idempotency: replayed Idempotency-Key returns original response; concurrent duplicates create one job (integration test with racing requests).
-- Rate limits: per-IP + per-account + per-key tiers verified; lockout backoff curve asserted.
+- Rate limits: per-IP + per-route token buckets enforced by the middleware (P0-103; race-safe — no over-admission under concurrency, proven by test); per-account + per-key tiers land with Phase 1 auth; lockout backoff curve asserted.
 - Injection: sqlx parameterized everywhere (CI grep forbids `format!`-built SQL); no string-built shell calls (ffmpeg args as argv array, never shell string).
 
 ## Headers & transport

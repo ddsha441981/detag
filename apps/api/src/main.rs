@@ -69,8 +69,14 @@ async fn main() {
     // erroring on its own still ends the process promptly.
     // The pool closes first (P0-035): in-flight queries finish,
     // idle connections drop, then the servers stop.
-    let api_server =
-        axum::serve(listener, app).with_graceful_shutdown(wait_shutdown(Arc::clone(&shutdown)));
+    // The socket address is captured per connection
+    // (`ConnectInfo`) so the rate limiter (P0-103) can fall back
+    // to it when `X-Forwarded-For` is absent.
+    let api_server = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(wait_shutdown(Arc::clone(&shutdown)));
     let metrics_server = axum::serve(metrics_listener, metrics_router(metrics))
         .with_graceful_shutdown(wait_shutdown(Arc::clone(&shutdown)));
     let mut servers = tokio::spawn(async move { tokio::join!(api_server, metrics_server) });

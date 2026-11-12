@@ -5,7 +5,7 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-103
+- **Current ticket:** P0-104
 - **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007). P0-083 size gate likewise deferred to CI (DOCKER-001, no docker daemon here); Dockerfile.api + gate implemented, AC unticked until CI runs green. P0-088 AC ("smoke enforces health") and P0-090 AC ("smoke green in CI") likewise unticked until the smoke job goes green in CI — `just smoke` + the CI job are implemented, but the workflow files can't reach GitHub yet (CI-WORKFLOWS-001). Remote CI runs the STALE workflow — local checks added since ~09:20 IST never ran remotely.
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
@@ -13,7 +13,7 @@
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 99 / 108 | — |
+| 0 | Foundation & Platform Baseline | 100 / 108 | — |
 | 1 | Identity & Billing | 0 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
@@ -25,7 +25,7 @@
 
 | Signal | Value |
 | --- | --- |
-| `just verify` | green (fmt + clippy -D warnings + tests; smoke excluded per ADR-0017 — `just smoke` exists now, still excluded: no docker daemon here) — 379 passed, 0 failed (P0-102; 375 + 4 new: 3 middleware-chain + 1 core config; attempt 3 — fmt, then clippy unused-import, then green; no flakes) |
+| `just verify` | green (fmt + clippy -D warnings + tests; smoke excluded per ADR-0017 — `just smoke` exists now, still excluded: no docker daemon here) — 387 passed, 0 failed (P0-103; 379 + 8 new: 7 api rate-limit + 1 core config; attempt 5 — fmt, FLAKY-002, VM reset killed the run, FLAKY-001, then green) |
 | Coverage (core/engine/api) | 96.7% / 99.1% / 92.7% (worker 83.8%) — all above NFR-50 floors (85/80/75/70); report-only until Phase 2 (`just coverage-gate` exists, OFF) |
 | Golden suite | — |
 | Bench snapshot (image 4K p95 / video factor) | full-job 4K mean 545 ms (scaffold chain — see Bench history; p95 not tracked yet, criterion mean/median in `crates/engine/benches/baselines/`) / video factor n/a (input-prep only; real factor needs the Phase 2 video pipeline) |
@@ -34,11 +34,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-103 — Rate limiter skeleton
-2. P0-104 — Body/size/dimension guards
-3. P0-105 — Secrets policy enforcement
-4. P0-106 — Threat model stub
-5. P0-107 — Dependency review
+1. P0-104 — Body/size/dimension guards
+2. P0-105 — Secrets policy enforcement
+3. P0-106 — Threat model stub
+4. P0-107 — Security smoke tests
+5. P0-108 — Security baseline summary
 
 ## Bench history (append-only)
 
