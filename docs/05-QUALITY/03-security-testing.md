@@ -27,6 +27,8 @@ For every `/v1` endpoint × role {anonymous, user-A, user-B, support, admin, api
 
 ## API & webhook hardening
 
+- Body caps per route class (P0-104): auth/meta 64 KiB, jobs/admin 1 MiB, billing (webhooks) 256 KiB; over-cap is 413 PF-2003, tested per class. Uploads are exempt (bytes never transit the api).
+- Dimension caps (P0-104, FR-U-04): 8000x8000 per side, 64 MP total, enforced at job-create by `validate_dimensions` (PF-2005, 413, fail-closed on missing dimensions); the sniff-time dimension check in the abuse table above lands with intake (Phase 2/3).
 - Webhook SSRF: endpoint URL must resolve to public HTTPS; private/link-local CIDRs denied; redirect-following disabled; tested with a listener on 169.254.169.254-style address.
 - Outbound webhook HMAC: constant-time compare; replay window enforced; tampered payload rejected.
 - Idempotency: replayed Idempotency-Key returns original response; concurrent duplicates create one job (integration test with racing requests).

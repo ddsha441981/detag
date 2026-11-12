@@ -108,6 +108,48 @@ pub fn sniff_media(head: &[u8], tail: &[u8], total_size: u64) -> Result<MediaKin
     Ok(kind)
 }
 
+/// Maximum image side in pixels (P0-104, FR-U-04): the product
+/// overview promises images "up to 8000x8000".
+pub const MAX_IMAGE_SIDE: u32 = 8000;
+
+/// Maximum image pixels (P0-104, FR-U-04): 8000 x 8000 = 64 MP.
+/// With both sides capped at [`MAX_IMAGE_SIDE`] the pixel rule
+/// is subsumed today — no 8000x8000-or-smaller image can exceed
+/// it — but it is enforced as the independent ceiling anyway:
+/// FR-U-04 makes the caps plan-dependent, and if a higher plan
+/// ever raises the side cap, the pixel budget still bounds the
+/// total work the engine must do.
+pub const MAX_IMAGE_PIXELS: u64 = 64_000_000;
+
+/// Check an upload's probed dimensions against the intake caps
+/// (P0-104, FR-U-04): each side at most [`MAX_IMAGE_SIDE`],
+/// total pixels at most [`MAX_IMAGE_PIXELS`]. The caller is the
+/// job-create handler (Phase 2): it loads the upload row's
+/// `width`/`height` and calls this before creating the job, so
+/// an over-cap image is rejected with PF-2005 (413) before any
+/// work is queued — never after the engine has started on it.
+/// The dimensions are `Option<i32>` because that is the upload
+/// row's shape: a missing dimension fails CLOSED (an unprobed
+/// upload cannot prove it is within cap), as does a
+/// non-positive one (corrupt probe data, not a real image).
+pub fn validate_dimensions(width: Option<i32>, height: Option<i32>) -> Result<(), AppError> {
+    let (width, height) = match (width, height) {
+        (Some(w), Some(h)) => (w, h),
+        _ => return Err(AppError::DimensionsExceeded),
+    };
+    if width < 1 || height < 1 {
+        return Err(AppError::DimensionsExceeded);
+    }
+    let (width, height) = (width as u32, height as u32);
+    if width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE {
+        return Err(AppError::DimensionsExceeded);
+    }
+    if width as u64 * height as u64 > MAX_IMAGE_PIXELS {
+        return Err(AppError::DimensionsExceeded);
+    }
+    Ok(())
+}
+
 /// Detect the kind from head magic bytes only.
 fn sniff_head(head: &[u8]) -> Result<MediaKind, AppError> {
     // PNG signature (8 bytes).
@@ -385,5 +427,56 @@ mod tests {
     fn error_code_is_pf_2001() {
         assert_eq!(AppError::UnsupportedMediaType.code(), "PF-2001");
         assert_eq!(AppError::UnsupportedMediaType.status(), 415);
+    }
+
+    /// P0-104: the dimension caps — 8000x8000 boundary admitted,
+    /// one pixel over on either side rejected, missing or
+    /// non-positive dimensions fail closed, and the error is
+    /// PF-2005 (413).
+    #[test]
+    fn dimensions_cap_boundaries() {
+        // The cap itself, and ordinary sizes.
+        assert!(validate_dimensions(Some(8000), Some(8000)).is_ok());
+        assert!(validate_dimensions(Some(1920), Some(1080)).is_ok());
+        assert!(validate_dimensions(Some(1), Some(1)).is_ok());
+        // One pixel over on either side.
+        assert!(matches!(
+            validate_dimensions(Some(8001), Some(8000)),
+            Err(AppError::DimensionsExceeded)
+        ));
+        assert!(matches!(
+            validate_dimensions(Some(8000), Some(8001)),
+            Err(AppError::DimensionsExceeded)
+        ));
+        // A long panorama: within the pixel budget, over the side cap.
+        assert!(matches!(
+            validate_dimensions(Some(16000), Some(4000)),
+            Err(AppError::DimensionsExceeded)
+        ));
+        // Missing dimensions fail closed (an unprobed upload
+        // cannot prove it is within cap).
+        assert!(matches!(
+            validate_dimensions(None, Some(1080)),
+            Err(AppError::DimensionsExceeded)
+        ));
+        assert!(matches!(
+            validate_dimensions(Some(1920), None),
+            Err(AppError::DimensionsExceeded)
+        ));
+        // Non-positive dimensions are corrupt probe data.
+        assert!(matches!(
+            validate_dimensions(Some(0), Some(1080)),
+            Err(AppError::DimensionsExceeded)
+        ));
+        assert!(matches!(
+            validate_dimensions(Some(-1920), Some(1080)),
+            Err(AppError::DimensionsExceeded)
+        ));
+    }
+
+    #[test]
+    fn dimensions_error_code_is_pf_2005() {
+        assert_eq!(AppError::DimensionsExceeded.code(), "PF-2005");
+        assert_eq!(AppError::DimensionsExceeded.status(), 413);
     }
 }

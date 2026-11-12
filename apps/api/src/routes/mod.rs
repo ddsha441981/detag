@@ -133,20 +133,41 @@ pub const ROUTE_TABLE: &[(&str, &str)] = &[
 /// route-table test relies on that: building the router IS the
 /// duplicate check, and the probe test is the presence check.
 ///
-/// Body limit (P0-065): every module except uploads carries the
-/// 1 MiB limit layer. Uploads are exempt structurally — upload
-/// bytes never transit the api (presigned S3 PUTs), and the nest
-/// without a limit layer cannot be capped by accident by a future
-/// streaming endpoint.
+/// Body limit (P0-065, per-class caps P0-104): every module
+/// except uploads carries the limit layer of its class — auth +
+/// meta `Small` (64 KiB), jobs + admin `Standard` (1 MiB),
+/// billing `Webhook` (256 KiB). Uploads are exempt structurally
+/// — upload bytes never transit the api (presigned S3 PUTs), and
+/// the nest without a limit layer cannot be capped by accident
+/// by a future streaming endpoint.
 pub fn api_router() -> Router<AppState> {
-    let limit = crate::body_limit::body_limit_layer();
     Router::new()
-        .merge(auth::router().layer(limit))
+        .merge(
+            auth::router().layer(crate::body_limit::body_limit_layer_for(
+                crate::body_limit::BodyLimitClass::Small,
+            )),
+        )
         .merge(uploads::router())
-        .merge(jobs::router().layer(limit))
-        .merge(billing::router().layer(limit))
-        .merge(admin::router().layer(limit))
-        .merge(meta::router().layer(limit))
+        .merge(
+            jobs::router().layer(crate::body_limit::body_limit_layer_for(
+                crate::body_limit::BodyLimitClass::Standard,
+            )),
+        )
+        .merge(
+            billing::router().layer(crate::body_limit::body_limit_layer_for(
+                crate::body_limit::BodyLimitClass::Webhook,
+            )),
+        )
+        .merge(
+            admin::router().layer(crate::body_limit::body_limit_layer_for(
+                crate::body_limit::BodyLimitClass::Standard,
+            )),
+        )
+        .merge(
+            meta::router().layer(crate::body_limit::body_limit_layer_for(
+                crate::body_limit::BodyLimitClass::Small,
+            )),
+        )
 }
 
 /// The shared Phase 0 stub: 501 `PF-5004` in the problem+json

@@ -29,7 +29,7 @@ use axum::{
     http::{header, Method, Request, StatusCode},
 };
 use detag_api::{
-    body_limit::MAX_JSON_BODY_BYTES,
+    body_limit::{BodyLimitClass, MAX_JSON_BODY_BYTES},
     secure_headers::{DOCS_CSP, HSTS_HEADER, SECURE_HEADERS},
 };
 use detag_api::{build_router, AppState};
@@ -352,8 +352,77 @@ async fn wrong_origin_gets_no_acao() {
     );
 }
 
-/// P0-102: HSTS is prod-only. A dev response (plain-http
-/// localhost) carries the rest of the table but no HSTS.
+/// P0-104: the caps are per route class, not one global cap.
+/// A 65 KiB body is over the auth class (64 KiB) but far under
+/// the jobs class (1 MiB): the same bytes are 413 on auth and
+/// admitted (stub 501) on jobs.
+#[tokio::test]
+async fn body_caps_differ_per_route_class() {
+    let body = vec![b'x'; 65 * 1024];
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/auth/login")
+        .header("x-request-id", PROBE_ID)
+        .header(header::ORIGIN, ORIGIN)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CONTENT_LENGTH, body.len().to_string())
+        .body(Body::from(body.clone()))
+        .unwrap();
+    let res = router_with_origin(ORIGIN)
+        .oneshot(req)
+        .await
+        .expect("oneshot oversize auth login");
+    assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let json = json_body(res).await;
+    assert_eq!(json["code"], "PF-2003", "{json}");
+
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/jobs")
+        .header("x-request-id", PROBE_ID)
+        .header(header::ORIGIN, ORIGIN)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CONTENT_LENGTH, body.len().to_string())
+        .body(Body::from(body))
+        .unwrap();
+    let res = router_with_origin(ORIGIN)
+        .oneshot(req)
+        .await
+        .expect("oneshot same body on jobs");
+    assert_eq!(
+        res.status(),
+        StatusCode::NOT_IMPLEMENTED,
+        "65 KiB is under the jobs class cap (1 MiB)"
+    );
+}
+
+/// P0-104: the billing class is the webhook cap (256 KiB) — a
+/// body just over it is 413, and the class constants are what
+/// the router wires (no silent drift between the doc table and
+/// the layers).
+#[tokio::test]
+async fn billing_trips_at_webhook_cap() {
+    assert_eq!(BodyLimitClass::Small.bytes(), 64 * 1024);
+    assert_eq!(BodyLimitClass::Standard.bytes(), MAX_JSON_BODY_BYTES);
+    assert_eq!(BodyLimitClass::Webhook.bytes(), 256 * 1024);
+    let body = vec![b'x'; 256 * 1024 + 1];
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/billing/checkout")
+        .header("x-request-id", PROBE_ID)
+        .header(header::ORIGIN, ORIGIN)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::CONTENT_LENGTH, body.len().to_string())
+        .body(Body::from(body))
+        .unwrap();
+    let res = router_with_origin(ORIGIN)
+        .oneshot(req)
+        .await
+        .expect("oneshot oversize checkout");
+    assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let json = json_body(res).await;
+    assert_eq!(json["code"], "PF-2003", "{json}");
+}
 #[tokio::test]
 async fn dev_responses_carry_no_hsts() {
     let router = router_with_environment(ORIGIN, "dev");
