@@ -261,11 +261,11 @@
   - **AC:**
     - [x] hygiene assertions green
 
-- [ ] **P0-033** — Observability runbook section
+- [x] **P0-033** — Observability runbook section
   - **Type:** docs · **Area:** observability · **Est:** S · **Deps:** P0-032 · **Prio:** P1
   - **Spec:** How to read dashboards, what alerts mean, trace-id to request correlation; added to deploy runbook.
   - **AC:**
-    - [ ] runbook section committed
+    - [x] runbook section committed
 
 ---
 

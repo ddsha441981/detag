@@ -75,8 +75,94 @@ until v1.0.0 is declared (see the release checklist).
 3. Boot stack with scratch config; login as test user; verify a historical job's artifacts (within TTL) render.
 4. Record time-to-restore in night report; target < 30 min.
 
-## Monitoring
+## Observability
 
-- Grafana dashboards (as code): API goldens (latency, error rate), queue depth/age, job stage durations, success rate, quality gate pass rate, storage usage, redis memory, backup freshness.
-- Alerts: readyz fail > 2 min, queue age p95 > 60 s, job failure > 5%/15 min, disk > 80%, redis down, backup older than 26 h.
+### Dashboards (Grafana, as code)
+
+Dashboards live in `ops/grafana/dashboards/` and are provisioned
+automatically (re-read every 10 s; `allowUiUpdates` is `false` — a
+change made in the Grafana UI is overwritten, so edit the JSON and
+run `just dashboards-check`). Until the E0.9 compose stack lands
+they are validated statically only (see ASSUMPTION-004); there is no
+live Grafana to look at yet.
+
+| Dashboard | What to read | What "good" looks like |
+| --- | --- | --- |
+| **Detag API — golden signals** (`api-golden.json`) | Request rate by route, 5xx share, latency p50/p95/p99, in-flight requests, build info | 5xx share near 0; p95 flat while rate rises; in-flight drains after deploys |
+| **Detag queues** (`queue.json`) | Depth per queue, enqueue/dequeue rate, stage duration p50/p95, stage runs observed | Depth near 0 between bursts; dequeue keeps up with enqueue; stage p95 stable |
+| **Detag jobs** (`jobs.json`) | Stage duration p95 by stage, queue depth (all queues), worker CPU/memory | No single stage dominates p95; worker CPU/memory flat, not climbing |
+
+Reading a bad dashboard: p95 rising *with* queue depth means the
+worker is the bottleneck (stuck/slow jobs — check the queue
+dashboard's stage durations); p95 rising with *flat* queue depth
+means the api or a dependency is slow (check the api-golden error
+rate, then the api logs). A depth that grows while dequeue rate is
+flat means the worker is down or not consuming — check
+`docker compose ps` before anything else.
+
+Honest gaps (no invented panels): job-outcome panels (success rate,
+quality-gate pass rate) land with the E0.8 job state machine and
+Phase 2 quality gates; storage / Redis / backup panels land with
+E0.4/E0.5 storage work and the backup job. The jobs dashboard says
+so in a text panel instead of showing a fake "No data" query.
+
+### Alerts (Prometheus, `ops/prometheus/`)
+
+Prometheus scrapes the api's `/metrics` (`detag-api` job,
+`localhost:9090` by default — `PF_METRICS_PORT`) and itself
+(`localhost:9091`). There is no Alertmanager yet, so alerts surface
+wherever Prometheus is watched; the `for:` window is the time the
+condition must hold before the alert fires.
+
+| Alert | Severity | What it means | First steps |
+| --- | --- | --- | --- |
+| `DetagApiDown` (`up{job="detag-api"} == 0`, 2m) | page | Prometheus cannot scrape the api's `/metrics` — the api is down or its metrics port is blocked. Proxy for "readyz fail > 2 min"; there is no `/readyz` probe series yet. | `docker compose ps`; api logs; check the metrics port is reachable. `/readyz` reports db/redis/storage/model health once it lands. |
+| `DetagApiHighErrorRate` (5xx share > 5%, 5m) | page | More than 5% of api requests return 5xx. | Api logs + api-golden error-rate panel; likely a down dependency (db/redis/storage) or a bad deploy. |
+
+Pending (commented rules in `ops/prometheus/alerts.yml` — not
+active, because a rule over a series that does not exist yet would
+silently never fire; each is uncommented in the ticket that
+registers its series): `DetagQueueAgeHigh` (queue age p95 > 60 s,
+E0.8), `DetagJobFailureRateHigh` (job failure > 5% / 15 min, E0.8),
+`DetagRedisDown` (E0.5), `DetagDiskUsageHigh` (disk > 80%, E0.9),
+`DetagBackupStale` (backup older than 26 h, Phase 5).
+
+### Trace-id to request correlation
+
+The request id is the correlation id — there is no separate trace
+id to look up. Flow:
+
+1. The client sends `x-request-id` (any UUID version) or none; the
+   api echoes the id back on every response as `x-request-id`, and
+   generates a fresh UUIDv7 when the client sends none or a bad
+   value (P0-019).
+2. Every error body (`application/problem+json`) carries the same id
+   in its `request_id` field — ask the user for it, or copy it from
+   the response header.
+3. Every JSON log line inside that request carries the id in its
+   span context (`http_request` span: `request_id`, `route`,
+   `method`); job logs additionally carry `job_id` (`job` span).
+   Search the logs with the id:
+   `docker compose logs api | grep '<request-id>'`
+   (logs are JSON; the id appears as a field value on every line of
+   the request).
+4. When `PF_OTEL_ENDPOINT` is set, the same `http_request` span —
+   with its `request_id` field — is exported via OTLP, so a trace
+   in the backend and the log lines share the id. When it is empty,
+   logs are the only record.
+
+Access-log sampling (P0-019): the per-request `request completed`
+event is emitted always for errors (status >= 400) and slow
+requests (> 250 ms), and for a deterministic 1% of successes (a
+hash of the request id, so the same id always decides the same
+way). The span itself exists for every request regardless of
+sampling — the id is always in the logs, even when the access event
+is not.
+
+Log hygiene (P0-032): logs never contain emails, passwords, tokens,
+or raw IPs — values are redacted (`[email]`, `[redacted]`) or
+hashed (`[ip:…]`) before they are emitted. If you ever see a raw
+one in a log line, that is a bug: file it, do not paste the line
+into a ticket.
+
 - Nightly reconciliation job writes `system` summary to `09-STATE/PROGRESS.md` when running in the dev repo context.
