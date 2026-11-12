@@ -43,21 +43,29 @@
 //! | # | Layer | Why it sits here |
 //! | - | ----- | ---------------- |
 //! | 1 | `Extension<Metrics>` | Outermost so every inner layer can read it. A layer can only see extensions added OUTSIDE it: if this were innermost, the metrics middleware below could not find the registry (it panics with "http metrics Extension missing"). |
-//! | 2 | `http_metrics` middleware | The request timer starts here, so it covers the request-id middleware AND the handler. If it wrapped only the handler, middleware time would be invisible to the latency metrics. |
-//! | 3 | `request_id` middleware | Assigns/propagates `X-Request-Id` before the handler runs (and before any handler logging), so every log line and every error body in the request carries the same id. |
-//! | 4 | Routes + `State<AppState>` | Innermost: handlers. State is not a layer — `with_state` attaches it to the router, so handlers (and `from_fn` middleware, if they ever need it) can extract it regardless of layer position. |
+//! | 2 | `request_id` middleware | Assigns/propagates `X-Request-Id` before anything else runs, so every log line, every error body, and every preflight response in the request carries the same id. It also creates the `http_request` tracing span — that span IS the trace layer (P0-065): tower-http's `TraceLayer` would create a second span per request with the same fields minus the request id, doubling log volume for no information. The `trace` feature stays available in the workspace for a future need, but it is not layered. |
+//! | 3 | CORS (`CorsLayer`, `PF_WEB_ORIGIN`) | Outside the handlers so preflight `OPTIONS` is answered before auth, body limits, or routing — a preflight carries no credentials and must not need them. Inside request-id so preflights still get an id. A preflight short-circuits here, so it carries ACAO + `X-Request-Id` but NOT the secure headers (those are inner) — the order test asserts exactly that. |
+//! | 4 | `secure_headers` middleware | Stamps the header table (HSTS, nosniff, `X-Frame-Options`, CSP) on every response the inner layers produce — stubs, mapped errors, 404s. Outside the error mapper so a rewritten body still gets the headers. |
+//! | 5 | `http_metrics` middleware | The request timer starts here, so it covers the error mapper, the body-limit rejections, and the handler. If it wrapped only the handler, middleware time would be invisible to the latency metrics. |
+//! | 6 | `error_mapper` middleware | Innermost middleware: it rewrites framework 400/404/413/422 responses into problem+json. It must sit INSIDE the body-limit layer (which lives per-module in `routes::api_router`, P0-065) so it sees the 413 the limit generates, and inside CORS/secure-headers/request-id so the rewritten response still gets ACAO, the secure-header table, and `X-Request-Id` on its way out. |
+//! | 7 | Routes + `State<AppState>` | Innermost: handlers. State is not a layer — `with_state` attaches it to the router, so handlers (and `from_fn` middleware, if they ever need it) can extract it regardless of layer position. The body-limit layer is applied per-module here (every module except uploads — see `routes::api_router`). |
 //!
-//! Principles for the next layers (P0-065 adds trace, body
-//! limit, CORS, secure headers, the error mapper): a layer can
-//! only see state/extensions added outside it; the timer must
-//! wrap everything it measures; the request id must be assigned
-//! before anything logs. P0-065 extends this table — it does not
-//! replace it.
+//! Principles for the next layers: a layer can only see
+//! state/extensions added outside it; the timer must wrap
+//! everything it measures; the request id must be assigned
+//! before anything logs; an error response must leave through
+//! the same outer layers a success does (CORS, secure headers,
+//! request id), so the mapper is innermost.
 
+pub mod body_limit;
+pub mod cors;
+pub mod error_mapper;
 pub mod http_metrics;
 pub mod metrics;
+pub mod problem;
 pub mod request_id;
 pub mod routes;
+pub mod secure_headers;
 
 use axum::{extract::Extension, middleware, Router};
 use detag_core::clock::{Clock, SystemClock};
@@ -140,14 +148,20 @@ impl AppState {
 
 /// The router: the route modules (`routes/`, P0-064) merged,
 /// with the state attached and the middleware layered on top.
-/// The remaining middleware lands in P0-065. The layer order is
-/// documented at the top of this file — read it before adding a
-/// layer.
+/// The layer order is documented at the top of this file — read
+/// it before adding a layer.
 pub fn build_router(state: AppState, metrics: Metrics) -> Router {
+    // CORS needs the origin before the state moves into the router.
+    let web_origin = state.settings.web_origin.clone();
     routes::api_router()
         .with_state(state)
-        .layer(middleware::from_fn(request_id::request_id_middleware))
+        .layer(middleware::from_fn(error_mapper::error_mapper_middleware))
         .layer(middleware::from_fn(http_metrics::http_metrics_middleware))
+        .layer(middleware::from_fn(
+            secure_headers::secure_headers_middleware,
+        ))
+        .layer(cors::cors_layer(&web_origin))
+        .layer(middleware::from_fn(request_id::request_id_middleware))
         .layer(Extension(metrics))
 }
 

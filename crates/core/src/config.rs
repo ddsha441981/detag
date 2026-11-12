@@ -137,6 +137,16 @@ pub struct Settings {
     pub log_level: String,
     /// Env: PF_OTEL_ENDPOINT — empty disables OpenTelemetry export.
     pub otel_endpoint: String,
+    /// Env: PF_WEB_ORIGIN — the single browser origin allowed to
+    /// call the api cross-origin (P0-065, the Next.js console).
+    /// Empty (the default) disables CORS entirely: no
+    /// `Access-Control-Allow-Origin` is ever sent and preflights
+    /// are rejected. Set it to the console origin in every env
+    /// that serves the console (dev: `http://localhost:3000`).
+    /// Exactly one origin — a second console origin is a future
+    /// change, not a comma list (an allowlist that grows by
+    /// accident is how CORS stops meaning anything).
+    pub web_origin: String,
 }
 
 impl Default for Settings {
@@ -174,6 +184,7 @@ impl Default for Settings {
             feature_provenance_strip: false,
             log_level: "info".to_string(),
             otel_endpoint: String::new(),
+            web_origin: String::new(),
         }
     }
 }
@@ -212,6 +223,7 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("feature_provenance_strip", "PF_FEATURE_PROVENANCE_STRIP"),
     ("log_level", "PF_LOG_LEVEL"),
     ("otel_endpoint", "PF_OTEL_ENDPOINT"),
+    ("web_origin", "PF_WEB_ORIGIN"),
 ];
 
 impl Settings {
@@ -294,6 +306,7 @@ impl Settings {
             feature_provenance_strip: field!(feature_provenance_strip, bool),
             log_level: field!(log_level, String),
             otel_endpoint: field!(otel_endpoint, String),
+            web_origin: field!(web_origin, String),
         };
         settings.validate(&mut problems);
         if problems.is_empty() {
@@ -328,6 +341,15 @@ impl Settings {
         if !self.otel_endpoint.is_empty() {
             if let Err(err) = Url::parse(&self.otel_endpoint) {
                 invalid("PF_OTEL_ENDPOINT", format!("not a valid URL: {err}"));
+            }
+        }
+        // Empty disables CORS (P0-065); a set origin must be a URL,
+        // or the api would boot with a CORS config that can never
+        // match (a silent fail-open is worse than a loud boot error
+        // — and a fail-closed one is exactly what empty means).
+        if !self.web_origin.is_empty() {
+            if let Err(err) = Url::parse(&self.web_origin) {
+                invalid("PF_WEB_ORIGIN", format!("not a valid URL: {err}"));
             }
         }
 
@@ -623,6 +645,7 @@ mod tests {
         assert!(!s.feature_provenance_strip);
         assert_eq!(s.log_level, "info");
         assert!(s.otel_endpoint.is_empty());
+        assert!(s.web_origin.is_empty());
     }
 
     #[test]

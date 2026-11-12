@@ -32,6 +32,8 @@
 | `PF_RATELIMIT_*` | api | per-plan defaults | tuned Phase 5 |
 | `PF_FEATURE_PROVENANCE_STRIP` | api | off | legal gate required |
 | `PF_LOG_LEVEL`, `PF_OTEL_ENDPOINT` | all | info, empty | OTLP/HTTP; `/v1/traces` appended when the endpoint has no path |
+| `PF_TEST_LIVE_MINIO` | tests | (empty = skip) | live-MinIO leg of the storage integration suite (P0-061); `1` runs it against testcontainers MinIO in CI |
+| `PF_WEB_ORIGIN` | api | (empty = CORS off) | the single browser origin allowed cross-origin (P0-065); empty disables CORS entirely; dev console: `http://localhost:3000` |
 
 ## Release flow (cocogitto, P0-010)
 

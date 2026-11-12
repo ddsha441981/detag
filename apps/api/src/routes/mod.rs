@@ -46,8 +46,9 @@ pub mod jobs;
 pub mod meta;
 pub mod uploads;
 
-use axum::{extract::Extension, http::StatusCode, response::Json, Router};
-use detag_core::error::{AppError, Problem, Profile};
+use crate::problem::ProblemResponse;
+use axum::{extract::Extension, Router};
+use detag_core::error::{AppError, Profile};
 
 use self::extractors::RequestId;
 use crate::AppState;
@@ -130,22 +131,31 @@ pub const ROUTE_TABLE: &[(&str, &str)] = &[
 /// overlapping route panics here at build time (axum) — the
 /// route-table test relies on that: building the router IS the
 /// duplicate check, and the probe test is the presence check.
+///
+/// Body limit (P0-065): every module except uploads carries the
+/// 1 MiB limit layer. Uploads are exempt structurally — upload
+/// bytes never transit the api (presigned S3 PUTs), and the nest
+/// without a limit layer cannot be capped by accident by a future
+/// streaming endpoint.
 pub fn api_router() -> Router<AppState> {
+    let limit = crate::body_limit::body_limit_layer();
     Router::new()
-        .merge(auth::router())
+        .merge(auth::router().layer(limit))
         .merge(uploads::router())
-        .merge(jobs::router())
-        .merge(billing::router())
-        .merge(admin::router())
-        .merge(meta::router())
+        .merge(jobs::router().layer(limit))
+        .merge(billing::router().layer(limit))
+        .merge(admin::router().layer(limit))
+        .merge(meta::router().layer(limit))
 }
 
 /// The shared Phase 0 stub: 501 `PF-5004` in the problem+json
-/// envelope. The `Production` profile is deliberate — a stub
-/// carries no caller detail, so the static safe detail is the
+/// envelope, rendered through [`ProblemResponse`](crate::problem::ProblemResponse)
+/// so the media type is `application/problem+json`, not plain
+/// `application/json`. The `Production` profile is deliberate — a
+/// stub carries no caller detail, so the static safe detail is the
 /// whole body in every environment. The request id comes from
 /// the middleware via `Extension<RequestId>`.
-async fn stub(Extension(id): Extension<RequestId>) -> (StatusCode, Json<Problem>) {
+async fn stub(Extension(id): Extension<RequestId>) -> ProblemResponse {
     let problem = AppError::NotImplemented.to_problem(Profile::Production, Some(&id.0), None);
-    (StatusCode::NOT_IMPLEMENTED, Json(problem))
+    ProblemResponse(problem)
 }
