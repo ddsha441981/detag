@@ -7,6 +7,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod flags;
+pub mod media;
 pub mod metrics;
 pub mod migrate;
 pub mod redis;
