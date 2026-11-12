@@ -1,0 +1,97 @@
+# MinIO (S3-compatible object storage) for local dev (P0-054, E0.6).
+#
+# This is the storage counterpart of ops/compose.db.yml and
+# ops/compose.redis.yml. It exists now because the storage tickets
+# (P0-053+) need a real S3 backend; E0.9 (P0-085) folds this service
+# into compose.base.yml alongside api, worker, postgres and redis.
+#
+#   docker compose -f ops/compose.minio.yml --env-file .env up -d --wait
+#   docker compose -f ops/compose.minio.yml down        # keeps the data
+#   docker compose -f ops/compose.minio.yml down -v     # wipes the data
+#
+# Notes:
+# - `network_mode: host` (ADR-0014): this VM has no bridge networking
+#   (dockerd runs with "bridge": "none"), so there is no `ports:`
+#   mapping — MinIO listens on the host's 9000 (S3 API) and 9001
+#   (console) directly.
+# - Images are `:latest` on purpose: MinIO tags are dated RELEASE
+#   tags (e.g. RELEASE.2025-04-08T15-41-24Z) and no tag could be
+#   verified from this VM — the Docker Hub API is blocked by the
+#   egress proxy. Pin both images to a dated RELEASE tag once CI
+#   can pull (see the ticket status in PHASE-0-foundation.md).
+# - Credentials come from .env (PF_S3_ACCESS_KEY/SECRET_KEY, dev
+#   defaults minioadmin/minioadmin in .env.example). No literal
+#   secrets in this file. The bucket comes from PF_S3_BUCKET
+#   (default detag-dev).
+# - The bucket is PRIVATE by default: MinIO grants no anonymous
+#   access unless a policy says so, and the bootstrap service below
+#   explicitly sets `anonymous none` on the bucket after creating
+#   it. `scripts/check_minio_policy.py` fails CI if that ever
+#   changes (P0-054 AC). Never add a public/download/upload policy.
+# - Console (`--console-address :9001`) is dev-only: this file is
+#   the dev compose file. The prod compose file (E0.9) must not
+#   expose the console.
+# - Named volume `detag_miniodata` survives `down`; only `down -v`
+#   removes it. Objects are durable state (unlike the redis cache).
+# - The healthcheck uses the container's own curl against MinIO's
+#   liveness endpoint. `--wait` blocks until it reports healthy.
+# - Live verification is deferred (DOCKER-001): containers cannot
+#   start on this VM and the docker CLI is gone after the VM reset,
+#   so `up --wait` and the anonymous-access probe wait for CI/E0.9.
+#   `just compose-minio-check` runs the static policy check here
+#   and `docker compose config` where docker exists.
+name: detag-minio
+
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: detag-minio
+    network_mode: host
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${PF_S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${PF_S3_SECRET_KEY:-minioadmin}
+    volumes:
+      - miniadata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # One-shot bootstrap: create the bucket and lock it private.
+  # Exits 0 on success; `restart: "no"` so a failure is visible
+  # instead of looping forever. Re-running `up` re-runs it, and
+  # `mb --ignore-existing` makes that a no-op for an existing bucket.
+  bootstrap:
+    image: minio/mc:latest
+    container_name: detag-minio-bootstrap
+    network_mode: host
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      PF_S3_ENDPOINT: ${PF_S3_ENDPOINT:-http://localhost:9000}
+      PF_S3_BUCKET: ${PF_S3_BUCKET:-detag-dev}
+      PF_S3_ACCESS_KEY: ${PF_S3_ACCESS_KEY:-minioadmin}
+      PF_S3_SECRET_KEY: ${PF_S3_SECRET_KEY:-minioadmin}
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -eu
+        # Wait for MinIO to answer (bounded: fail loudly after ~60 s).
+        i=0
+        until mc alias set detag "$${PF_S3_ENDPOINT}" "$${PF_S3_ACCESS_KEY}" "$${PF_S3_SECRET_KEY}" >/dev/null 2>&1; do
+          i=$$((i + 1))
+          if [ "$$i" -ge 30 ]; then echo "bootstrap: minio did not answer in 60s" >&2; exit 1; fi
+          sleep 2
+        done
+        mc mb --ignore-existing "detag/$${PF_S3_BUCKET}"
+        # Private by default, made explicit: no anonymous access.
+        mc anonymous set none "detag/$${PF_S3_BUCKET}"
+
+volumes:
+  miniadata:
+    name: detag_miniodata

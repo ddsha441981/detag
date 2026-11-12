@@ -153,6 +153,16 @@ compose-db-check:
 compose-redis-check:
     docker compose -f ops/compose.redis.yml --env-file .env config --quiet
 
+# Validate the MinIO dev compose file (P0-054): the static policy
+# check first (bucket stays private — runnable anywhere, no docker
+# needed), then `config --quiet` (parses, env interpolates,
+# healthcheck renders). Static only — it does not start containers
+# (the live `up --wait` + anonymous-access probe wait for CI/E0.9's
+# smoke, P0-090). Requires the docker compose plugin.
+compose-minio-check:
+    python3 scripts/check_minio_policy.py
+    docker compose -f ops/compose.minio.yml --env-file .env config --quiet
+
 # Validate Grafana dashboards + provisioning (P0-030, NFR-62):
 # JSON parses, uids unique, panels well-formed, every PromQL expr
 # queries only series the code registers.
