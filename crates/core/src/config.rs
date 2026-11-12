@@ -124,6 +124,12 @@ pub struct Settings {
     pub results_ttl_pro_h: u64,
     /// Env: PF_RESULTS_TTL_BUSINESS_H — result retention, hours.
     pub results_ttl_business_h: u64,
+    /// Env: PF_UPLOAD_PART_URL_TTL_SECS — how long a presigned PUT
+    /// part URL stays valid, seconds (P0-055). Default 600 (10 min):
+    /// long enough to upload one part, short enough to stay under
+    /// the 15-min access-token TTL (FR-A-02) — the presign policy
+    /// refuses any value >= the token TTL.
+    pub upload_part_url_ttl_secs: u64,
     /// Env: PF_FEATURE_PROVENANCE_STRIP — stays OFF until the owner signs
     /// the legal-review gate (docs/02-REQUIREMENTS/05-compliance-aup.md).
     pub feature_provenance_strip: bool,
@@ -164,6 +170,7 @@ impl Default for Settings {
             results_ttl_free_h: 6,
             results_ttl_pro_h: 24,
             results_ttl_business_h: 72,
+            upload_part_url_ttl_secs: 600,
             feature_provenance_strip: false,
             log_level: "info".to_string(),
             otel_endpoint: String::new(),
@@ -201,6 +208,7 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("results_ttl_free_h", "PF_RESULTS_TTL_FREE_H"),
     ("results_ttl_pro_h", "PF_RESULTS_TTL_PRO_H"),
     ("results_ttl_business_h", "PF_RESULTS_TTL_BUSINESS_H"),
+    ("upload_part_url_ttl_secs", "PF_UPLOAD_PART_URL_TTL_SECS"),
     ("feature_provenance_strip", "PF_FEATURE_PROVENANCE_STRIP"),
     ("log_level", "PF_LOG_LEVEL"),
     ("otel_endpoint", "PF_OTEL_ENDPOINT"),
@@ -282,6 +290,7 @@ impl Settings {
             results_ttl_free_h: field!(results_ttl_free_h, u64),
             results_ttl_pro_h: field!(results_ttl_pro_h, u64),
             results_ttl_business_h: field!(results_ttl_business_h, u64),
+            upload_part_url_ttl_secs: field!(upload_part_url_ttl_secs, u64),
             feature_provenance_strip: field!(feature_provenance_strip, bool),
             log_level: field!(log_level, String),
             otel_endpoint: field!(otel_endpoint, String),
@@ -369,6 +378,12 @@ impl Settings {
             if value == 0 {
                 invalid(var, "must be >= 1 (hours)".to_string());
             }
+        }
+        if self.upload_part_url_ttl_secs == 0 {
+            invalid(
+                "PF_UPLOAD_PART_URL_TTL_SECS",
+                "must be >= 1 (seconds)".to_string(),
+            );
         }
 
         // Log level must be known (case-insensitive).
@@ -604,6 +619,7 @@ mod tests {
         assert_eq!(s.results_ttl_free_h, 6);
         assert_eq!(s.results_ttl_pro_h, 24);
         assert_eq!(s.results_ttl_business_h, 72);
+        assert_eq!(s.upload_part_url_ttl_secs, 600);
         assert!(!s.feature_provenance_strip);
         assert_eq!(s.log_level, "info");
         assert!(s.otel_endpoint.is_empty());

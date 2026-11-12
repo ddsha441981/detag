@@ -1,6 +1,7 @@
 //! Detag storage: StorageProvider trait + S3/MinIO implementation (E0.6).
 
 pub mod memory;
+pub mod policy;
 pub mod provider;
 pub mod s3;
 

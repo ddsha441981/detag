@@ -28,6 +28,7 @@
 | `PF_SMTP_HOST`, `PF_SMTP_PORT`, `PF_SMTP_USER`, `PF_SMTP_PASS`, `PF_MAIL_FROM` | mailer | MailHog | |
 | `PF_ENGINE_MODELS_DIR`, `PF_ENGINE_GPU`, `PF_ENGINE_TILES_MAX` | worker/engine | ./models, off, 1024 | models auto-download + sha256 verify |
 | `PF_RESULTS_TTL_FREE/PRO/BUSINESS_H` | cleanup | 6/24/72 | plan TTLs |
+| `PF_UPLOAD_PART_URL_TTL_SECS` | storage | 600 | presigned PUT part URL lifetime; must stay under the 15-min access-token TTL (P0-055) |
 | `PF_RATELIMIT_*` | api | per-plan defaults | tuned Phase 5 |
 | `PF_FEATURE_PROVENANCE_STRIP` | api | off | legal gate required |
 | `PF_LOG_LEVEL`, `PF_OTEL_ENDPOINT` | all | info, empty | OTLP/HTTP; `/v1/traces` appended when the endpoint has no path |
