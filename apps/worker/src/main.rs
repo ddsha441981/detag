@@ -1,8 +1,15 @@
 //! detag-worker — Apalis worker host (bootstrap stub, P0-002).
 //! Queue wiring lands in E0.8 (P0-075..P0-082).
 
+use detag_core::config::Settings;
+
 #[tokio::main]
 async fn main() {
+    // Fail boot fast on invalid configuration, naming the bad PF_* var.
+    let _settings = Settings::load().unwrap_or_else(|err| {
+        eprintln!("detag-worker: invalid configuration:\n{err}");
+        std::process::exit(1);
+    });
     println!("detag-worker started (queues: pipeline, cleanup, email, reconciliation)");
     tokio::signal::ctrl_c().await.unwrap();
     println!("detag-worker shutting down");

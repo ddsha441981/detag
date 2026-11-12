@@ -138,12 +138,12 @@
 
 ## E0.2 — Config & Errors (area: core/config)
 
-- [ ] **P0-015** — Settings loader
+- [x] **P0-015** — Settings loader
   - **Type:** feat · **Area:** core/config · **Est:** M · **Deps:** — · **Prio:** P1
   - **Spec:** crates/core/src/config.rs: figment layered config (defaults < PF_* env < optional file), typed Settings with serde, validation (URLs parse, ranges hold).
   - **AC:**
-    - [ ] invalid var fails boot with var name
-    - [ ] precedence test green
+    - [x] invalid var fails boot with var name
+    - [x] precedence test green
 
 - [ ] **P0-016** — Settings tests
   - **Type:** test · **Area:** core/config · **Est:** S · **Deps:** P0-015 · **Prio:** P1
