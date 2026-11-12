@@ -16,6 +16,7 @@
 | Var | Used by | Default (dev) | Notes |
 | --- | --- | --- | --- |
 | `PF_DATABASE_URL` | api, worker | postgres://pf:pf@localhost:5432/pf | |
+| `PF_POSTGRES_USER/PASSWORD/DB` | postgres (compose) | pf / pf / pf | dev credentials for the compose postgres service (P0-034); must match `PF_DATABASE_URL` |
 | `PF_REDIS_URL` | api, worker | redis://localhost:6379 | |
 | `PF_S3_ENDPOINT`, `PF_S3_BUCKET`, `PF_S3_ACCESS_KEY`, `PF_S3_SECRET_KEY`, `PF_S3_REGION` | storage | MinIO localhost:9000 | private bucket required |
 | `PF_JWT_SECRET` | api | dev-fixed | 64B in prod; rotation = dual-verify window |

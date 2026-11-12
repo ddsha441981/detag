@@ -277,6 +277,7 @@
   - **AC:**
     - [ ] healthy under compose
     - [ ] volume persists
+  - **Status:** implementation committed (compose file, env vars, dev.sh wiring with compose-first/native fallback + pg_isready wait, `just compose-db-check` + CI step — all verified statically; `just dev` reaches "stack up" with native postgres). Live ACs blocked by DOCKER-001 (no container can start on this VM) — verification deferred to CI/E0.9 smoke. See docs/09-STATE/ISSUES.md.
 
 - [ ] **P0-035** — sqlx wiring
   - **Type:** feat · **Area:** db · **Est:** M · **Deps:** P0-034 · **Prio:** P1

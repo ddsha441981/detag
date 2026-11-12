@@ -43,6 +43,16 @@
 - Assumption: the ticket's "auth-failure path" is exercised through the real error path that exists today: `AppError::EmailNotVerified.to_problem(Profile::Production, …)` with PII caller detail — the only place caller detail reaches the logs (its trace-only `tracing::error!`). No HTTP auth middleware exists in Phase 0 (auth lands in Phase 1, E1.x), so there is no HTTP 401/403 to trigger. When auth lands, its failure handler must log through the same redacted path; an HTTP-level hygiene test then becomes possible and should be added with the auth tickets.
 - Status: open
 
+### DOCKER-001 [blocked] Docker containers cannot start on this VM — missing kernel capabilities (P0-034)
+- Date: 2026-11-12 · Ticket: P0-034
+- Blocker: dockerd now runs (daemon.json applied, vfs driver, crun 1.30.1 + wrapper, compose plugin v2.40.3), images load, `docker compose config` validates, volumes create — but every container start fails: no NET_ADMIN (loopback bring-up `SIOCSIFFLAGS: Operation not permitted`; `--network host` fails in dockerd's sandbox creation), no keyctl session-keyring joins, zero cgroup v2 controllers delegated, no system bus. Full chain in the ADR-0014 amendment. Effect: P0-034's two live ACs (healthy under compose, volume persists) cannot be verified here; live compose verification is deferred to CI (docker works there) and E0.9's smoke (P0-090). Dev fallback: native PostgreSQL 16 on :5432 (role/db `pf`); `just dev` tries compose first, falls back, and waits on pg_isready either way. Do not re-attempt the runtime fixes without new kernel capabilities.
+- Status: open
+
+### ASSUMPTION-007 [assumption] Native postgres is the dev DB on this VM until docker can run containers (P0-034)
+- Date: 2026-11-12 · Ticket: P0-034
+- Assumption: sqlx/migration tickets (P0-035+) verify against native PostgreSQL 16 on 127.0.0.1:5432 (role `pf`, db `pf`, same credentials as `.env.example`'s `PF_DATABASE_URL`); the compose file stays the canonical service definition and E0.9 folds it into compose.base.yml unchanged in shape. If docker starts working on this VM, `just dev` already prefers compose — no code change needed, just re-verify.
+- Status: open
+
 ## Closed issues (keep for history; prune to last 50)
 
 (none yet)

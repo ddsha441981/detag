@@ -92,6 +92,14 @@ fixtures-gen:
 env-check:
     python3 scripts/env_check.py
 
+# Validate the Postgres dev compose file (P0-034): parses, env
+# interpolates, healthcheck + named volume render. Static only — it
+# does not start containers (CI's postgres service container already
+# holds :5432; the live `up --wait` check waits for E0.9's smoke,
+# P0-090). Requires the docker compose plugin.
+compose-db-check:
+    docker compose -f ops/compose.db.yml --env-file .env config --quiet
+
 # Validate Grafana dashboards + provisioning (P0-030, NFR-62):
 # JSON parses, uids unique, panels well-formed, every PromQL expr
 # queries only series the code registers.

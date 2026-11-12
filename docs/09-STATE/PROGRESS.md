@@ -5,7 +5,8 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-034
+- **Current ticket:** P0-035
+- **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007).
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
 ## Phase status
@@ -33,11 +34,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-034 — Postgres in compose
-2. P0-035 — sqlx wiring
-3. P0-036 — Migration tooling
-4. P0-037 — Migration 001 users+sessions
-5. P0-038 — Migration 002 jobs+artifacts
+1. P0-035 — sqlx wiring
+2. P0-036 — Migration tooling
+3. P0-037 — Migration 001 users+sessions
+4. P0-038 — Migration 002 jobs+artifacts
+5. P0-039 — Migration 003 billing
 
 ## Bench history (append-only)
 

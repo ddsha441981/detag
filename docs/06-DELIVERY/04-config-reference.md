@@ -20,6 +20,9 @@
 | `PF_MAIL_FROM` | `noreply@detag.local` | mailer |
 | `PF_METRICS_PORT` | `9090` | api |
 | `PF_OTEL_ENDPOINT` | (empty) | all |
+| `PF_POSTGRES_DB` | `pf` | postgres (compose) |
+| `PF_POSTGRES_PASSWORD` | `pf` | postgres (compose) |
+| `PF_POSTGRES_USER` | `pf` | postgres (compose) |
 | `PF_PUBLIC_BASE_URL` | `http://localhost:8080` | api |
 | `PF_RAZORPAY_KEY` | `rzp_test_placeholder` | billing |
 | `PF_RAZORPAY_SECRET` | `placeholder` | billing |

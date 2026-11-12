@@ -7,7 +7,10 @@
 # ticket has not landed yet are reported as pending, not faked):
 #   1. prerequisites: cargo, docker + compose plugin, .env (copied from
 #      .env.example when missing — placeholders only).
-#   2. compose deps (ops/compose.dev.yml) — pending P0-085..P0-090.
+#   2. postgres (ops/compose.db.yml, P0-034) — `up -d --wait`, then a
+#      pg_isready wait loop; native postgres on :5432 is the fallback
+#      when docker cannot run containers on this VM (DOCKER-001).
+#      compose deps (ops/compose.dev.yml) — pending P0-085..P0-090.
 #   3. cargo build of the workspace, then start api + worker in the
 #      background (logs in .scratch/dev/).
 #   4. wait for /healthz (api, exists since P0-002) and /readyz when the
@@ -49,12 +52,44 @@ if [ ! -f .env ]; then
     echo "dev: created .env from .env.example (dev placeholders only)"
 fi
 
-# --- 2. compose deps --------------------------------------------------------
+# --- 2. postgres (compose) --------------------------------------------------
+# P0-034: start the compose postgres service and wait until healthy.
+# `up --wait` blocks on the pg_isready healthcheck. When docker cannot
+# run containers on this VM (DOCKER-001), fall back to a native
+# postgres on :5432 if one answers pg_isready; either way the wait
+# loop below proves a healthy postgres before the api starts.
+if [ -f ops/compose.db.yml ] && docker info >/dev/null 2>&1; then
+    echo "dev: starting postgres (ops/compose.db.yml)..."
+    if docker compose -f ops/compose.db.yml --env-file .env up -d --wait --wait-timeout 60; then
+        echo "dev: compose postgres healthy"
+    else
+        # A failed start must not kill `just dev` (set -e): fall through
+        # to the pg_isready wait below, which the native postgres
+        # fallback can satisfy. Remove the stuck container, keep the
+        # volume (it is the persistence under test in P0-034).
+        echo "dev: compose postgres did not start — falling back to native postgres"
+        docker compose -f ops/compose.db.yml down >/dev/null 2>&1 || true
+        note_pending "DOCKER-001" "compose postgres (docker cannot run containers on this VM)"
+    fi
+elif [ -f ops/compose.db.yml ]; then
+    note_pending "DOCKER-001" "compose postgres (docker cannot run containers on this VM)"
+fi
 if [ -f ops/compose.dev.yml ]; then
     echo "dev: starting compose deps..."
     docker compose -f ops/compose.dev.yml up -d
 else
     note_pending "P0-085..P0-090" "compose deps (ops/compose.dev.yml)"
+fi
+echo -n "dev: waiting for postgres on 127.0.0.1:5432 ..."
+for _ in $(seq 1 60); do
+    if pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1; then
+        echo " ok"
+        break
+    fi
+    sleep 1
+done
+if ! pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1; then
+    note_pending "P0-034" "postgres healthy (neither compose nor native postgres answered on :5432)"
 fi
 
 # --- 3. build + start api + worker ------------------------------------------
@@ -107,7 +142,21 @@ fi
 # --- 5. migrations ------------------------------------------------------------
 if [ -d migrations ] && ls migrations/*.sql >/dev/null 2>&1; then
     echo "dev: applying migrations..."
-    just migrate
+    # The migrate recipe is still the P0-036 stub (exits 1 with a
+    # "pending" message) while migration files already exist (P0-022's
+    # 0001_feature_flags.sql) — a bare `just migrate` under `set -e`
+    # would kill `just dev` before it ever reports "stack up". Swallow
+    # ONLY the stub's exact message; any other failure is fatal.
+    # P0-036 removes this special case when the tooling lands: then a
+    # failed migrate must fail the dev command.
+    if ! migrate_out=$(just migrate 2>&1); then
+        if echo "$migrate_out" | grep -q "pending: migration tooling lands in P0-036"; then
+            note_pending "P0-036" "migrations (migrations/)"
+        else
+            echo "$migrate_out" >&2
+            exit 1
+        fi
+    fi
 else
     note_pending "P0-036" "migrations (migrations/)"
 fi
