@@ -308,11 +308,12 @@
     - [x] indexes present
   - **Status:** `migrations/20261112064924_jobs_artifacts.{up,down}.sql` — uploads (kind/status CHECKs), jobs (kind CHECK, progress 0..1, idempotency_key UNIQUE, upload_id nullable for batch jobs), job_events (type CHECK), artifacts (type CHECK, expires_at NOT NULL), quality_reports (UNIQUE job_id, gate pass|fail). Doc's 3 indexes + jobs(upload_id), job_events(job_id, at), artifacts(job_id). No CHECK on jobs.status/stage/mode/lane values: the docs name no complete state machine (only queued/running/succeeded/quality_failed in passing) — the machine is defined with the pipeline (Phase 3). jobs.attestation_id is a plain UUID for now; the FK lands in P0-040 with the attestations table. Committed live test `crates/core/tests/migration_002_jobs_artifacts.rs` (schema, indexes, CHECKs, idempotency unique, 1-1 report, user-delete CASCADE, revert/re-apply). Dev DB migrated (versions [1, 20261112064220, 20261112064924]). Also isolated both migration live tests to scratch dirs holding only the pairs they need: the P0-037 test broke when 002 landed (revert-last reverted 002, not 001).
 
-- [ ] **P0-039** — Migration 003 billing
+- [x] **P0-039** — Migration 003 billing
   - **Type:** feat · **Area:** db · **Est:** M · **Deps:** P0-038 · **Prio:** P1
   - **Spec:** plans, subscriptions, usage_counters; plans seed with Free/Pro/Business entitlements jsonb matching FR-P-01.
   - **AC:**
-    - [ ] seed rows correct
+    - [x] seed rows correct
+  - **Status:** `migrations/20261112065140_billing.{up,down}.sql` — plans (code UNIQUE, amount in paise: Free 0 / Pro 49900 / Business 199900, stripe_price_id NULL until live prices exist), subscriptions (provider stripe|razorpay, status CHECK, plan_id RESTRICT), usage_counters PK (user_id, day). Seed rows verified against FR-P-01 in the live test `crates/core/tests/migration_003_billing.rs` (all 7 entitlement fields per plan, features flags, seed re-run is a no-op, provider/status CHECKs, plan RESTRICT, counter PK + non-negative, revert/re-apply reseeds). Dev DB migrated; plans read back: free 0/10/standard, pro 49900/500/standard, business 199900/5000/priority.
 
 - [ ] **P0-040** — Migration 004 audit+flags+misc
   - **Type:** feat · **Area:** db · **Est:** M · **Deps:** P0-039 · **Prio:** P1
