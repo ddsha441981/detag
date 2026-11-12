@@ -255,11 +255,11 @@
     - [x] rules load — verified by promtool 3.5.0 (config valid, 1 rule file, 2 rules) + static validator in CI
     - [x] targets up — statically defined; live confirmation deferred to E0.9 per ASSUMPTION-005 (no Prometheus running yet)
 
-- [ ] **P0-032** — Logging hygiene tests
+- [x] **P0-032** — Logging hygiene tests
   - **Type:** test · **Area:** observability · **Est:** S · **Deps:** P0-031 · **Prio:** P1
   - **Spec:** Integration test triggers auth-failure + job-error paths and asserts JSON logs contain no email/password/raw IP.
   - **AC:**
-    - [ ] hygiene assertions green
+    - [x] hygiene assertions green
 
 - [ ] **P0-033** — Observability runbook section
   - **Type:** docs · **Area:** observability · **Est:** S · **Deps:** P0-032 · **Prio:** P1

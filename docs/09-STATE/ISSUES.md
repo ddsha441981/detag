@@ -38,6 +38,11 @@
 - Assumption: the /metrics server binds 127.0.0.1:PF_METRICS_PORT (default 9090) on its own port, never on the public api port — that satisfies "not on edge network" at the code level (verified: /metrics on the api port 404s). Compose network isolation (internal network only, port not published) cannot land here: no compose files exist yet (E0.9, P0-085..P0-090). E0.9 may need to revisit the loopback bind: a Prometheus container on another host in the compose network cannot scrape a loopback-bound listener, so the bind may have to become 0.0.0.0 with isolation enforced by the (unpublished) compose network instead.
 - Status: open
 
+### ASSUMPTION-006 [assumption] P0-032 exercises auth-failure via the error taxonomy, not HTTP — no auth middleware exists yet in Phase 0 (P0-032)
+- Date: 2026-11-12 · Ticket: P0-032
+- Assumption: the ticket's "auth-failure path" is exercised through the real error path that exists today: `AppError::EmailNotVerified.to_problem(Profile::Production, …)` with PII caller detail — the only place caller detail reaches the logs (its trace-only `tracing::error!`). No HTTP auth middleware exists in Phase 0 (auth lands in Phase 1, E1.x), so there is no HTTP 401/403 to trigger. When auth lands, its failure handler must log through the same redacted path; an HTTP-level hygiene test then becomes possible and should be added with the auth tickets.
+- Status: open
+
 ## Closed issues (keep for history; prune to last 50)
 
 (none yet)

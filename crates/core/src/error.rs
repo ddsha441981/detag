@@ -27,10 +27,12 @@
 //! **Profiles and leaking.** `Profile::Production` never puts
 //! caller-supplied detail into the body: the body gets the variant's
 //! static, safe `default_detail`, and the caller detail is emitted to
-//! `tracing` only (trace-only). `Profile::Development` shows the caller
-//! detail. There is no third option — a new profile that leaks must be
-//! a deliberate code change, not a config slip.
+//! `tracing` only (trace-only) — redacted first (P0-032), because
+//! callers may pass user-controlled text. `Profile::Development` shows
+//! the caller detail. There is no third option — a new profile that
+//! leaks must be a deliberate code change, not a config slip.
 
+use crate::telemetry::redact;
 use serde::Serialize;
 use thiserror::Error;
 
@@ -376,9 +378,11 @@ impl AppError {
             Profile::Production => {
                 if let Some(d) = detail {
                     // Trace-only: internals never reach the body.
+                    // Redacted first — callers may pass user-controlled
+                    // text (emails, tokens, IPs) as diagnostic detail.
                     tracing::error!(
                         code = self.code(),
-                        detail = d,
+                        detail = %redact(d),
                         "error detail withheld from production response"
                     );
                 }

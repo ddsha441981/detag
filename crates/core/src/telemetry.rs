@@ -242,10 +242,121 @@ pub fn job_span(job_id: &str) -> tracing::Span {
 // PII redaction
 // ---------------------------------------------------------------------------
 
-/// Redact PII from free text: emails become `[email]`, raw IPs become
-/// a short deterministic hash (`[ip:…]`). Clean text is unchanged.
+/// Redact PII from free text: credential values become `[redacted]`,
+/// emails become `[email]`, raw IPs become a short deterministic hash
+/// (`[ip:…]`). Clean text is unchanged.
 pub fn redact(input: &str) -> String {
-    redact_ip(&redact_email(input))
+    redact_ip(&redact_email(&redact_secrets(input)))
+}
+
+/// Credential keys whose `key=value` / `key: value` form must never
+/// reach a log (NFR-42: never log tokens). Longest first, so
+/// `authorization` matches before `auth`.
+const SECRET_KEYS: [&str; 9] = [
+    "authorization",
+    "password",
+    "api_key",
+    "apikey",
+    "secret",
+    "passwd",
+    "token",
+    "auth",
+    "pwd",
+];
+
+/// Replace credential values with `[redacted]`, keeping the key and
+/// separator: `password=hunter2` → `password=[redacted]`,
+/// `Authorization: Bearer xyz` → `Authorization: [redacted]`.
+/// A bare key word with no value (`the password field`) is untouched.
+pub fn redact_secrets(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let matched = SECRET_KEYS.iter().find(|key| {
+            let key_bytes = key.as_bytes();
+            if i + key_bytes.len() > bytes.len() {
+                return false;
+            }
+            // Word boundary before the key: not mid-identifier.
+            if i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_') {
+                return false;
+            }
+            input[i..i + key_bytes.len()].eq_ignore_ascii_case(key)
+        });
+        let Some(key) = matched else {
+            let ch_len = utf8_len(bytes[i]);
+            out.push_str(&input[i..i + ch_len]);
+            i += ch_len;
+            continue;
+        };
+        // Look ahead: optional spaces, then `=` or `:`.
+        let mut sep = i + key.len();
+        while sep < bytes.len() && bytes[sep] == b' ' {
+            sep += 1;
+        }
+        if sep >= bytes.len() || (bytes[sep] != b'=' && bytes[sep] != b':') {
+            // Bare word, no value: copy the key verbatim.
+            out.push_str(&input[i..i + key.len()]);
+            i += key.len();
+            continue;
+        }
+        // Copy key + spaces + separator + spaces verbatim.
+        let mut j = sep + 1;
+        while j < bytes.len() && bytes[j] == b' ' {
+            j += 1;
+        }
+        out.push_str(&input[i..j]);
+        if j >= bytes.len() {
+            i = j; // separator with no value
+            continue;
+        }
+        // Quoted value: keep the quotes, mask the inside.
+        if bytes[j] == b'"' || bytes[j] == b'\'' {
+            let quote = bytes[j];
+            out.push(quote as char);
+            out.push_str("[redacted]");
+            j += 1;
+            while j < bytes.len() && bytes[j] != quote {
+                j += 1;
+            }
+            if j < bytes.len() {
+                out.push(quote as char);
+                j += 1;
+            }
+            i = j;
+            continue;
+        }
+        // Unquoted value: up to whitespace or a closing delimiter.
+        let value_end = |mut k: usize| {
+            while k < bytes.len()
+                && !bytes[k].is_ascii_whitespace()
+                && !matches!(bytes[k], b',' | b'}' | b']' | b';')
+            {
+                k += 1;
+            }
+            k
+        };
+        let end = value_end(j);
+        if end == j {
+            i = j; // empty value, nothing to mask
+            continue;
+        }
+        // `Bearer <token>`: the word Bearer is not the credential —
+        // the whole scheme + token is one credential value.
+        if input[j..end].eq_ignore_ascii_case("bearer") {
+            out.push_str("[redacted]");
+            let mut k = end;
+            while k < bytes.len() && bytes[k] == b' ' {
+                k += 1;
+            }
+            i = value_end(k);
+            continue;
+        }
+        out.push_str("[redacted]");
+        i = end;
+    }
+    out
 }
 
 /// Replace email-like substrings with `[email]`.
@@ -569,6 +680,32 @@ mod tests {
             out,
             format!("user [email] from {} did the thing", hash_ip("10.1.2.3"))
         );
+    }
+
+    #[test]
+    fn redact_masks_secret_values() {
+        assert_eq!(redact("password=hunter2"), "password=[redacted]");
+        assert_eq!(redact("token: example-token-value"), "token: [redacted]");
+        assert_eq!(
+            redact("api_key=\"key-1\" and secret='s3cr3t'"),
+            "api_key=\"[redacted]\" and secret='[redacted]'"
+        );
+        // Bearer scheme: the token after the scheme is the secret.
+        assert_eq!(
+            redact("Authorization: Bearer xyz789"),
+            "Authorization: [redacted]"
+        );
+        // Keys are case-insensitive; spacing around the separator varies.
+        assert_eq!(redact("PASSWORD = hunter2"), "PASSWORD = [redacted]");
+        // Bare words and mid-identifier matches are untouched.
+        assert_eq!(redact("the password field"), "the password field");
+        assert_eq!(redact("my_password_is_set"), "my_password_is_set");
+        assert_eq!(redact("token"), "token");
+        // Secrets compose with the email/IP passes.
+        let out = redact("alice@example.com password=hunter2 from 10.0.0.9");
+        assert!(out.contains("[email]"), "email redacted: {out}");
+        assert!(out.contains("[ip:"), "IP hashed: {out}");
+        assert!(!out.contains("hunter2"), "secret masked: {out}");
     }
 
     // -- JSON logs -----------------------------------------------------------
