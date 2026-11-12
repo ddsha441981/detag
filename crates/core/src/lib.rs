@@ -8,6 +8,7 @@ pub mod error;
 pub mod flags;
 pub mod metrics;
 pub mod migrate;
+pub mod repos;
 pub mod shutdown;
 pub mod state_machine;
 pub mod telemetry;

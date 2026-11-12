@@ -4,6 +4,12 @@
 
 set dotenv-load := false
 
+# sqlx `query!` macros compile offline from the checked-in `.sqlx/`
+# data (P0-041); a live DB is only needed when regenerating it
+# (`just sqlx-prepare`). Without this, every cargo build/test would
+# need DATABASE_URL set.
+export SQLX_OFFLINE := "true"
+
 # Format all Rust code.
 fmt:
     cargo fmt --all

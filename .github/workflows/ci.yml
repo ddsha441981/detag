@@ -66,6 +66,10 @@ jobs:
     env:
       PF_DATABASE_URL: postgres://pf:pf@localhost:5432/pf
       PF_REDIS_URL: redis://localhost:6379
+      # sqlx `query!` macros compile offline from the checked-in
+      # `.sqlx/` data (P0-041); the prepare --check step below still
+      # connects live via DATABASE_URL.
+      SQLX_OFFLINE: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

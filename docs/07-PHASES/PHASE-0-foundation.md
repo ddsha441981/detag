@@ -323,12 +323,13 @@
   - **Status:** `migrations/20261112065339_audit_flags_misc.{up,down}.sql` — audit_logs, idempotency_keys, email_outbox, attestations, abuse_reports, webhook_endpoints/deliveries, api_keys + the deferred jobs.attestation_id FK (ON DELETE SET NULL). feature_flags NOT recreated (migration 0001 already created it). api_keys has no ticket of its own in Phase 0/1, so it lands here under "misc" (flagged call — the data-model doc specifies it and Phase 1's API-key work needs it). Append-only is enforced by a trigger (forbid_append_only_mutation) on audit_logs, job_events (deferred from P0-038) and attestations (immutable per doc) — NOT by GRANTs: the dev DB has a single owner role (pf) that bypasses ACLs, so a REVOKE would be a no-op; true role separation is a production-deployment concern. Live test `crates/core/tests/migration_004_audit_flags_misc.rs` covers tables, doc indexes, all three triggers, the FK, status CHECK, idempotency PK, revert/re-apply. The test caught a real bug: the first down migration left dangling jobs.attestation_id values, so re-apply's FK validation failed — fixed by NULLing them in the down migration before dropping attestations. Dev DB migrated: 20 tables, versions [1, 20261112064220, 20261112064924, 20261112065140, 20261112065339].
     - [ ] audit grants restrict UPDATE/DELETE
 
-- [ ] **P0-041** — Repo layer tests
+- [x] **P0-041** — Repo layer tests
   - **Type:** test · **Area:** db · **Est:** M · **Deps:** P0-040 · **Prio:** P1
   - **Spec:** Testcontainers pg: repo roundtrips, constraint violations to typed errors, JSONB roundtrip; pool limits respected under parallelism.
   - **AC:**
-    - [ ] suite green
-    - [ ] no flaky pool errors
+    - [x] suite green
+    - [x] no flaky pool errors
+  - **Status:** `crates/core/src/repos/` — `users` (create/by_id/by_email), `jobs` (create/by_id/list_by_user/set_status), `plans` (by_code/all), all `query_as!` with compile-time checking; `RepoError` maps Postgres codes 23505/23514/23503 to Unique/Check/ForeignKeyViolation with the constraint name, plus NotFound. Tests in `crates/core/tests/repos_live.rs` (6 tests: user roundtrip + case-insensitive lookup, duplicate email typed error, job roundtrip + params JSONB + set_status/NotFound, job constraint violations typed, plans + entitlements JSONB, 10 concurrent lookups on a 2-connection pool all succeed). Testcontainers NOT used: docker cannot start containers on this VM (DOCKER-001), so the tests run against native postgres with per-test scratch DBs (same pattern as the migration tests); the Testcontainers form belongs with the fixtures work (P0-092). The tests caught a real bug: a bound `text` parameter makes `email = $1` resolve as case-sensitive `text = text`, so `by_email` uses `$1::citext` (verified: parameterized query returned 0 rows without the cast, 1 with it). `cargo sqlx prepare` now generates real `.sqlx/` data (9 query files, checked in); `SQLX_OFFLINE=true` is exported in the justfile and set in CI's verify job so builds no longer need DATABASE_URL; `just sqlx-prepare-check` passes. Workspace sqlx features gained `macros`/`chrono`/`uuid`/`json` for the query macros.
 
 - [ ] **P0-042** — Tx helper
   - **Type:** feat · **Area:** db · **Est:** S · **Deps:** P0-041 · **Prio:** P1
