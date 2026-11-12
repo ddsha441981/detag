@@ -6,6 +6,8 @@
 
 use axum::http::{Request, StatusCode};
 use detag_api::build_router;
+use detag_core::config::Settings;
+use detag_core::db::{connect_lazy, PoolConfig};
 use detag_core::metrics::Metrics;
 use std::{
     io::Write,
@@ -61,11 +63,19 @@ fn header_id(res: &axum::http::Response<axum::body::Body>) -> String {
         .to_string()
 }
 
+/// Router under test. The pool is lazy (no connection attempted), so
+/// these tests need no database; /readyz is not exercised here.
+fn test_router() -> axum::Router {
+    let pool = connect_lazy(&Settings::default().database_url, &PoolConfig::default())
+        .expect("dev-default URL is well-formed");
+    build_router(Metrics::new(), pool)
+}
+
 #[tokio::test]
 async fn echoes_client_request_id() {
     let buf = install_subscriber();
     let client_id = "123e4567-e89b-42d3-a456-426614174000";
-    let res = build_router(Metrics::new())
+    let res = test_router()
         .oneshot(
             Request::builder()
                 .uri("/healthz")
@@ -84,7 +94,7 @@ async fn echoes_client_request_id() {
 #[tokio::test]
 async fn generates_uuidv7_when_missing() {
     let buf = install_subscriber();
-    let res = build_router(Metrics::new())
+    let res = test_router()
         .oneshot(
             Request::builder()
                 .uri("/healthz")
@@ -104,7 +114,7 @@ async fn generates_uuidv7_when_missing() {
 #[tokio::test]
 async fn replaces_invalid_request_id() {
     let buf = install_subscriber();
-    let res = build_router(Metrics::new())
+    let res = test_router()
         .oneshot(
             Request::builder()
                 .uri("/healthz")
@@ -125,7 +135,7 @@ async fn replaces_invalid_request_id() {
 #[tokio::test]
 async fn unmatched_route_gets_unmatched_span() {
     let buf = install_subscriber();
-    let res = build_router(Metrics::new())
+    let res = test_router()
         .oneshot(
             Request::builder()
                 .uri("/nope")

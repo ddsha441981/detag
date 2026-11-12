@@ -2,6 +2,7 @@
 //! Queue wiring lands in E0.8 (P0-075..P0-082).
 
 use detag_core::config::{warn_unknown_feature_flags, Settings};
+use detag_core::db::{connect_lazy, db_health, PoolConfig};
 use detag_core::metrics::Metrics;
 use detag_core::shutdown::shutdown_signal;
 use detag_core::telemetry::{init_tracing, shutdown_telemetry};
@@ -28,14 +29,26 @@ async fn main() {
     let metrics = Metrics::new();
     let hooks = QueueHooks::new(metrics.queue().clone());
     hooks.reset_depths();
+    // Postgres pool (P0-035, E0.4): lazy, like the api's — the worker
+    // must not fail boot on a temporarily-down database. No jobs run
+    // yet (E0.8); today the pool only proves the database is reachable
+    // at startup, and the close below keeps shutdown clean.
+    let pool = connect_lazy(&settings.database_url, &PoolConfig::default()).unwrap_or_else(|err| {
+        eprintln!("detag-worker: invalid PF_DATABASE_URL: {err}");
+        std::process::exit(1);
+    });
+    let db = db_health(&pool).await;
     tracing::info!(
         queues = QUEUES.join(","),
+        db_ok = db.ok,
+        db_detail = db.detail,
         "started (queues: pipeline, cleanup, email, reconciliation)"
     );
     // Graceful shutdown (P0-023): SIGTERM/SIGINT stops picking up new
-    // jobs; the in-flight job finishes before exit. No pools exist yet
-    // (E0.4/E0.8) — their close calls hook in here.
+    // jobs; the in-flight job finishes before exit. The pool closes
+    // first (P0-035); queue close calls hook in here with E0.8.
     shutdown_signal().await;
+    pool.close().await;
     shutdown_telemetry();
     tracing::info!("shutting down");
 }

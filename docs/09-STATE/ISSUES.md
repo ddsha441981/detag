@@ -10,6 +10,7 @@
 - Cause (suspected): timing race in the test itself — SIGTERM is sent while the request is still partial, then the test completes it; if the server starts draining first, hyper closes the mid-headers connection before the final blank line arrives.
 - Evidence it is not a P0-029 regression: the test touches only `detag-api` + shutdown code, which P0-029 did not change; identical code fails and passes across runs.
 - Status: open — re-running `just verify` until green is the workaround; a fix (e.g. complete the request before signalling, or retry the drain assertion) belongs to a hardening ticket, not P0-029.
+- Update 2026-11-12 (P0-035): the flake got much worse — 3/6 and 4/6 failures in isolation runs (still the 0.11 s vs 0.21 s split). Ruled OUT as a P0-035 regression by a stash test: pre-P0-035 code fails 4/6 identically. Suspected cause is now environmental load (dockerd + native postgres now run on the VM alongside the test), which narrows the drain race window. The workaround still works but may need several retries.
 
 ### ASSUMPTION-004 [assumption] Dashboards validated statically; "visible in Grafana" unverified until E0.9 (P0-030)
 - Date: 2026-11-12 · Ticket: P0-030

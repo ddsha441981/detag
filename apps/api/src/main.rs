@@ -2,6 +2,7 @@
 
 use detag_api::{build_router, metrics::metrics_router};
 use detag_core::config::{warn_unknown_feature_flags, Settings};
+use detag_core::db::{connect_lazy, PoolConfig};
 use detag_core::metrics::Metrics;
 use detag_core::shutdown::{shutdown_signal, SHUTDOWN_TIMEOUT};
 use detag_core::telemetry::{init_tracing, shutdown_telemetry};
@@ -21,7 +22,14 @@ async fn main() {
     // Unknown PF_FEATURE_* flags warn (a typo must not silently do nothing).
     warn_unknown_feature_flags();
     let metrics = Metrics::new();
-    let app = build_router(metrics.clone());
+    // Postgres pool (P0-035, E0.4): lazy, so boot never fails on a
+    // temporarily-down database — /readyz reports it down instead.
+    // A malformed PF_DATABASE_URL still fails boot here.
+    let pool = connect_lazy(&settings.database_url, &PoolConfig::default()).unwrap_or_else(|err| {
+        eprintln!("detag-api: invalid PF_DATABASE_URL: {err}");
+        std::process::exit(1);
+    });
+    let app = build_router(metrics.clone(), pool.clone());
     let addr = SocketAddr::from(([127, 0, 0, 1], settings.api_port));
     tracing::info!(addr = %addr, "listening");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
@@ -48,7 +56,8 @@ async fn main() {
     };
     // Graceful shutdown (P0-023): a stuck drain is cut off after
     // SHUTDOWN_TIMEOUT and the process exits non-zero rather than
-    // hanging a deploy. Pool closes hook in here when pools land (E0.4).
+    // hanging a deploy. The pool closes first (P0-035): in-flight
+    // queries finish, idle connections drop, then the servers stop.
     let api_server =
         axum::serve(listener, app).with_graceful_shutdown(wait_shutdown(Arc::clone(&shutdown)));
     let metrics_server = axum::serve(metrics_listener, metrics_router(metrics))
@@ -59,10 +68,12 @@ async fn main() {
     .await;
     match drained {
         Ok((Ok(()), Ok(()))) => {
+            pool.close().await;
             shutdown_telemetry();
             tracing::info!("shut down gracefully");
         }
         Ok((api, metrics)) => {
+            pool.close().await;
             if let Err(err) = api {
                 eprintln!("detag-api serve error: {err}");
             }

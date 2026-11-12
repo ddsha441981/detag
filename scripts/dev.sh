@@ -13,8 +13,9 @@
 #      compose deps (ops/compose.dev.yml) — pending P0-085..P0-090.
 #   3. cargo build of the workspace, then start api + worker in the
 #      background (logs in .scratch/dev/).
-#   4. wait for /healthz (api, exists since P0-002) and /readyz when the
-#      endpoint exists (lands in E0.7, P0-063) — readyz is pending until then.
+#   4. wait for /healthz (api, exists since P0-002) and /readyz (db
+#      component since P0-035; redis/storage/models land in E0.7,
+#      P0-063) — readyz is pending until then.
 #   5. migrations (migrations/ dir) — pending P0-036.
 #   6. seed (ops/seed.sql) — pending P0-043. Assumption (logged in
 #      docs/09-STATE/ISSUES.md): P0-043 provides ops/seed.sql; if it uses
@@ -134,9 +135,9 @@ if ! curl -fsS --max-time 2 "$API_URL/healthz" >/dev/null 2>&1; then
 fi
 
 if curl -fsS --max-time 2 "$API_URL/readyz" >/dev/null 2>&1; then
-    echo "dev: /readyz ok"
+    echo "dev: /readyz ok (db component only; redis/storage/models land in P0-063)"
 else
-    note_pending "P0-063 (E0.7)" "/readyz endpoint"
+    echo "dev: warning: /readyz is not ok — the db component reports down; see $API_LOG" >&2
 fi
 
 # --- 5. migrations ------------------------------------------------------------

@@ -19,6 +19,7 @@ prometheus.workspace = true
 chrono.workspace = true
 figment.workspace = true
 url.workspace = true
+sqlx.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
