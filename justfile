@@ -149,6 +149,23 @@ openapi-check:
     cargo run --quiet -p detag-api --bin openapi > "$tmp"
     diff -u docs/api/openapi.json "$tmp" || { echo "openapi-check: docs/api/openapi.json is stale — run 'just openapi' and commit it" >&2; exit 1; }
 
+# Regenerate the committed route table from code (P0-074).
+# Generated, never hand-edited: `just route-table-check` (CI)
+# fails when this file drifts from the code.
+route-table:
+    mkdir -p docs/api
+    cargo run --quiet -p detag-api --bin route_table > docs/api/route-table.md
+
+# Fail if the committed route table drifts from the code
+# (P0-074; CI runs this). Regenerate with `just route-table`.
+route-table-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tmp="$(mktemp)"
+    trap 'rm -f "$tmp"' EXIT
+    cargo run --quiet -p detag-api --bin route_table > "$tmp"
+    diff -u docs/api/route-table.md "$tmp" || { echo "route-table-check: docs/api/route-table.md is stale — run 'just route-table' and commit it" >&2; exit 1; }
+
 # Fail if .env.example drifts from PF_* vars referenced in code or
 # documented in the runbook table (P0-011).
 env-check:

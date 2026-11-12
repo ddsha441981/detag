@@ -34,7 +34,7 @@ pureframe/
 
 | Change type | Location |
 | --- | --- |
-| New endpoint | `apps/api/src/routes/` + service + repo + OpenAPI derive + integration test |
+| New endpoint | `apps/api/src/routes/` + service + repo + OpenAPI derive + integration test — checklist: `04-adding-an-endpoint.md` |
 | New job stage | `apps/worker/src/pipeline.rs` + `crates/engine` unit + state machine update |
 | New model | `crates/engine/src/registry.rs` (sha256 pin) + `fixtures/` golden pair + license note |
 | New table/index | `migrations/` + `03-ARCHITECTURE/04-data-model.md` same commit |
