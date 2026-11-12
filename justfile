@@ -214,6 +214,15 @@ compose-minio-check:
     python3 scripts/check_minio_lifecycle.py
     docker compose -f ops/compose.minio.yml --env-file .env config --quiet
 
+# Image size gate (P0-083, NFR-63): build the api image and fail if it
+# is >= 150 MB (the check reads the uncompressed size, a conservative
+# proxy for the compressed limit — see scripts/check_image_size.py).
+# Needs a working docker daemon: fails loudly here (DOCKER-001) and
+# runs green in CI.
+image-size-check:
+    docker build -f Dockerfile.api -t detag-api:check .
+    python3 scripts/check_image_size.py --image detag-api:check --max-mb 150
+
 # Retention GC (P0-060, FR-J-09): dry-run by default — lists the
 # bucket, reports expired artifacts + old orphans, deletes nothing.
 # `cargo run -p detag-gc -- --execute` is the deleting run. Needs

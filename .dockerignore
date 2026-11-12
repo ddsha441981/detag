@@ -1,0 +1,11 @@
+# Build context for Dockerfile.api / Dockerfile.worker (P0-083).
+# target/ is 100+ GB — without this the context copy alone would
+# sink the build. .env is excluded: secrets never enter an image.
+# .cargo/ is deliberately INCLUDED: .cargo/config.toml caps rustc
+# parallelism (jobs = 2), and the builder must see it too.
+.git
+target/
+.scratch/
+.env
+node_modules/
+.github/

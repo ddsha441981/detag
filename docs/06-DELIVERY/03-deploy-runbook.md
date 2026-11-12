@@ -11,6 +11,22 @@
 5. Verify: `/healthz` 200, `/readyz` 200, register test user, upload test image, job succeeds, quality report shows pass.
 6. Backups: cron `ops/backup.sh` (pg_dump + minio mirror to off-host storage) nightly; verify restore doc step below.
 
+### API image (P0-083)
+
+`Dockerfile.api` is a multi-stage cargo-chef build (pinned
+`lukemathwalker/cargo-chef:0.1.78-rust-1.99.1-slim-bookworm`, matching
+`rust-toolchain.toml`) into a `debian:bookworm-slim` runtime: non-root
+user `detag` (uid 10001), `curl` + `ca-certificates` only (the binary
+links just glibc/libm/libgcc; the S3 client needs the CA bundle for
+TLS), `HEALTHCHECK` on `/healthz` (default port 8080). Build it with
+`docker build -f Dockerfile.api -t detag-api:<tag> .` — the build
+context excludes `target/` (100+ GB) via `.dockerignore`. NFR-63
+caps API images at 150 MB compressed, enforced by `just
+image-size-check` (CI `image-size` job); the gate reads the
+uncompressed size, a conservative proxy for the compressed limit.
+Live verification is deferred to CI (DOCKER-001: no working docker
+daemon on this VM).
+
 ## Environment variables (PF_*)
 
 | Var | Used by | Default (dev) | Notes |

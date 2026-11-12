@@ -5,8 +5,8 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-083
-- **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007).
+- **Current ticket:** P0-084
+- **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007). P0-083 size gate likewise deferred to CI (DOCKER-001, no docker daemon here); Dockerfile.api + gate implemented, AC unticked until CI runs green. Remote CI runs the STALE workflow (see CI-WORKFLOWS-001) — local checks added since ~09:20 IST never ran remotely.
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
 ## Phase status
@@ -34,11 +34,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-083 — Dockerfile.api
-2. P0-084 — Dockerfile.worker
-3. P0-085 — compose.base.yml
-4. P0-086 — compose.dev.yml
-5. P0-087 — compose.prod.yml
+1. P0-084 — Dockerfile.worker
+2. P0-085 — compose.base.yml
+3. P0-086 — compose.dev.yml
+4. P0-087 — compose.prod.yml
+5. P0-088 — Healthchecks everywhere
 
 ## Bench history (append-only)
 

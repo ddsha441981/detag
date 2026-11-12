@@ -1,0 +1,67 @@
+# Dockerfile.api — Detag API image (P0-083, NFR-63: API images < 150 MB compressed).
+#
+# Multi-stage cargo-chef build:
+#   chef    — pinned cargo-chef + Rust 1.99.1 (matches rust-toolchain.toml)
+#   planner — dependency recipe from the workspace
+#   builder — compile deps (cached layer), then the api binary (release, stripped)
+#   runtime — debian:bookworm-slim, non-root, curl HEALTHCHECK
+#
+# Build:  docker build -f Dockerfile.api -t detag-api:<tag> .
+# Gate:   just image-size-check  (fails if the image is >= 150 MB; the gate
+#         reads the uncompressed size, a conservative proxy for NFR-63's
+#         compressed limit — see scripts/check_image_size.py)
+#
+# Live verification is deferred to CI (DOCKER-001: no working docker daemon
+# on this VM, and Hub pulls fail via the egress proxy). The size budget was
+# sanity-checked from the parts instead: debian:bookworm-slim (~80 MB
+# uncompressed / ~27 MB compressed, Hub API) + curl/ca-certificates
+# (~15 MB uncompressed) + the stripped release binary (27.0 MB, measured
+# in P0-083 — the workspace release profile already sets
+# strip = "symbols", so the Dockerfile's strip step is belt-and-braces)
+# lands around 122 MB uncompressed, under the 150 MB gate, and ~45 MB
+# compressed against NFR-63's limit.
+
+# syntax=docker/dockerfile:1
+FROM lukemathwalker/cargo-chef:0.1.78-rust-1.99.1-slim-bookworm AS chef
+WORKDIR /app
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+# sqlx `query!` macros compile offline from the checked-in .sqlx/ data (P0-041).
+ENV SQLX_OFFLINE=true
+RUN cargo chef cook --release --recipe-path recipe.json
+COPY . .
+# `strip` needs binutils, which the chef image does not ship — install it
+# in the builder only (never in the runtime image). Belt-and-braces: the
+# workspace release profile already sets strip = "symbols" (measured
+# 27.0 MB for the api binary in P0-083), so this is a no-op unless the
+# profile ever changes.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends binutils \
+    && rm -rf /var/lib/apt/lists/* \
+    && cargo build --release --bin detag-api \
+    && cp target/release/detag-api /tmp/detag-api \
+    && strip /tmp/detag-api
+
+FROM debian:bookworm-slim AS runtime
+# curl: the HEALTHCHECK below. ca-certificates: the S3 client (aws-sdk-s3
+# over rustls) verifies TLS against the system CA bundle. Nothing else:
+# the binary links only glibc/libm/libgcc (ldd, P0-083) — no libssl.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN groupadd --system detag --gid 10001 \
+    && useradd --system --gid detag --uid 10001 --home-dir /app detag
+WORKDIR /app
+COPY --from=builder /tmp/detag-api /app/detag-api
+USER detag
+EXPOSE 8080 9090
+# /healthz on the default api port (PF_API_PORT, 8080): compose keeps the
+# default, so the healthcheck and the server agree (P0-085 wires it).
+HEALTHCHECK --interval=10s --timeout=2s --start-period=10s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8080/healthz || exit 1
+ENTRYPOINT ["/app/detag-api"]
