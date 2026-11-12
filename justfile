@@ -4,6 +4,9 @@
 
 set dotenv-load := false
 
+# Database tasks live in db.just (`just db::reset`, `just db reset`).
+mod db
+
 # sqlx `query!` macros compile offline from the checked-in `.sqlx/`
 # data (P0-041); a live DB is only needed when regenerating it
 # (`just sqlx-prepare`). Without this, every cargo build/test would
@@ -107,9 +110,13 @@ sqlx-prepare:
 sqlx-prepare-check:
     DATABASE_URL="${PF_DATABASE_URL:-postgres://pf:pf@localhost:5432/pf}" cargo sqlx prepare --workspace --check
 
-# Seed plans, feature flags, admin invite (lands in P0-043).
+# Seed plans + feature flags (P0-043). Idempotent: run twice,
+# the second run changes nothing and never clobbers an admin edit
+# (ON CONFLICT DO NOTHING). Uses PF_DATABASE_URL (dev default
+# when unset). Needs migrations 0001 + 003 applied — run
+# `just migrate` first (or `just db::reset`, which does both).
 seed:
-    @echo "pending: seed task lands in P0-043" >&2; exit 1
+    cargo run --quiet -p detag-core --example seed
 
 # Compose smoke: up, health checks, enqueue ping job, assert processed.
 # Lands in P0-090; see ADR-0017 for why `verify` does not call it yet.

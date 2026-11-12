@@ -9,6 +9,7 @@ pub mod flags;
 pub mod metrics;
 pub mod migrate;
 pub mod repos;
+pub mod seed;
 pub mod shutdown;
 pub mod state_machine;
 pub mod telemetry;

@@ -55,6 +55,7 @@
 | 5 | kit start | Legal-review gate: provenance_strip (C2PA) | flag OFF; preserve-only shipped | pending |
 | 6 | kit start | SynthID scope beyond research | research memo only | pending |
 | 7 | 2026-11-12 | Relation of ~/workspace/cleanupload skeleton to Detag (merge or fresh?) | Fresh repo, no reuse, no silent merge | pending |
+| 8 | 2026-11-12 | Admin invite: P0-043 seeds plans + flags only — who owns the runbook's `pf-admin-create` CLI (prints one-time setup link) and is there an invites table/flow? | Safe default: seed invents NO admin user/invite/credential (no table or flow defined in the kit); the CLI needs an owning ticket (Phase 1 admin epic) | owner-input-needed |
 
 ## Research log (Phase 6)
 
