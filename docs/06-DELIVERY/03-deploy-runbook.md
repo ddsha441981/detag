@@ -24,6 +24,7 @@
 | `PF_API_PORT` | api | 8080 | port the api binds on 127.0.0.1 |
 | `PF_METRICS_PORT` | api | 9090 | port the internal /metrics server binds on 127.0.0.1 |
 | `PF_ENVIRONMENT` | all | dev | dev \| stage \| prod; gates the Swagger UI (`/docs`, P0-067) — prod serves no `/docs` |
+| `PF_WORKER_CONCURRENCY` | worker | 4 | apalis workers per queue (pipeline, cleanup, email, reconciliation — P0-075); must be >= 1 |
 | `PF_STRIPE_SECRET_KEY`, `PF_STRIPE_WEBHOOK_SECRET` | billing | test keys | live keys = owner action |
 | `PF_RAZORPAY_KEY`, `PF_RAZORPAY_SECRET`, `PF_FEATURE_RAZORPAY` | billing | off | |
 | `PF_SMTP_HOST`, `PF_SMTP_PORT`, `PF_SMTP_USER`, `PF_SMTP_PASS`, `PF_MAIL_FROM` | mailer | MailHog | |

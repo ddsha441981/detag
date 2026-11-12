@@ -587,12 +587,13 @@
 
 ## E0.8 — Worker skeleton (area: worker)
 
-- [ ] **P0-075** — apalis wiring
+- [x] **P0-075** — apalis wiring
   - **Type:** feat · **Area:** worker · **Est:** M · **Deps:** — · **Prio:** P1
   - **Spec:** apps/worker: Redis-backed apalis workers (pipeline, cleanup, email, reconciliation queues), concurrency via env, versioned job envelope serde.
   - **AC:**
-    - [ ] workers start
-    - [ ] envelope version field present
+    - [x] workers start
+    - [x] envelope version field present
+  - **Status:** New `apps/worker/src/lib.rs` (testable lib: `envelope`, `queue_hooks`, `workers`) + `workers.rs`: one Redis-backed apalis 0.6 worker per queue at `PF_WORKER_CONCURRENCY` replicas (default 4, must be >= 1 — `Settings::worker_concurrency` + unit test), namespace `pf:queue:{queue}`, `Monitor::run_with_signal(shutdown_signal)` in `main.rs` (dead Redis is a boot error naming `PF_REDIS_URL`, never echoing it). `envelope.rs`: `JobEnvelope { version: 1, job_id, kind, payload }` with `check_version` refusing anything but v1 (4 unit tests incl. serde round-trip asserting the `version` field in JSON). Stub handler version-checks, records the dequeue via `QueueHooks`, acks; kind registry/retry/DLQ/drain land in P0-076..P0-081. Tests: `tests/workers_start.rs` (monitor starts, processes a pushed v1 envelope — dequeue metric observed — clean shutdown) and `tests/shutdown.rs` (spawned binary logs `started (queues:`, exits 0 on SIGTERM). Fix found while completing the interrupted run: the shutdown test used `tokio::process`, but the workspace tokio has no `process` feature — rewritten on `std::process` (the api shutdown test's pattern) with a reader thread + channel for stdout lines. `.env.example` + runbook table gained `PF_WORKER_CONCURRENCY`. `just verify` green on attempt 3 (attempt 1 red on known FLAKY-001 api shutdown; attempt 2 red on known FLAKY-002 pubsub slow-consumer; both passed on retry with no code change). Note: this run also restored the dev services after a VM reset (ASSUMPTION-010 — apt reinstall of redis-server + postgresql-16, `setsid` redis start, `pf` role/db recreated).
 
 - [ ] **P0-076** — Job envelope + registry
   - **Type:** feat · **Area:** worker · **Est:** S · **Deps:** P0-075 · **Prio:** P1

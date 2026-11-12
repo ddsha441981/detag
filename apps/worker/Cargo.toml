@@ -11,5 +11,13 @@ path = "src/main.rs"
 [dependencies]
 tokio.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
+apalis.workspace = true
+apalis-redis.workspace = true
 detag-core = { path = "../../crates/core" }
+
+[dev-dependencies]
+libc.workspace = true

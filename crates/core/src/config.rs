@@ -152,6 +152,10 @@ pub struct Settings {
     /// served in dev and stage only, never in prod (P0-067).
     /// Default dev.
     pub environment: String,
+    /// Env: PF_WORKER_CONCURRENCY — apalis workers per queue. Each
+    /// of the four queues (pipeline, cleanup, email, reconciliation)
+    /// runs this many workers (P0-075). Default 4. Must be >= 1.
+    pub worker_concurrency: usize,
 }
 
 impl Default for Settings {
@@ -191,6 +195,7 @@ impl Default for Settings {
             otel_endpoint: String::new(),
             web_origin: String::new(),
             environment: "dev".to_string(),
+            worker_concurrency: 4,
         }
     }
 }
@@ -231,6 +236,7 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("otel_endpoint", "PF_OTEL_ENDPOINT"),
     ("web_origin", "PF_WEB_ORIGIN"),
     ("environment", "PF_ENVIRONMENT"),
+    ("worker_concurrency", "PF_WORKER_CONCURRENCY"),
 ];
 
 impl Settings {
@@ -315,6 +321,7 @@ impl Settings {
             otel_endpoint: field!(otel_endpoint, String),
             web_origin: field!(web_origin, String),
             environment: field!(environment, String),
+            worker_concurrency: field!(worker_concurrency, usize),
         };
         settings.validate(&mut problems);
         if problems.is_empty() {
@@ -399,6 +406,9 @@ impl Settings {
         }
         if self.engine_tiles_max == 0 {
             invalid("PF_ENGINE_TILES_MAX", "must be >= 1".to_string());
+        }
+        if self.worker_concurrency == 0 {
+            invalid("PF_WORKER_CONCURRENCY", "must be >= 1".to_string());
         }
         for (var, value) in [
             ("PF_RESULTS_TTL_FREE_H", self.results_ttl_free_h),
@@ -752,6 +762,25 @@ mod tests {
             message.contains("PF_ENVIRONMENT"),
             "error must name the var, got: {message}"
         );
+    }
+
+    /// P0-075: PF_WORKER_CONCURRENCY must be >= 1; 0 fails naming
+    /// the var. The default is 4 workers per queue.
+    #[test]
+    fn worker_concurrency_zero_fails_with_var_name() {
+        let _env = clean_env();
+        let settings = Settings::load_from(None).expect("defaults must load");
+        assert_eq!(settings.worker_concurrency, 4, "default is 4");
+        env::set_var("PF_WORKER_CONCURRENCY", "0");
+        let err = Settings::load_from(None).expect_err("0 workers must fail");
+        let message = err.to_string();
+        assert!(
+            message.contains("PF_WORKER_CONCURRENCY"),
+            "error must name the var, got: {message}"
+        );
+        env::set_var("PF_WORKER_CONCURRENCY", "2");
+        let settings = Settings::load_from(None).expect("2 must load");
+        assert_eq!(settings.worker_concurrency, 2);
     }
 
     /// P0-067: the Swagger UI gate — docs in dev and stage, never

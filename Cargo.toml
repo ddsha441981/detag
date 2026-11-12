@@ -50,6 +50,8 @@ sha2 = "0.11"
 base64 = "0.22"
 utoipa = { version = "5", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "9", features = ["axum"] }
+apalis = "0.6"
+apalis-redis = "0.6"
 
 [profile.release]
 lto = "thin"

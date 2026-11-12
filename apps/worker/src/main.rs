@@ -1,14 +1,20 @@
-//! detag-worker — Apalis worker host (bootstrap stub, P0-002).
-//! Queue wiring lands in E0.8 (P0-075..P0-082).
+//! detag-worker — Apalis worker host (bootstrap stub, P0-002;
+//! queue wiring P0-075, E0.8).
+//!
+//! Four Redis-backed apalis queues (pipeline, cleanup, email,
+//! reconciliation — see `queue_hooks::QUEUES`), each with
+//! `PF_WORKER_CONCURRENCY` workers, running versioned
+//! [`JobEnvelope`](envelope::JobEnvelope)s. The handlers are
+//! Phase-0 stubs until P0-076 lands the kind registry — nothing
+//! enqueues jobs yet, so the workers idle on empty queues.
 
 use detag_core::config::{warn_unknown_feature_flags, Settings};
 use detag_core::db::{connect_lazy, db_health, PoolConfig};
 use detag_core::metrics::Metrics;
 use detag_core::shutdown::shutdown_signal;
 use detag_core::telemetry::{init_tracing, shutdown_telemetry};
-use queue_hooks::{QueueHooks, QUEUES};
-
-mod queue_hooks;
+use detag_worker::queue_hooks::{QueueHooks, QUEUES};
+use detag_worker::workers::{build_monitor, WorkerConfig};
 
 #[tokio::main]
 async fn main() {
@@ -23,9 +29,8 @@ async fn main() {
     warn_unknown_feature_flags();
     // Job/queue metrics hooks (P0-029): the registry is owned by this
     // process; the hooks are the queue implementation's recording
-    // surface (E0.8) and the pipeline stages' timers (Phases 2–3).
-    // Today only the zero depths are initialised — no values are
-    // faked before a real queue/stage exists.
+    // surface. The depths start at 0 (no jobs yet); the workers
+    // record enqueues/dequeues through the same hooks from P0-075.
     let metrics = Metrics::new();
     let hooks = QueueHooks::new(metrics.queue().clone());
     hooks.reset_depths();
@@ -38,16 +43,36 @@ async fn main() {
         std::process::exit(1);
     });
     let db = db_health(&pool).await;
+    // The workers (P0-075): one Redis-backed apalis worker per
+    // queue. A dead Redis is a boot error — the worker cannot do
+    // its job without the queue — so fail fast naming the var.
+    let worker_config = WorkerConfig::from_settings(&settings);
+    let monitor = build_monitor(&worker_config, hooks)
+        .await
+        .unwrap_or_else(|err| {
+            eprintln!("detag-worker: {err}");
+            std::process::exit(1);
+        });
     tracing::info!(
         queues = QUEUES.join(","),
+        concurrency = settings.worker_concurrency,
         db_ok = db.ok,
         db_detail = db.detail,
         "started (queues: pipeline, cleanup, email, reconciliation)"
     );
     // Graceful shutdown (P0-023): SIGTERM/SIGINT stops picking up new
-    // jobs; the in-flight job finishes before exit. The pool closes
-    // first (P0-035); queue close calls hook in here with E0.8.
-    shutdown_signal().await;
+    // jobs; the monitor waits for in-flight jobs, then the pool
+    // closes. The drain semantics (timeout, checkpointing) land in
+    // P0-081 — with stub handlers the in-flight set is empty.
+    if let Err(err) = monitor
+        .run_with_signal(async {
+            shutdown_signal().await;
+            Ok::<(), std::io::Error>(())
+        })
+        .await
+    {
+        tracing::error!(error = %err, "worker monitor exited with an error");
+    }
     pool.close().await;
     shutdown_telemetry();
     tracing::info!("shutting down");
