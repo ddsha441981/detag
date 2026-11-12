@@ -5,7 +5,7 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-037
+- **Current ticket:** P0-038
 - **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007).
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
@@ -13,7 +13,7 @@
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 35 / 108 | — |
+| 0 | Foundation & Platform Baseline | 36 / 108 | — |
 | 1 | Identity & Billing | 0 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
@@ -34,10 +34,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-037 — Migration 001 users+sessions
-2. P0-038 — Migration 002 jobs+artifacts
-3. P0-039 — Migration 003 billing
-4. P0-040 — Migration 004 audit+flags+misc
+1. P0-038 — Migration 002 jobs+artifacts
+2. P0-039 — Migration 003 billing
+3. P0-040 — Migration 004 audit+flags+misc
+4. P0-041 — Repo layer tests
+5. P0-042 — Tx helper
 5. P0-041 — Repo layer tests
 
 ## Bench history (append-only)

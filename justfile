@@ -87,6 +87,20 @@ migrate-new name:
 migrate-revert:
     cargo run --quiet -p detag-core --example migrate -- revert
 
+# Regenerate checked-in sqlx offline query metadata (P0-037).
+# Needs sqlx-cli (`cargo install sqlx-cli --version 0.9.0 --locked
+# --no-default-features --features postgres,rustls`) and a live DB
+# at PF_DATABASE_URL. With no query! macros yet this is a no-op
+# ("no queries found") — it becomes real when the repo layer lands.
+sqlx-prepare:
+    DATABASE_URL="${PF_DATABASE_URL:-postgres://pf:pf@localhost:5432/pf}" cargo sqlx prepare --workspace
+
+# Fail if the checked-in .sqlx/ metadata is stale (P0-037; CI runs
+# this after `just migrate`). Passes vacuously until query! macros
+# exist — then it is the freshness gate.
+sqlx-prepare-check:
+    DATABASE_URL="${PF_DATABASE_URL:-postgres://pf:pf@localhost:5432/pf}" cargo sqlx prepare --workspace --check
+
 # Seed plans, feature flags, admin invite (lands in P0-043).
 seed:
     @echo "pending: seed task lands in P0-043" >&2; exit 1

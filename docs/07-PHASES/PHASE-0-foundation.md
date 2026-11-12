@@ -292,12 +292,13 @@
     - [x] clean migrate green in CI
   - **Status:** `just migrate` verified locally against a fresh scratch database (applies clean, second run is a no-op) and the CI step is committed; a green CI run itself is unobserved until the parent pushes — the workflow-file push is still blocked (see the push gap in the run report).
 
-- [ ] **P0-037** — Migration 001 users+sessions
+- [x] **P0-037** — Migration 001 users+sessions
   - **Type:** feat · **Area:** db · **Est:** M · **Deps:** P0-036 · **Prio:** P1
   - **Spec:** users, sessions per data-model doc (types, constraints, unique citext email); sqlx prepare outputs checked in.
   - **AC:**
-    - [ ] migration applies + reverts (dev)
-    - [ ] prepare fresh
+    - [x] migration applies + reverts (dev)
+    - [x] prepare fresh
+  - **Status:** `migrations/20261112064220_users_sessions.{up,down}.sql` — users (citext email UNIQUE, argon2id password_hash, role/status CHECKs, tos_version, deleted_at, settings jsonb) + sessions (refresh_hash UNIQUE, family_id, device jsonb {ua, ip_hash}, expires_at, revoked_at, replaced_by self-FK). Verified on a fresh scratch DB: applies clean, case-insensitive email unique rejects `alice@example.com` after `Alice@Example.com`, role/status CHECKs + sessions FK reject bad rows, revert drops both tables, re-apply restores them; committed live test `crates/core/tests/migration_001_users_sessions.rs` covers all of it. Dev DB migrated. `cargo sqlx prepare --workspace` and `--check` both pass, and `just sqlx-prepare[-check]` + a CI step (after migrate) are committed — BUT there are no `query!` macros in the codebase yet, so prepare reports "no queries found" and generates no `.sqlx/` files to check in; the gate is in place and becomes real when the repo layer lands (P0-041). sqlx-cli 0.9.0 installed locally for this; CI installs it.
 
 - [ ] **P0-038** — Migration 002 jobs+artifacts
   - **Type:** feat · **Area:** db · **Est:** M · **Deps:** P0-037 · **Prio:** P1
