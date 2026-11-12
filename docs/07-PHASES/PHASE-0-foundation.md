@@ -705,11 +705,12 @@
     - [ ] smoke green in CI
   - **Status:** `scripts/smoke.sh` + `just smoke` (base+dev, `--profile dev`, `up -d --wait --wait-timeout 120`, `just migrate`, /healthz wait 60 s, /readyz, `just smoke-ping`, print URLs, `--down` flag) + `just smoke --skip-up` mode for the native stack (readyz read-once; degraded readyz warns and continues unless db/redis is down). CI `smoke` job added (own job, no service containers — compose publishes :5432/:6379 itself; `SQLX_OFFLINE=true`; `cp .env.example .env`; `just smoke`). ADR-0017 amended (smoke landed; `just verify` still excludes it — no docker daemon here). Runbook gained a "Smoke (P0-090)" section. AC unticked until the workflow files reach GitHub and the smoke job goes green there (CI-WORKFLOWS-001) — the full compose `up` cannot run on this VM (DOCKER-001). Proven locally instead: `just smoke --skip-up` green against the native stack (healthz ok; readyz db/redis ok, storage DOWN as expected with no MinIO, models ok; `smoke ping done`, URLs printed, `smoke: OK`). The proof caught a real S2 bug (SHUTDOWN-001, see ISSUES.md): `tokio::time::timeout(30s, ...)` wrapped the whole api/worker run, so both binaries force-exited 30 s after startup with no signal — fixed in both mains (timeout now bounds only the post-signal drain) with regression test `stays_up_past_shutdown_timeout_without_signal` (~32 s). The bisect that found it is recorded in `.scratch/smoke-proof/` (proof.sh, bisect-a/b.sh — `just`/cargo and the early curls were ruled out one by one; the 30.066 s worker drain timestamp was the tell). `just verify` green on retry (330 passed, 0 failed — the new regression test included; first attempt hit the known FLAKY-001, which then failed 3/3 standalone before passing 5/5 with no code change — see ISSUES.md update).
 
-- [ ] **P0-091** — Ops quickstart
+- [x] **P0-091** — Ops quickstart
   - **Type:** docs · **Area:** ops · **Est:** S · **Deps:** P0-090 · **Prio:** P1
   - **Spec:** README ops section: 3 commands to working stack, ports table, troubleshooting matrix (top 5 failures).
   - **AC:**
-    - [ ] quickstart committed
+    - [x] quickstart committed
+  - **Status:** New "Ops quickstart" section in README.md (between Develop and License): 3 commands (`cp .env.example .env`, `just dev`, `just smoke --skip-up` — `just smoke` on a docker machine), ports table (api 8080, web 3000, postgres 5432, redis 6379, minio 9000/9001, mailhog 8025, metrics 9090/9092, caddy 80/443 prod-only — every port cross-checked against `ops/compose.*.yml` + `.env.example`), troubleshooting matrix (top 5: DOCKER-001, VM-reset service loss, /readyz degraded, port in use, FLAKY-001 — each grounded in the runbook or ISSUES.md). No code touched, no gate reads the README. `just verify` green on attempt 5 (330 passed, 0 failed; attempts 1–4 red on the known FLAKY-001 only — see ISSUES.md update).
 
 ---
 
