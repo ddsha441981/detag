@@ -10,7 +10,7 @@
 //!   and returns the whole-object hash. A mismatch is
 //!   `AppError::PartChecksumMismatch` (PF-2004, 400); a malformed
 //!   report (unknown part, repeated part, missing part) is
-//!   `AppError::ValidationFailed` (PF-2002, 400).
+//!   `AppError::ValidationFailed` (PF-2002, 422).
 //! - On success the service stores the server-computed hash with
 //!   `repos::uploads::set_sha256` — the stored value is the
 //!   verified hash, not the claim — and marks the upload ready.

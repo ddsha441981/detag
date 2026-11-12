@@ -6,7 +6,7 @@ expression: "problem(AppError::ValidationFailed, Profile::Development, Some(REQU
   "code": "PF-2002",
   "detail": "email must be valid",
   "request_id": "01JREQID123",
-  "status": 400,
+  "status": 422,
   "title": "validation_failed",
   "type": "https://docs.pureframe.dev/errors/PF-2002"
 }

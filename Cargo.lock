@@ -1403,6 +1403,7 @@ dependencies = [
  "detag-core",
  "detag-engine",
  "detag-storage",
+ "detag-validator",
  "libc",
  "serde",
  "serde_json",
@@ -1515,6 +1516,14 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "detag-validator"
+version = "0.1.0"
+dependencies = [
+ "detag-core",
+ "url",
 ]
 
 [[package]]

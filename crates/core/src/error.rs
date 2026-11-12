@@ -46,6 +46,37 @@ pub enum Profile {
     Production,
 }
 
+/// One failed field in a 422 validation rejection (P0-101).
+///
+/// Serialized as an element of `Problem.field_errors`. The `message`
+/// is generic by design — it never echoes the offending value — so
+/// the list is safe to show in production, unlike `detail` (which
+/// stays the variant's static safe text in production).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+pub struct FieldError {
+    /// The request field that failed, e.g. `email`.
+    pub field: String,
+    /// Stable machine code, e.g. `invalid_email` — one per rule,
+    /// documented where the rule lives (`detag-validator`).
+    pub code: String,
+    /// Human-readable message, e.g. `must be a valid email address`.
+    pub message: String,
+}
+
+impl FieldError {
+    pub fn new(
+        field: impl Into<String>,
+        code: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            field: field.into(),
+            code: code.into(),
+            message: message.into(),
+        }
+    }
+}
+
 /// RFC 7807 problem body, as served by the api (`application/problem+json`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct Problem {
@@ -65,12 +96,23 @@ pub struct Problem {
     /// (request-id middleware lands in P0-019).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    /// Per-field failures (P0-101). Present only on validation
+    /// rejections; omitted otherwise, so every other error body keeps
+    /// exactly the RFC 7807 fields the contract test locks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field_errors: Option<Vec<FieldError>>,
 }
 
 impl Problem {
     /// Serialize the body the way the api serves it.
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::to_value(self).expect("Problem is always serializable")
+    }
+
+    /// Attach per-field failures (validation rejections only).
+    pub fn with_field_errors(mut self, errors: Vec<FieldError>) -> Self {
+        self.field_errors = Some(errors);
+        self
     }
 }
 
@@ -105,7 +147,9 @@ pub enum AppError {
     /// PF-2001, 415.
     #[error("unsupported media type")]
     UnsupportedMediaType,
-    /// Taxonomy: request body / params fail validation. PF-2002, 400.
+    /// Taxonomy: request body / params fail validation. PF-2002, 422
+    /// (P0-101: validation failures are 422, not 400 — a syntactically
+    /// valid request the server understands but cannot accept).
     #[error("validation failed")]
     ValidationFailed,
     /// Kit: body / upload exceeds the route or plan byte cap.
@@ -266,7 +310,7 @@ impl AppError {
             InvalidToken => 401,
             ExpiredToken => 401,
             UnsupportedMediaType => 415,
-            ValidationFailed => 400,
+            ValidationFailed => 422,
             PayloadTooLarge => 413,
             PartChecksumMismatch => 400,
             DimensionsExceeded => 413,
@@ -415,6 +459,8 @@ impl AppError {
             code: self.code().to_string(),
             detail,
             request_id: request_id.map(str::to_string),
+            // Per-field failures attach via `with_field_errors` (P0-101).
+            field_errors: None,
         }
     }
 }
@@ -470,7 +516,7 @@ impl From<crate::redis::pubsub::PubSubError> for AppError {
 }
 
 /// Tampered-cursor mapping (P0-068): a cursor that does not decode
-/// is a client error — PF-2002, 400 — never a 500.
+/// is a client error — PF-2002, 422 — never a 500.
 impl From<crate::pagination::PaginationError> for AppError {
     fn from(_: crate::pagination::PaginationError) -> Self {
         AppError::ValidationFailed
@@ -648,10 +694,43 @@ mod tests {
             None,
             Some("field 'email': not an email address"),
         );
-        assert_eq!(problem.status, 400);
+        assert_eq!(problem.status, 422);
         assert_eq!(problem.detail, "field 'email': not an email address");
         assert!(problem.request_id.is_none());
         assert!(problem.to_json().get("request_id").is_none());
+    }
+
+    /// P0-101: a validation rejection carries `field_errors` — one
+    /// entry per failed field — and the status is 422. Bodies without
+    /// field errors omit the member entirely (the contract test locks
+    /// the exact RFC fields for every other error).
+    #[test]
+    fn validation_problem_carries_field_errors() {
+        let problem = AppError::ValidationFailed
+            .to_problem(Profile::Production, Some("01JREQUESTID"), None)
+            .with_field_errors(vec![
+                FieldError::new("email", "invalid_email", "must be a valid email address"),
+                FieldError::new(
+                    "filename",
+                    "invalid_filename",
+                    "must not contain path separators",
+                ),
+            ]);
+        assert_eq!(problem.status, 422);
+        assert_eq!(problem.code, "PF-2002");
+        assert_eq!(problem.detail, "the request failed validation");
+        let json = problem.to_json();
+        let errors = json["field_errors"]
+            .as_array()
+            .expect("field_errors is a list");
+        assert_eq!(errors.len(), 2);
+        assert_eq!(errors[0]["field"], "email");
+        assert_eq!(errors[0]["code"], "invalid_email");
+        assert_eq!(errors[0]["message"], "must be a valid email address");
+        assert_eq!(errors[1]["field"], "filename");
+        // And a problem without field errors has no such member.
+        let plain = AppError::NotFound.to_problem(Profile::Production, None, None);
+        assert!(plain.to_json().get("field_errors").is_none());
     }
 
     /// No caller detail: both profiles fall back to the safe default.
@@ -727,7 +806,7 @@ mod tests {
             (
                 ValidationFailed,
                 "PF-2002",
-                400,
+                422,
                 "validation_failed",
                 "the request failed validation",
             ),

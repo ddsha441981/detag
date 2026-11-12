@@ -7,7 +7,7 @@ expression: page
     {
       "type": "https://docs.pureframe.dev/errors/PF-2002",
       "title": "validation_failed",
-      "status": 400,
+      "status": 422,
       "code": "PF-2002",
       "detail": "the request failed validation",
       "request_id": "01JREQID123"

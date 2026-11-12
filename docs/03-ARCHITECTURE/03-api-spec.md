@@ -12,6 +12,20 @@ Conventions first; endpoint tables are the contract. OpenAPI is generated from c
     "status": 415, "code": "PF-2001", "detail": "magic bytes indicate SVG; SVG is not accepted",
     "request_id": "01J..." }
   ```
+- Validation failures are 422 `PF-2002` (`validation_failed`) with
+  `field_errors` — one entry per failed field, in request order:
+  ```json
+  { "type": "https://docs.pureframe.dev/errors/PF-2002", "title": "validation_failed",
+    "status": 422, "code": "PF-2002", "detail": "the request failed validation",
+    "field_errors": [{ "field": "email", "code": "invalid_email",
+      "message": "must be a valid email address" }] }
+  ```
+  `field_errors` is present only on validation rejections; every
+  other error body carries exactly the RFC 7807 fields above.
+  Messages are generic (they never echo the offending value), so
+  the list is safe in production. Rules live in `detag-validator`
+  (email shape, filename sanitize, public-only URL); handlers take
+  `ValidatedJson<T>` (see `04-ENGINEERING/04-adding-an-endpoint.md`).
 - Error code ranges: PF-1xxx auth/session, PF-2xxx upload/media, PF-3xxx quota/billing, PF-4xxx engine/quality/compliance, PF-5xxx system.
 - Rate limits: headers `X-RateLimit-Limit`, `-Remaining`, `-Reset`. Overage = 429 + problem+json.
 - Idempotency: `Idempotency-Key` header honored on `POST /v1/jobs`, `POST /v1/uploads`, payment endpoints (24 h window).

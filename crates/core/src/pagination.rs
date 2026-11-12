@@ -6,7 +6,7 @@
 //! — a keyset position, not an offset: rows are ordered by
 //! `(created_at, id)` and the next page starts strictly after the
 //! cursor. A client must never construct one; a tampered cursor is
-//! a 400 (`AppError::ValidationFailed`, PF-2002), never a 500 and
+//! a 422 (`AppError::ValidationFailed`, PF-2002), never a 500 and
 //! never a silent restart from the first page.
 //!
 //! Rules:
@@ -103,7 +103,7 @@ impl<T> Page<T> {
 
 /// Pagination failures. Only one kind exists: the client sent a
 /// cursor that does not decode. It maps to
-/// `AppError::ValidationFailed` (PF-2002, 400) — a tampered cursor
+/// `AppError::ValidationFailed` (PF-2002, 422) — a tampered cursor
 /// is a client error, never a 500.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PaginationError {
@@ -194,11 +194,11 @@ mod tests {
     }
 
     #[test]
-    fn invalid_cursor_maps_to_400_validation_failed() {
+    fn invalid_cursor_maps_to_422_validation_failed() {
         let err = AppError::from(PaginationError::InvalidCursor);
         assert_eq!(err, AppError::ValidationFailed);
         assert_eq!(err.code(), "PF-2002");
-        assert_eq!(err.status(), 400);
+        assert_eq!(err.status(), 422);
     }
 
     #[test]

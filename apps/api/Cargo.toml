@@ -23,6 +23,7 @@ thiserror.workspace = true
 detag-core = { path = "../../crates/core" }
 detag-storage = { path = "../../crates/storage" }
 detag-engine = { path = "../../crates/engine" }
+detag-validator = { path = "../../crates/validator" }
 utoipa.workspace = true
 utoipa-swagger-ui.workspace = true
 

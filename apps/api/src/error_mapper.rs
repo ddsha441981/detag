@@ -19,6 +19,13 @@
 //! | 413 | `PayloadTooLarge` | PF-2003 |
 //! | 415 | `UnsupportedMediaType` | PF-2001 |
 //!
+//! (The left column is the *framework* status; the rendered
+//! problem body carries the variant's status — 422 for
+//! `ValidationFailed` since P0-101 — so a framework 400 becomes
+//! a 422 problem. The mapper also passes through bodies that
+//! already are problem+json, e.g. the `ValidatedJson` 422 with
+//! `field_errors`.)
+//!
 //! Deliberately NOT mapped: 405 (no taxonomy variant; axum's
 //! `Allow` header is worth keeping verbatim) and 5xx (a handler
 //! 500 is already problem+json; a framework 500 without a body

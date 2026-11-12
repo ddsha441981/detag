@@ -46,6 +46,15 @@ without hunting.
   limit applies to every JSON route (P0-069); uploads are
   exempt structurally — upload bytes never transit the api
   (presigned S3 PUTs).
+- [ ] Bodies that need validation use `ValidatedJson<T>`
+  (`apps/api/src/routes/extractors.rs`, P0-101), not bare
+  `Json<T>`: the DTO implements `detag_validator::Validate`
+  (rules in `crates/validator` — email shape, filename
+  sanitize, public-only URL), and a failure is a 422
+  problem+json body with `field_errors` (one entry per failed
+  field, in request order; messages never echo the offending
+  value). Collect every failure, not just the first, so the
+  client fixes the whole request in one round trip.
 - [ ] Business logic goes in a service
   (`apps/api/src/services/` — target layout; create the
   directory when the first real handler lands), SQL goes in a

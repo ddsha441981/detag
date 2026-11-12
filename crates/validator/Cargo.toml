@@ -1,0 +1,12 @@
+[package]
+name = "detag-validator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Input validation rules for Detag (P0-101): email, filename sanitize, public-only URL"
+
+[dependencies]
+detag-core = { path = "../core" }
+url.workspace = true
+
+[dev-dependencies]

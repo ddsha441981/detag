@@ -16,7 +16,7 @@
 //!   checks the part list against the row's expectations — part
 //!   count, contiguous part numbers 1..=N, every part non-empty,
 //!   sizes summing to the row's `bytes`. Failures are
-//!   `AppError::ValidationFailed` (PF-2002, 400): the client
+//!   `AppError::ValidationFailed` (PF-2002, 422): the client
 //!   reported the wrong parts.
 //! - `pending_parts → aborted` (abort): always legal.
 //! - `ready` and `aborted` are terminal: any event from them is
