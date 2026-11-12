@@ -7,6 +7,7 @@ pub mod error;
 pub mod flags;
 pub mod shutdown;
 pub mod state_machine;
+pub mod telemetry;
 pub mod types;
 
 /// Crate version (workspace version).

@@ -208,12 +208,12 @@
 
 ## E0.3 — Observability (area: observability)
 
-- [ ] **P0-025** — Tracing bootstrap
+- [x] **P0-025** — Tracing bootstrap
   - **Type:** feat · **Area:** observability · **Est:** M · **Deps:** — · **Prio:** P1
   - **Spec:** JSON logs to stdout (pretty in dev), env-filtered levels, span fields (request_id, job_id, user_id) with PII redaction helper (never email / raw ip / bytes).
   - **AC:**
-    - [ ] redaction helper unit tested
-    - [ ] json logs parse
+    - [x] redaction helper unit tested
+    - [x] json logs parse
 
 - [ ] **P0-026** — Prometheus /metrics
   - **Type:** feat · **Area:** observability · **Est:** S · **Deps:** P0-025 · **Prio:** P1

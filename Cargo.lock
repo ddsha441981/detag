@@ -188,6 +188,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "url",
 ]
 
@@ -222,6 +223,7 @@ dependencies = [
  "detag-core",
  "serde",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

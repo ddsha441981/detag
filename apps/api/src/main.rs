@@ -3,6 +3,7 @@
 use detag_api::build_router;
 use detag_core::config::{warn_unknown_feature_flags, Settings};
 use detag_core::shutdown::{shutdown_signal, SHUTDOWN_TIMEOUT};
+use detag_core::telemetry::init_tracing;
 use std::net::SocketAddr;
 
 #[tokio::main]
@@ -12,11 +13,13 @@ async fn main() {
         eprintln!("detag-api: invalid configuration:\n{err}");
         std::process::exit(1);
     });
+    // Tracing first, so the warn below (and everything after) is logged.
+    init_tracing(&settings);
     // Unknown PF_FEATURE_* flags warn (a typo must not silently do nothing).
     warn_unknown_feature_flags();
     let app = build_router();
     let addr = SocketAddr::from(([127, 0, 0, 1], settings.api_port));
-    println!("detag-api listening on {addr}");
+    tracing::info!(addr = %addr, "listening");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     // Graceful shutdown (P0-023): on SIGTERM/SIGINT stop accepting and
     // drain in-flight requests. A stuck drain is cut off after
@@ -24,7 +27,7 @@ async fn main() {
     // hanging a deploy. Pool closes hook in here when pools land (E0.4).
     let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
     match tokio::time::timeout(SHUTDOWN_TIMEOUT, server).await {
-        Ok(Ok(())) => println!("detag-api shut down gracefully"),
+        Ok(Ok(())) => tracing::info!("shut down gracefully"),
         Ok(Err(err)) => {
             eprintln!("detag-api serve error: {err}");
             std::process::exit(1);
