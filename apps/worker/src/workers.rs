@@ -15,10 +15,11 @@
 //! ([`QUEUE_NAMESPACE_PREFIX`]).
 //!
 //! The job type is the versioned [`JobEnvelope`]. The handler
-//! below is the Phase-0 stub: it checks the envelope version,
-//! records the dequeue, and acknowledges. The kind registry
-//! (P0-076), retry policy (P0-077), DLQ (P0-078) and graceful
-//! drain (P0-081) all replace or extend this stub — nothing
+//! below version-checks, records the dequeue, and hands the
+//! envelope to the [`JobRegistry`](crate::registry::JobRegistry),
+//! which maps the kind to a handler (P0-076) or quarantines an
+//! unknown kind. The retry policy (P0-077), DLQ (P0-078) and
+//! graceful drain (P0-081) all extend this flow — nothing
 //! enqueues jobs in Phase 0, so it never runs in production
 //! today.
 //!
@@ -28,8 +29,9 @@
 //! retry count is the storage default — P0-077 sets the
 //! per-queue policy.
 
-use crate::envelope::{EnvelopeError, JobEnvelope};
+use crate::envelope::JobEnvelope;
 use crate::queue_hooks::{QueueHooks, QUEUES};
+use crate::registry::{DispatchOutcome, JobRegistry};
 use apalis::prelude::*;
 use apalis_redis::{Config as RedisConfig, RedisStorage};
 use detag_core::config::Settings;
@@ -70,13 +72,16 @@ impl WorkerConfig {
 }
 
 /// Per-worker context, injected into every handler call: which
-/// queue this worker serves, and the metrics hooks.
+/// queue this worker serves, the metrics hooks, and the kind
+/// registry that dispatches the envelope.
 #[derive(Clone, Debug)]
 pub struct WorkerContext {
     /// The queue this worker serves (`pipeline`, ...).
     pub queue: &'static str,
     /// The process's metrics hooks.
     pub hooks: QueueHooks,
+    /// Kind → handler map (P0-076).
+    pub registry: JobRegistry,
 }
 
 /// Building the monitor failed. The Redis URL is never echoed —
@@ -115,6 +120,7 @@ pub async fn build_monitor(
             let ctx = WorkerContext {
                 queue,
                 hooks: hooks.clone(),
+                registry: JobRegistry::new(),
             };
             let worker = WorkerBuilder::new(format!("{queue}-{replica}"))
                 .data(ctx)
@@ -126,17 +132,53 @@ pub async fn build_monitor(
     Ok(monitor)
 }
 
-/// Phase-0 stub handler: version-check, record the dequeue,
-/// acknowledge. Replaced by the kind registry in P0-076.
+/// Handler: version-check, hash-check, record the dequeue,
+/// dispatch by kind. A handler error propagates so apalis
+/// retries it under the P0-077 policy. A job this build cannot
+/// trust — unknown version, or a params hash that does not match
+/// the payload — is never executed and never retried: it is
+/// quarantined (counted + logged) and acknowledged. Retrying
+/// the same bytes cannot fix either failure.
 async fn handle_envelope(job: JobEnvelope, ctx: Data<WorkerContext>) -> Result<(), Error> {
-    job.check_version()
-        .map_err(|err: EnvelopeError| Error::from(Box::new(err) as BoxDynError))?;
+    if let Err(err) = job.check_version() {
+        ctx.hooks.quarantined(ctx.queue);
+        tracing::error!(
+            job_id = %job.job_id,
+            kind = %job.kind,
+            queue = ctx.queue,
+            error = %err,
+            "envelope quarantined (unsupported version)"
+        );
+        return Ok(());
+    }
+    if !job.verify_params_hash() {
+        ctx.hooks.quarantined(ctx.queue);
+        tracing::error!(
+            job_id = %job.job_id,
+            kind = %job.kind,
+            queue = ctx.queue,
+            "envelope quarantined (params_hash mismatch — params tampered with in transit)"
+        );
+        return Ok(());
+    }
     ctx.hooks.dequeued(ctx.queue);
-    tracing::info!(
-        job_id = %job.job_id,
-        kind = %job.kind,
-        queue = ctx.queue,
-        "envelope accepted (stub handler)"
-    );
+    match ctx.registry.dispatch(&job, &ctx).await? {
+        DispatchOutcome::Handled { kind } => {
+            tracing::info!(
+                job_id = %job.job_id,
+                kind = %kind.as_str(),
+                queue = ctx.queue,
+                "envelope handled"
+            );
+        }
+        DispatchOutcome::Quarantined { kind } => {
+            tracing::info!(
+                job_id = %job.job_id,
+                kind = %kind,
+                queue = ctx.queue,
+                "envelope quarantined (unknown kind)"
+            );
+        }
+    }
     Ok(())
 }

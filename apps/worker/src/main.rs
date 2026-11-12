@@ -4,9 +4,11 @@
 //! Four Redis-backed apalis queues (pipeline, cleanup, email,
 //! reconciliation — see `queue_hooks::QUEUES`), each with
 //! `PF_WORKER_CONCURRENCY` workers, running versioned
-//! [`JobEnvelope`](envelope::JobEnvelope)s. The handlers are
-//! Phase-0 stubs until P0-076 lands the kind registry — nothing
-//! enqueues jobs yet, so the workers idle on empty queues.
+//! [`JobEnvelope`](envelope::JobEnvelope)s. The kind registry
+//! (P0-076) dispatches each envelope to its handler; the
+//! handlers are Phase-0 stubs until the features that own them
+//! land — nothing enqueues jobs yet, so the workers idle on
+//! empty queues.
 
 use detag_core::config::{warn_unknown_feature_flags, Settings};
 use detag_core::db::{connect_lazy, db_health, PoolConfig};

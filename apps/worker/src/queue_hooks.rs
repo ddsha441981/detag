@@ -61,6 +61,12 @@ impl QueueHooks {
         self.metrics.dequeue(queue);
     }
 
+    /// Record one job quarantined on `queue` (P0-076): its kind is
+    /// unknown to the registry, so it never ran.
+    pub fn quarantined(&self, queue: &str) {
+        self.metrics.quarantine(queue);
+    }
+
     /// Set the current depth of `queue` (jobs waiting, not yet picked
     /// up).
     pub fn set_depth(&self, queue: &str, depth: i64) {

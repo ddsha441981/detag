@@ -5,7 +5,7 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-076
+- **Current ticket:** P0-077
 - **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007).
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
@@ -13,7 +13,7 @@
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 73 / 108 | — |
+| 0 | Foundation & Platform Baseline | 74 / 108 | — |
 | 1 | Identity & Billing | 0 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
@@ -34,11 +34,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-076 — Job envelope + registry
-2. P0-077 — Retry policy
-3. P0-078 — Dead-letter handling
-4. P0-079 — Visibility timeout + requeue
-5. P0-080 — Heartbeat + worker metrics
+1. P0-077 — Retry policy
+2. P0-078 — Dead-letter handling
+3. P0-079 — Visibility timeout + requeue
+4. P0-080 — Heartbeat + worker metrics
+5. P0-081 — Graceful drain
 
 ## Bench history (append-only)
 

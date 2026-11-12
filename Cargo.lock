@@ -1198,6 +1198,7 @@ version = "0.1.0"
 dependencies = [
  "apalis",
  "apalis-redis",
+ "chrono",
  "detag-core",
  "libc",
  "serde",

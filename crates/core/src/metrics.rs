@@ -210,12 +210,18 @@ impl Drop for InflightGuard<'_> {
 ///   `apps/worker/src/queue_hooks.rs`).
 /// * `stage`: one of `intake`, `detect`, `mask`, `inpaint`, `encode`,
 ///   `qc` (the pipeline stages in `03-ARCHITECTURE/01-system-architecture.md`).
+///
+/// The quarantine counter (P0-076) is labelled by `queue` only: the
+/// unknown kind string is untrusted input and must never become a
+/// metric label (unbounded cardinality); it is recorded in the
+/// structured error log instead.
 #[derive(Clone, Debug)]
 pub struct QueueMetrics {
     depth: IntGaugeVec,
     enqueued_total: IntCounterVec,
     dequeued_total: IntCounterVec,
     stage_duration_seconds: HistogramVec,
+    quarantined_total: IntCounterVec,
 }
 
 impl QueueMetrics {
@@ -256,6 +262,14 @@ impl QueueMetrics {
             &["stage"],
         )
         .expect("detag_job_stage_duration_seconds builds");
+        let quarantined_total = IntCounterVec::new(
+            Opts::new(
+                "detag_queue_quarantined_total",
+                "Jobs quarantined (unknown kind — never executed), by queue.",
+            ),
+            &["queue"],
+        )
+        .expect("quarantine counter registers into a fresh registry");
         registry
             .register(Box::new(depth.clone()))
             .expect("queue depth registers into a fresh registry");
@@ -268,11 +282,15 @@ impl QueueMetrics {
         registry
             .register(Box::new(stage_duration_seconds.clone()))
             .expect("stage histogram registers into a fresh registry");
+        registry
+            .register(Box::new(quarantined_total.clone()))
+            .expect("quarantine counter registers into a fresh registry");
         QueueMetrics {
             depth,
             enqueued_total,
             dequeued_total,
             stage_duration_seconds,
+            quarantined_total,
         }
     }
 
@@ -298,6 +316,14 @@ impl QueueMetrics {
         self.stage_duration_seconds
             .with_label_values(&[stage])
             .observe(duration.as_secs_f64());
+    }
+
+    /// Record one job quarantined on `queue` (P0-076): its kind is
+    /// unknown to the registry, so it never ran. Labelled by queue
+    /// only — the unknown kind string is untrusted and never a
+    /// label (see the struct docs).
+    pub fn quarantine(&self, queue: &str) {
+        self.quarantined_total.with_label_values(&[queue]).inc();
     }
 }
 
@@ -399,19 +425,21 @@ mod tests {
         // family once at least one label combination exists, so the
         // test touches one series per family (exactly what the worker
         // does at startup with reset_depths) and then asserts all
-        // four families appear in the scrape text.
+        // five families appear in the scrape text.
         let metrics = Metrics::new();
         let queue = metrics.queue();
         queue.set_depth("pipeline", 0);
         queue.enqueue("pipeline");
         queue.dequeue("pipeline");
         queue.observe_stage("intake", Duration::from_millis(1));
+        queue.quarantine("pipeline");
         let text = metrics.gather();
         for family in [
             "detag_queue_depth",
             "detag_queue_enqueued_total",
             "detag_queue_dequeued_total",
             "detag_job_stage_duration_seconds",
+            "detag_queue_quarantined_total",
         ] {
             assert!(
                 text.contains(family),
