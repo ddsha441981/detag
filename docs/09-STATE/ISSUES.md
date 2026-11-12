@@ -22,6 +22,12 @@
 - Status: open — re-running `just verify` until green is the workaround; a fix (e.g. complete the request before signalling, or retry the drain assertion) belongs to a hardening ticket, not P0-029.
 - Update 2026-11-12 (P0-035): the flake got much worse — 3/6 and 4/6 failures in isolation runs (still the 0.11 s vs 0.21 s split). Ruled OUT as a P0-035 regression by a stash test: pre-P0-035 code fails 4/6 identically. Suspected cause is now environmental load (dockerd + native postgres now run on the VM alongside the test), which narrows the drain race window. The workaround still works but may need several retries.
 
+### FLAKY-002 [flaky] `slow_consumer_drops_safely` failed once, passed on retry (P0-060)
+- Date: 2026-11-12 · Ticket: P0-060
+- Symptom: `crates/core/tests/pubsub_live.rs:179` failed once during the P0-060 `just verify` run (attempt 1 red); attempt 2 green with no code change. Single occurrence so far — not yet a pattern.
+- Cause (suspected): timing-sensitive Redis pubsub test under load, same family as FLAKY-001. P0-060 touches only storage/GC code and does not change pubsub.
+- Status: open — watch: if it recurs, promote to a hardening ticket like FLAKY-001; until then re-running `just verify` is the workaround.
+
 ### ASSUMPTION-004 [assumption] Dashboards validated statically; "visible in Grafana" unverified until E0.9 (P0-030)
 - Date: 2026-11-12 · Ticket: P0-030
 - Assumption: the P0-030 AC "dashboards visible in grafana" cannot be verified today — no compose files exist yet (E0.9, P0-085..P0-090), no Grafana runs on this VM, and Grafana cannot be installed via Docker Hub pulls (ADR-0017). The ticket instead delivers schema-valid dashboard JSON + provisioning, validated by `scripts/validate_dashboards.py` (JSON, uids, panels, PromQL allow-list) and enforced in CI; live visibility is re-verified when the compose stack lands.

@@ -1,0 +1,15 @@
+[package]
+name = "detag-gc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "detag-gc"
+path = "src/main.rs"
+
+[dependencies]
+tokio.workspace = true
+chrono.workspace = true
+detag-core = { path = "../../crates/core" }
+detag-storage = { path = "../../crates/storage" }

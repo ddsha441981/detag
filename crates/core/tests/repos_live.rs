@@ -14,10 +14,11 @@
 //! The `pf` role needs CREATEDB (granted in the VM dev setup; CI's
 //! postgres service user has it).
 
+use chrono::Utc;
 use detag_core::db::{connect, DbPool, PoolConfig};
 use detag_core::migrate::migrate_up;
 use detag_core::repos::error::RepoError;
-use detag_core::repos::{jobs, plans, uploads, users};
+use detag_core::repos::{artifacts, jobs, plans, uploads, users};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -53,6 +54,7 @@ fn drop_db_sql(db: &str) -> &'static str {
         "detag_p057_uploads" => "DROP DATABASE IF EXISTS detag_p057_uploads",
         "detag_p057_uploads_guarded" => "DROP DATABASE IF EXISTS detag_p057_uploads_guarded",
         "detag_p058_uploads_hash" => "DROP DATABASE IF EXISTS detag_p058_uploads_hash",
+        "detag_p060_artifacts" => "DROP DATABASE IF EXISTS detag_p060_artifacts",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -68,6 +70,7 @@ fn create_db_sql(db: &str) -> &'static str {
         "detag_p057_uploads" => "CREATE DATABASE detag_p057_uploads",
         "detag_p057_uploads_guarded" => "CREATE DATABASE detag_p057_uploads_guarded",
         "detag_p058_uploads_hash" => "CREATE DATABASE detag_p058_uploads_hash",
+        "detag_p060_artifacts" => "CREATE DATABASE detag_p060_artifacts",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -604,6 +607,100 @@ async fn pool_limits_respected_under_parallelism() {
         ok += 1;
     }
     assert_eq!(ok, 10, "all ten concurrent lookups must succeed");
+
+    teardown(pool, db).await;
+}
+
+#[tokio::test]
+async fn artifacts_gc_key_lookups() {
+    // P0-060: the GC's two queries — expired artifact keys, and
+    // the full known-key set (artifacts + upload inputs).
+    let db = "detag_p060_artifacts";
+    let pool = setup(db).await;
+
+    let user = users::create(&pool, "gc@example.com", "h")
+        .await
+        .expect("create user");
+    let job = jobs::create(
+        &pool,
+        &jobs::NewJob {
+            user_id: user.id,
+            upload_id: None,
+            kind: "image",
+            mode: "inpaint",
+            status: "succeeded",
+            lane: "standard",
+            params: serde_json::json!({}),
+            idempotency_key: None,
+        },
+    )
+    .await
+    .expect("create job");
+    // One upload row (the input key is "known" but never expires).
+    let upload = uploads::create(
+        &pool,
+        &uploads::NewUpload {
+            user_id: user.id,
+            kind: "image",
+            filename: "in.png",
+            bytes: 10,
+            sha256: "aa",
+            mime: "image/png",
+            storage_key: "dev/2026-11/job-1/input.png",
+            parts: 1,
+        },
+    )
+    .await
+    .expect("create upload");
+    let _ = upload;
+    // Two artifacts: one expired an hour ago, one expiring tomorrow.
+    // (No artifacts repo insert yet — the GC only reads; the fixture
+    // inserts directly.)
+    let now = Utc::now();
+    for (key, artifact_type, expires_at) in [
+        (
+            "dev/2026-11/job-1/output.png",
+            "output",
+            now - chrono::Duration::hours(1),
+        ),
+        (
+            "dev/2026-11/job-1/report.json",
+            "report",
+            now + chrono::Duration::hours(24),
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO artifacts (job_id, type, storage_key, bytes, sha256, expires_at) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(job.id)
+        .bind(artifact_type)
+        .bind(key)
+        .bind(10_i64)
+        .bind("bb")
+        .bind(expires_at)
+        .execute(&pool)
+        .await
+        .expect("insert artifact");
+    }
+
+    let expired = artifacts::expired_storage_keys(&pool, now)
+        .await
+        .expect("expired_storage_keys");
+    assert_eq!(expired, vec!["dev/2026-11/job-1/output.png"]);
+
+    let mut known = artifacts::all_storage_keys(&pool)
+        .await
+        .expect("all_storage_keys");
+    known.sort();
+    assert_eq!(
+        known,
+        vec![
+            "dev/2026-11/job-1/input.png",
+            "dev/2026-11/job-1/output.png",
+            "dev/2026-11/job-1/report.json",
+        ]
+    );
 
     teardown(pool, db).await;
 }

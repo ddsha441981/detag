@@ -1,0 +1,17 @@
+{
+  "Rules": [
+    {
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 7
+      },
+      "Expiration": {
+        "Days": 3
+      },
+      "Filter": {
+        "Prefix": ""
+      },
+      "ID": "detag-results-ceiling-72h",
+      "Status": "Enabled"
+    }
+  ]
+}

@@ -166,7 +166,16 @@ compose-redis-check:
 # smoke, P0-090). Requires the docker compose plugin.
 compose-minio-check:
     python3 scripts/check_minio_policy.py
+    python3 scripts/check_minio_lifecycle.py
     docker compose -f ops/compose.minio.yml --env-file .env config --quiet
+
+# Retention GC (P0-060, FR-J-09): dry-run by default — lists the
+# bucket, reports expired artifacts + old orphans, deletes nothing.
+# `cargo run -p detag-gc -- --execute` is the deleting run. Needs
+# PF_DATABASE_URL and a reachable S3/MinIO; fails loudly without
+# them (a GC that cannot read the DB must not run at all).
+gc:
+    cargo run -p detag-gc -- --dry-run
 
 # Validate Grafana dashboards + provisioning (P0-030, NFR-62):
 # JSON parses, uids unique, panels well-formed, every PromQL expr

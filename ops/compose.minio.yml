@@ -77,6 +77,10 @@ services:
       PF_S3_BUCKET: ${PF_S3_BUCKET:-detag-dev}
       PF_S3_ACCESS_KEY: ${PF_S3_ACCESS_KEY:-minioadmin}
       PF_S3_SECRET_KEY: ${PF_S3_SECRET_KEY:-minioadmin}
+    volumes:
+      # The lifecycle config (P0-060): applied with `mc ilm import`
+      # below. Path is relative to this compose file (ops/).
+      - ./minio/lifecycle.json:/lifecycle.json:ro
     entrypoint: ["sh", "-c"]
     command:
       - |
@@ -91,6 +95,12 @@ services:
         mc mb --ignore-existing "detag/$${PF_S3_BUCKET}"
         # Private by default, made explicit: no anonymous access.
         mc anonymous set none "detag/$${PF_S3_BUCKET}"
+        # Lifecycle ceiling (P0-060): nothing in the bucket lives
+        # past 72 h (the Business result TTL, FR-J-09). The per-plan
+        # TTLs (6 h Free / 24 h Pro) cannot be expressed in ILM —
+        # lifecycle granularity is days — so the detag-gc job enforces
+        # them from artifacts.expires_at; this rule is the backstop.
+        mc ilm import "detag/$${PF_S3_BUCKET}" < /lifecycle.json
 
 volumes:
   miniadata:

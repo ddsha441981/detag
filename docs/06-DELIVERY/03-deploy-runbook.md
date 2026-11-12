@@ -195,6 +195,62 @@ redis-cli --scan --pattern 'pf:ratelimit:*' | wc -l   # keys per namespace
   only, no password; production needs a password and the
   `internal` network (see "First deploy" above).
 
+## Storage lifecycle & retention
+
+Two layers, because neither alone can express the retention
+promise (FR-J-09: results live per plan — Free 6 h, Pro 24 h,
+Business 72 h — then are deleted):
+
+| Layer | What it does | Granularity |
+| --- | --- | --- |
+| ILM ceiling (`ops/minio/lifecycle.json`) | Deletes **everything** in the bucket after 3 days | Days (the backend's limit) |
+| `detag-gc` job (`apps/gc`, `just gc`) | Deletes expired **artifacts** from `artifacts.expires_at` + orphans older than 24 h | Exact (per-row `expires_at`) |
+
+- **Why two layers:** S3, MinIO and R2 lifecycle rules all work
+  in whole days — a 6 h or 24 h TTL cannot be expressed in ILM
+  at all. The GC enforces the per-plan TTLs from the database
+  (each artifact row carries `expires_at = created + plan TTL`);
+  the ILM rule is the backstop that guarantees nothing — inputs
+  included — survives past 72 h, the longest TTL.
+- **Inputs vs outputs:** the GC never deletes an input (uploads
+  have no `expires_at`); the ILM 3-day ceiling is the input
+  backstop. This is deliberate: keeping a user's original past
+  its result's TTL would be a privacy liability, and the key
+  layout (ADR-0011) has no per-kind prefix for ILM to scope by,
+  so the ceiling is bucket-wide on purpose.
+- **Orphans:** an object no database row references (a failed or
+  abandoned upload's parts, a crashed job's output). The GC
+  deletes orphans older than 24 h (`--orphan-grace-hours`); the
+  grace is belt-and-braces — an upload's row is created before
+  its presigned PUT, so a live upload is never an orphan.
+- **MinIO (dev):** the compose bootstrap applies the JSON with
+  `mc ilm import` after creating the bucket and locking it
+  private. `scripts/check_minio_lifecycle.py` (run by
+  `just compose-minio-check`) fails CI if the rule is disabled,
+  scoped to a prefix, or expires past 3 days. The JSON also aborts
+  incomplete multipart uploads after 7 days (R2's built-in
+  default; MinIO/S3 need it explicit).
+- **S3 (prod):** the same document, via
+  `aws s3api put-bucket-lifecycle-configuration --bucket <name> --lifecycle-configuration file://ops/minio/lifecycle.json`.
+- **R2 (prod alt):** the same 3-day expiry, via the dashboard
+  (bucket → Settings → Object Lifecycle Rules) or
+  `npx wrangler r2 bucket lifecycle add <bucket> detag-results-ceiling-72h --expire-days 3`
+  (R2 also accepts the S3 lifecycle API). R2's default rule
+  already aborts incomplete multipart uploads after 7 days.
+- **Running the GC:** `just gc` dry-runs (lists, reports,
+  deletes nothing). The deleting run is
+  `cargo run -p detag-gc -- --execute`. It fails closed: if
+  Postgres or S3 is unreachable it exits 1 before deleting
+  anything (a run without the database's "known" set would
+  mistake every object for an orphan). A failed delete is
+  reported, not fatal — the next run retries it. Scheduling
+  (a daily run) lands with the delivery work; today it is run
+  by hand.
+- **Live verification:** the ILM import and the GC's execute
+  path wait for CI/E0.9 (DOCKER-001 — no containers on this VM).
+  Until then the gates are the static checker, the repo live
+  tests, and the GC's unit tests against the memory fake.
+
 ## Observability
 
 ### Dashboards (Grafana, as code)

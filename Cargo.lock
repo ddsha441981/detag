@@ -914,6 +914,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "detag-gc"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "detag-core",
+ "detag-storage",
+ "tokio",
+]
+
+[[package]]
 name = "detag-mailer"
 version = "0.1.0"
 dependencies = [

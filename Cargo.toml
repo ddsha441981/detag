@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "apps/api",
+    "apps/gc",
     "apps/worker",
     "crates/core",
     "crates/engine",

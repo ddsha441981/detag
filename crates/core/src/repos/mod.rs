@@ -22,6 +22,7 @@
 //! database — the same pattern as the migration live tests. The
 //! Testcontainers form belongs with the fixtures work (P0-092).
 
+pub mod artifacts;
 pub mod error;
 pub mod jobs;
 pub mod plans;

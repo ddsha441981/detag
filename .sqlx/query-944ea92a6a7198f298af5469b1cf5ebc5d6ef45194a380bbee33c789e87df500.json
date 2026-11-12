@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT storage_key AS \"storage_key!\" FROM artifacts UNION SELECT storage_key FROM uploads",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "storage_key!",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "944ea92a6a7198f298af5469b1cf5ebc5d6ef45194a380bbee33c789e87df500"
+}
