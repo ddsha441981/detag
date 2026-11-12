@@ -190,12 +190,12 @@
     - [x] flag flip visible within TTL
     - [x] invalidation test green
 
-- [ ] **P0-023** — Graceful shutdown
+- [x] **P0-023** — Graceful shutdown
   - **Type:** feat · **Area:** core/config · **Est:** S · **Deps:** P0-022 · **Prio:** P1
   - **Spec:** SIGTERM/SIGINT: stop accepting, drain in-flight with timeout, close pools; integration test sends signal to spawned server.
   - **AC:**
-    - [ ] no dropped in-flight request
-    - [ ] exit 0
+    - [x] no dropped in-flight request
+    - [x] exit 0
 
 - [ ] **P0-024** — Config reference doc
   - **Type:** docs · **Area:** core/config · **Est:** S · **Deps:** P0-023 · **Prio:** P1

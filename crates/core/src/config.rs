@@ -87,6 +87,8 @@ pub struct Settings {
     pub jwt_secret: String,
     /// Env: PF_PUBLIC_BASE_URL
     pub public_base_url: String,
+    /// Env: PF_API_PORT — TCP port the api binds on 127.0.0.1.
+    pub api_port: u16,
     /// Env: PF_STRIPE_SECRET_KEY
     pub stripe_secret_key: String,
     /// Env: PF_STRIPE_WEBHOOK_SECRET
@@ -141,6 +143,7 @@ impl Default for Settings {
             s3_region: "us-east-1".to_string(),
             jwt_secret: "dev-fixed".to_string(),
             public_base_url: "http://localhost:8080".to_string(),
+            api_port: 8080,
             stripe_secret_key: "sk_test_placeholder".to_string(),
             stripe_webhook_secret: "whsec_placeholder".to_string(),
             razorpay_key: "rzp_test_placeholder".to_string(),
@@ -176,6 +179,7 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("s3_region", "PF_S3_REGION"),
     ("jwt_secret", "PF_JWT_SECRET"),
     ("public_base_url", "PF_PUBLIC_BASE_URL"),
+    ("api_port", "PF_API_PORT"),
     ("stripe_secret_key", "PF_STRIPE_SECRET_KEY"),
     ("stripe_webhook_secret", "PF_STRIPE_WEBHOOK_SECRET"),
     ("razorpay_key", "PF_RAZORPAY_KEY"),
@@ -255,6 +259,7 @@ impl Settings {
             s3_region: field!(s3_region, String),
             jwt_secret: field!(jwt_secret, String),
             public_base_url: field!(public_base_url, String),
+            api_port: field!(api_port, u16),
             stripe_secret_key: field!(stripe_secret_key, String),
             stripe_webhook_secret: field!(stripe_webhook_secret, String),
             razorpay_key: field!(razorpay_key, String),
@@ -340,6 +345,9 @@ impl Settings {
         // Ranges must hold.
         if self.smtp_port == 0 {
             invalid("PF_SMTP_PORT", "must be 1..=65535".to_string());
+        }
+        if self.api_port == 0 {
+            invalid("PF_API_PORT", "must be 1..=65535".to_string());
         }
         if self.engine_tiles_max == 0 {
             invalid("PF_ENGINE_TILES_MAX", "must be >= 1".to_string());
@@ -569,6 +577,7 @@ mod tests {
         assert_eq!(s.s3_region, "us-east-1");
         assert_eq!(s.jwt_secret, "dev-fixed");
         assert_eq!(s.public_base_url, "http://localhost:8080");
+        assert_eq!(s.api_port, 8080);
         assert_eq!(s.stripe_secret_key, "sk_test_placeholder");
         assert_eq!(s.stripe_webhook_secret, "whsec_placeholder");
         assert_eq!(s.razorpay_key, "rzp_test_placeholder");

@@ -5,14 +5,14 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-023
+- **Current ticket:** P0-024
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
 ## Phase status
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 22 / 108 | — |
+| 0 | Foundation & Platform Baseline | 23 / 108 | — |
 | 1 | Identity & Billing | 0 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
@@ -33,11 +33,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-023 — Graceful shutdown
-2. P0-024 — Config reference doc
-3. P0-025 — Tracing bootstrap
-4. P0-026 — Prometheus /metrics
-5. P0-027 — OpenTelemetry export
+1. P0-024 — Config reference doc
+2. P0-025 — Tracing bootstrap
+3. P0-026 — Prometheus /metrics
+4. P0-027 — OpenTelemetry export
+5. P0-028 — HTTP metrics middleware
 
 ## Bench history (append-only)
 
