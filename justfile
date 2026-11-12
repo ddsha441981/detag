@@ -81,9 +81,10 @@ smoke:
 fixtures-gen:
     @echo "pending: fixture generator lands in P0-093" >&2; exit 1
 
-# Fail if .env.example drifts from PF_* vars referenced in code (lands in P0-011).
+# Fail if .env.example drifts from PF_* vars referenced in code or
+# documented in the runbook table (P0-011).
 env-check:
-    @echo "pending: env drift check lands in P0-011" >&2; exit 1
+    python3 scripts/env_check.py
 
 # Full gate incl. smoke, for use once P0-090 lands.
 verify-full: verify smoke

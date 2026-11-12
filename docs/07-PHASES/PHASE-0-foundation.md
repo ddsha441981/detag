@@ -109,11 +109,11 @@
     - [x] cog dry-run works
     - [x] flow documented
 
-- [ ] **P0-011** — .env.example v1
+- [x] **P0-011** — .env.example v1
   - **Type:** chore · **Area:** repo · **Est:** S · **Deps:** P0-010 · **Prio:** P1
   - **Spec:** All PF_* vars from runbook table with safe dev values; `just env:check` compares example vs code-referenced vars and fails on drift.
   - **AC:**
-    - [ ] env:check green
+    - [x] env:check green
 
 - [ ] **P0-012** — Dev bootstrap (just dev)
   - **Type:** chore · **Area:** repo · **Est:** S · **Deps:** P0-011 · **Prio:** P1
