@@ -195,6 +195,13 @@ pub enum AppError {
     /// Kit: database unavailable; in-flight work fails fast. PF-5001, 503.
     #[error("database unavailable")]
     DatabaseUnavailable,
+    /// Kit (P0-051): Redis/cache unavailable — failover mapping for
+    /// every Redis failure (pool checkout, command, pubsub). PF-5003,
+    /// 503. Callers fail fast with a typed 503 instead of matching
+    /// on provider error strings; the provider detail never reaches
+    /// the problem body (see `default_detail`).
+    #[error("cache unavailable")]
+    CacheUnavailable,
     /// Kit: state-machine transition not allowed from the current state.
     /// PF-5002, 409.
     #[error("invalid state transition")]
@@ -238,6 +245,7 @@ impl AppError {
             ProvenanceStripDenied => "PF-4101",
             Internal => "PF-5000",
             DatabaseUnavailable => "PF-5001",
+            CacheUnavailable => "PF-5003",
             InvalidStateTransition => "PF-5002",
         }
     }
@@ -278,6 +286,7 @@ impl AppError {
             ProvenanceStripDenied => 403,
             Internal => 500,
             DatabaseUnavailable => 503,
+            CacheUnavailable => 503,
             InvalidStateTransition => 409,
         }
     }
@@ -318,6 +327,7 @@ impl AppError {
             ProvenanceStripDenied => "provenance_strip_denied",
             Internal => "internal_error",
             DatabaseUnavailable => "database_unavailable",
+            CacheUnavailable => "cache_unavailable",
             InvalidStateTransition => "invalid_state_transition",
         }
     }
@@ -360,6 +370,7 @@ impl AppError {
             ProvenanceStripDenied => "provenance stripping is not enabled for this request",
             Internal => "an internal error occurred",
             DatabaseUnavailable => "the database is temporarily unavailable",
+            CacheUnavailable => "the cache is temporarily unavailable",
             InvalidStateTransition => "this transition is not allowed",
         }
     }
@@ -396,6 +407,56 @@ impl AppError {
             code: self.code().to_string(),
             detail,
             request_id: request_id.map(str::to_string),
+        }
+    }
+}
+
+/// Failover mapping (P0-051): any Redis failure surfaces as the
+/// typed `CacheUnavailable` (PF-5003, 503) so callers can fail fast
+/// without matching on provider error strings. The provider error
+/// is deliberately discarded — its detail may contain hostnames or
+/// credentials, and `to_problem` never shows it in production.
+/// Module-level errors map the same way: their `Pool`/`Redis`
+/// variants are failover, everything else is a caller/programmer
+/// error and becomes `Internal`.
+impl From<deadpool_redis::PoolError> for AppError {
+    fn from(_: deadpool_redis::PoolError) -> Self {
+        AppError::CacheUnavailable
+    }
+}
+
+impl From<deadpool_redis::redis::RedisError> for AppError {
+    fn from(_: deadpool_redis::redis::RedisError) -> Self {
+        AppError::CacheUnavailable
+    }
+}
+
+impl From<crate::redis::cache::CacheError> for AppError {
+    fn from(err: crate::redis::cache::CacheError) -> Self {
+        match err {
+            crate::redis::cache::CacheError::Pool(_)
+            | crate::redis::cache::CacheError::Redis(_) => AppError::CacheUnavailable,
+            _ => AppError::Internal,
+        }
+    }
+}
+
+impl From<crate::redis::ratelimit::RateLimitError> for AppError {
+    fn from(err: crate::redis::ratelimit::RateLimitError) -> Self {
+        match err {
+            crate::redis::ratelimit::RateLimitError::Pool(_)
+            | crate::redis::ratelimit::RateLimitError::Redis(_) => AppError::CacheUnavailable,
+            _ => AppError::Internal,
+        }
+    }
+}
+
+impl From<crate::redis::pubsub::PubSubError> for AppError {
+    fn from(err: crate::redis::pubsub::PubSubError) -> Self {
+        match err {
+            crate::redis::pubsub::PubSubError::Pool(_)
+            | crate::redis::pubsub::PubSubError::Redis(_) => AppError::CacheUnavailable,
+            _ => AppError::Internal,
         }
     }
 }
@@ -440,6 +501,7 @@ mod tests {
             ProvenanceStripDenied,
             Internal,
             DatabaseUnavailable,
+            CacheUnavailable,
             InvalidStateTransition,
         ]
     }
@@ -450,7 +512,7 @@ mod tests {
     #[test]
     fn every_variant_maps_to_status_code_title() {
         let variants = all_variants();
-        assert_eq!(variants.len(), 33, "a variant was added without a test");
+        assert_eq!(variants.len(), 34, "a variant was added without a test");
         for err in &variants {
             let code = err.code();
             let status = err.status();
@@ -501,6 +563,7 @@ mod tests {
                 }
                 AppError::Internal
                 | AppError::DatabaseUnavailable
+                | AppError::CacheUnavailable
                 | AppError::InvalidStateTransition => {
                     assert!((5000..6000).contains(&n))
                 }
@@ -819,6 +882,13 @@ mod tests {
                 "the database is temporarily unavailable",
             ),
             (
+                CacheUnavailable,
+                "PF-5003",
+                503,
+                "cache_unavailable",
+                "the cache is temporarily unavailable",
+            ),
+            (
                 InvalidStateTransition,
                 "PF-5002",
                 409,
@@ -834,7 +904,7 @@ mod tests {
     #[test]
     fn variant_to_response_table() {
         let table = response_table();
-        assert_eq!(table.len(), 33, "a variant is missing from the table");
+        assert_eq!(table.len(), 34, "a variant is missing from the table");
         assert_eq!(
             table.len(),
             all_variants().len(),
@@ -843,7 +913,7 @@ mod tests {
         let mut codes: Vec<&str> = table.iter().map(|(_, c, _, _, _)| *c).collect();
         codes.sort_unstable();
         codes.dedup();
-        assert_eq!(codes.len(), 33, "two variants share a code");
+        assert_eq!(codes.len(), 34, "two variants share a code");
 
         for (err, code, status, title, detail) in &table {
             assert_eq!(err.code(), *code, "{code}");

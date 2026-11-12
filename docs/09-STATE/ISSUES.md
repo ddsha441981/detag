@@ -4,6 +4,16 @@
 
 ## Open issues
 
+### ASSUMPTION-010 [assumption] Dev Redis/Postgres do NOT survive a VM reset — reinstall + manual start (P0-051)
+- Date: 2026-11-12 · Ticket: P0-051
+- Assumption: at run start both native services were gone entirely — no `redis-server`/`psql` binaries, no `/etc/redis`, no `/var/lib/postgresql`, ports 6379/5432 closed — although ASSUMPTION-007/008 recorded them as installed. Restored by `apt-get install -y redis-server postgresql-16` (apt works via the VM egress proxy), then `redis-server /etc/redis/redis.conf --daemonize yes --save "" --maxmemory 256mb --maxmemory-policy allkeys-lru`, `pg_ctlcluster 16 main start`, `CREATE ROLE pf LOGIN PASSWORD 'pf'` + `ALTER ROLE pf CREATEDB` + `CREATE DATABASE pf OWNER pf` (dev placeholders from `.env.example`). Baseline `just verify` then green modulo the known FLAKY-001. After any VM reset, re-run the install + start steps before trusting `just verify`; `just dev` still prefers compose when docker works.
+- Status: open
+
+### ASSUMPTION-009 [assumption] P0-051 runs its integration suite against native Redis, not testcontainers (P0-051)
+- Date: 2026-11-12 · Ticket: P0-051
+- Assumption: the ticket spec names testcontainers, but testcontainers cannot run on this VM — containers cannot start (DOCKER-001) and the crate is not a dev-dependency. The suite (`crates/core/tests/redis_integration.rs`) instead runs against the dev Redis the same way the P0-046..P0-050 live tests do (native redis-server on this VM per ASSUMPTION-008, compose redis where docker runs / in CI), and covers exactly the ticket's three items: primitives under concurrency (mixed 30-task workload on one pool), pubsub latency p95 under load (≤ 500 ms), and failover mapping to the typed PF-5003 error. Adding testcontainers as the CI mechanism is a follow-up for when docker works; it needs no test changes beyond the harness (the tests already take the URL from `PF_REDIS_URL`).
+- Status: open
+
 ### FLAKY-001 [flaky] `sigterm_drains_in_flight_request_and_exits_zero` fails intermittently (P0-029)
 - Date: 2026-11-12 · Ticket: P0-029
 - Symptom: `apps/api/tests/shutdown.rs` fails with `Connection reset by peer` on `read response` (finished in 0.11 s); the next identical run passes (0.21 s). Seen: fail, fail, pass across three consecutive runs of the same binary.

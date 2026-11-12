@@ -44,6 +44,11 @@
 **Decision:** Until P0-090, `just verify` = fmt-check + clippy `-D warnings` + `cargo test --workspace`; `just smoke` exists but fails loudly as "pending P0-090"; `just verify-full` = verify + smoke for use once smoke lands. No ticket is marked done on a faked smoke run.
 **Consequences:** Early-phase verify is honest but partial; the smoke gap is tracked in ISSUES.md and closed by P0-090.
 
+## ADR-0018 — PF-5003 `CacheUnavailable`: the Redis failover error (2026-11-12, Phase 0)
+**Context:** P0-051 ("failover error mapping to typed errors") found no typed error for Redis failures: `AppError` had only `DatabaseUnavailable` (PF-5001, Postgres) and the redis modules each carried their own `Pool`/`Redis` error variants with no mapping to the API taxonomy. PF-5002 was already taken (`InvalidStateTransition`).
+**Decision:** New variant `AppError::CacheUnavailable` — PF-5003, HTTP 503, title `cache_unavailable`, safe detail "the cache is temporarily unavailable". `From` impls map `deadpool_redis::PoolError`, `redis::RedisError`, and the `Pool`/`Redis` variants of `CacheError`/`RateLimitError`/`PubSubError` to it; all other module-error variants map to `Internal` (programmer/caller errors, not failover). The provider error is discarded at the boundary — its detail never reaches a problem body.
+**Consequences:** Any Redis outage now surfaces as a typed, PII-free 503. The exhaustive taxonomy tests (34 variants) pin the code. If a future ticket needs to distinguish checkout vs command failures, it must add variants, not match on provider strings.
+
 ## owner-input-needed queue
 
 | # | Date | Question | Temporary default in use | Owner answer |
