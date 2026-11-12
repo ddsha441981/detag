@@ -469,6 +469,14 @@ impl From<crate::redis::pubsub::PubSubError> for AppError {
     }
 }
 
+/// Tampered-cursor mapping (P0-068): a cursor that does not decode
+/// is a client error — PF-2002, 400 — never a 500.
+impl From<crate::pagination::PaginationError> for AppError {
+    fn from(_: crate::pagination::PaginationError) -> Self {
+        AppError::ValidationFailed
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
