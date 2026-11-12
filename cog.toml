@@ -1,0 +1,20 @@
+# cocogitto configuration (P0-010, NFR-52).
+# Changelog + version bumps from conventional commits.
+# Dry run: `just release-dry-run`  (cog bump --auto --dry-run + cog changelog)
+# Release:  see docs/06-DELIVERY/03-deploy-runbook.md ("Release flow").
+
+# Tags look like v0.1.0, v1.2.3 (no prefix-less tags).
+tag_prefix = "v"
+# Changelog covers the whole history, not just since the latest tag, so
+# the first release includes the Phase 0 foundation work.
+from_latest_tag = false
+
+[changelog]
+path = "CHANGELOG.md"
+# "remote" template links each commit to its GitHub URL. The remote, owner
+# and repository are set explicitly because this repo has no git remote
+# configured (pushes go through the parent's connector snapshots).
+template = "remote"
+remote = "github.com"
+owner = "ddsha441981"
+repository = "detag"

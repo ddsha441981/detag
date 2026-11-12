@@ -33,6 +33,17 @@ deny:
 secrets:
     gitleaks detect --source . --config .gitleaks.toml --verbose
 
+# Release dry-run: prints the next version implied by the commits, writes
+# nothing (P0-010). Generate the changelog stub with `just changelog`.
+release-dry-run:
+    cog bump --auto --dry-run
+
+# Regenerate CHANGELOG.md from conventional commits (P0-010).
+# cog 7 prints the changelog to stdout; the recipe writes it to the
+# path in cog.toml.
+changelog:
+    cog changelog > CHANGELOG.md
+
 # Run the full unit + integration test suite.
 test:
     cargo test --workspace

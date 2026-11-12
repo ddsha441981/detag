@@ -29,7 +29,31 @@
 | `PF_FEATURE_PROVENANCE_STRIP` | api | off | legal gate required |
 | `PF_LOG_LEVEL`, `PF_OTEL_ENDPOINT` | all | info, empty | |
 
-## Upgrades
+## Release flow (cocogitto, P0-010)
+
+Releases are SemVer tags (`vMAJOR.MINOR.PATCH`) cut from `main` with
+cocogitto (`cog`, config in `cog.toml`). The changelog is generated from
+conventional commits — no hand-written entries.
+
+1. **Gate:** `docs/06-DELIVERY/02-release-checklist.md` top-to-bottom.
+   Anything red blocks the release (owner-input items get listed, not skipped).
+2. **Dry run first:** `just release-dry-run`
+   - `cog bump --auto --dry-run` prints the next version the commits imply
+     (`feat` → minor, `fix`/`perf` → patch, `BREAKING CHANGE` → major).
+     It writes nothing.
+   - `just changelog` regenerates `CHANGELOG.md` from history; review the
+     diff. The generated file is committed as part of a real release (or
+     as the P0-010 stub) — never hand-edit its entries.
+3. **Cut the release:** `cog bump --auto` (bumps `Cargo.toml` versions,
+   writes `CHANGELOG.md`, creates the `vX.Y.Z` tag) — then push the tag.
+   Never hand-edit the version in `Cargo.toml` or the tag name; `cog` owns both.
+4. **Deploy the tag:** build images from the tag (not from `main`),
+   follow "Upgrades" below, and verify with the post-deploy smoke.
+5. **After:** the tag is the rollback point (previous image tags are kept).
+
+Pre-1.0 rule: while the workspace version is `0.x`, `feat` bumps the minor
+and `fix` bumps the patch; breaking changes bump the minor, never the major,
+until v1.0.0 is declared (see the release checklist).
 
 1. Read CHANGELOG + migration notes; backup first (`ops/backup.sh` + verify one restore).
 2. `docker compose pull && docker compose up -d` (api/worker restart-gated on health).

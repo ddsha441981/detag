@@ -102,12 +102,12 @@
   - **AC:**
     - [x] templates committed
 
-- [ ] **P0-010** — Release tooling (cocogitto)
+- [x] **P0-010** — Release tooling (cocogitto)
   - **Type:** chore · **Area:** repo · **Est:** M · **Deps:** P0-009 · **Prio:** P1
   - **Spec:** cog config for conventional changelog + version bump; dry-run release generates CHANGELOG stub; release flow documented in deploy runbook.
   - **AC:**
-    - [ ] cog dry-run works
-    - [ ] flow documented
+    - [x] cog dry-run works
+    - [x] flow documented
 
 - [ ] **P0-011** — .env.example v1
   - **Type:** chore · **Area:** repo · **Est:** S · **Deps:** P0-010 · **Prio:** P1

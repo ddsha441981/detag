@@ -5,14 +5,14 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-010
+- **Current ticket:** P0-011
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
 ## Phase status
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 9 / 108 | — |
+| 0 | Foundation & Platform Baseline | 10 / 108 | — |
 | 1 | Identity & Billing | 0 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
@@ -33,11 +33,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-010 — Release tooling (cocogitto)
-2. P0-011 — .env.example v1
-3. P0-012 — Dev bootstrap (just dev)
-4. P0-013 — CI smoke pipeline
-5. P0-014 — Toolchain docs
+1. P0-011 — .env.example v1
+2. P0-012 — Dev bootstrap (just dev)
+3. P0-013 — CI smoke pipeline
+4. P0-014 — Toolchain docs
+5. P0-015 — Settings loader
 
 ## Bench history (append-only)
 
