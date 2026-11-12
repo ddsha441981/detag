@@ -1045,6 +1045,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "testcontainers",
  "thiserror 2.0.21",
  "tokio",
  "tower",

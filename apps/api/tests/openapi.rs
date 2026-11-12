@@ -1,5 +1,6 @@
 //! P0-067: the OpenAPI scaffold end to end, against the router
-//! `build_router` builds (state + middleware included).
+//! `build_router` builds (state + middleware included). Uses the
+//! P0-071 harness ([`common`]) — the first endpoint tests to do so.
 //!
 //! - In dev (the default), `/docs` redirects to `/docs/`, which
 //!   serves the Swagger UI, and `/openapi.json` serves the
@@ -7,66 +8,41 @@
 //! - In prod, `/docs` does not exist (404) while `/openapi.json`
 //!   stays public — the console viewer (P4-064) fetches it in prod.
 
-use axum::http::{Method, Request, StatusCode};
-use detag_api::{build_router, AppState};
-use detag_core::config::Settings;
-use detag_core::metrics::Metrics;
-use tower::ServiceExt;
+mod common;
 
-fn test_router(settings: Settings) -> axum::Router {
-    let state = AppState::from_settings(&settings).expect("settings build");
-    build_router(state, Metrics::new())
-}
-
-async fn get(router: axum::Router, path: &str) -> (StatusCode, Vec<u8>, axum::http::HeaderMap) {
-    let req = Request::builder()
-        .method(Method::GET)
-        .uri(path)
-        .body(axum::body::Body::empty())
-        .unwrap();
-    let res = router
-        .oneshot(req)
-        .await
-        .unwrap_or_else(|err| panic!("oneshot GET {path} failed: {err:?}"));
-    let status = res.status();
-    let headers = res.headers().clone();
-    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
-        .await
-        .expect("read body");
-    (status, body.to_vec(), headers)
-}
+use axum::http::StatusCode;
+use common::{spawn_app, TestApp, TestFixtures};
 
 #[tokio::test]
 async fn docs_redirects_and_serves_swagger_ui_in_dev() {
-    let router = test_router(Settings::default());
+    let app = spawn_app().await;
 
-    let (status, _, headers) = get(router.clone(), "/docs").await;
+    let res = app.get("/docs").await;
     assert!(
-        status.is_redirection(),
-        "/docs must redirect to /docs/, got {status}"
+        res.status.is_redirection(),
+        "/docs must redirect to /docs/, got {}",
+        res.status
     );
     assert_eq!(
-        headers.get("location").and_then(|v| v.to_str().ok()),
+        res.headers.get("location").and_then(|v| v.to_str().ok()),
         Some("/docs/"),
         "/docs must redirect to /docs/"
     );
 
-    let (status, body, _) = get(router, "/docs/").await;
-    assert_eq!(status, StatusCode::OK, "/docs/ must be 200");
-    let html = String::from_utf8_lossy(&body);
+    let res = app.get("/docs/").await;
+    assert_eq!(res.status, StatusCode::OK, "/docs/ must be 200");
     assert!(
-        html.contains("Swagger UI"),
-        "/docs/ must serve the Swagger UI page: {html:.200}"
+        res.text().contains("Swagger UI"),
+        "/docs/ must serve the Swagger UI page"
     );
 }
 
 #[tokio::test]
 async fn openapi_json_serves_the_generated_spec_in_dev() {
-    let router = test_router(Settings::default());
-    let (status, body, _) = get(router, "/openapi.json").await;
-    assert_eq!(status, StatusCode::OK, "/openapi.json must be 200");
-    let spec: serde_json::Value =
-        serde_json::from_slice(&body).expect("/openapi.json must be JSON");
+    let app = spawn_app().await;
+    let res = app.get("/openapi.json").await;
+    assert_eq!(res.status, StatusCode::OK, "/openapi.json must be 200");
+    let spec = res.json();
     assert_eq!(spec["info"]["title"], "Detag API");
     assert!(spec["paths"]["/healthz"].is_object(), "{spec}");
     assert!(spec["paths"]["/readyz"].is_object(), "{spec}");
@@ -78,32 +54,33 @@ async fn openapi_json_serves_the_generated_spec_in_dev() {
 
 #[tokio::test]
 async fn docs_absent_in_prod_but_spec_stays_public() {
-    let settings = Settings {
-        environment: "prod".to_string(),
-        ..Settings::default()
-    };
-    let router = test_router(settings);
+    let fixtures = TestFixtures::from_env().await;
+    let mut settings = fixtures.settings();
+    settings.environment = "prod".to_string();
+    let app = TestApp::spawn_with(settings).await;
 
-    let (status, _, _) = get(router.clone(), "/docs").await;
+    let res = app.get("/docs").await;
     assert_eq!(
-        status,
+        res.status,
         StatusCode::NOT_FOUND,
-        "prod must not serve /docs, got {status}"
+        "prod must not serve /docs, got {}",
+        res.status
     );
-    let (status, _, _) = get(router.clone(), "/docs/").await;
+    let res = app.get("/docs/").await;
     assert_eq!(
-        status,
+        res.status,
         StatusCode::NOT_FOUND,
-        "prod must not serve /docs/, got {status}"
+        "prod must not serve /docs/, got {}",
+        res.status
     );
 
-    let (status, body, _) = get(router, "/openapi.json").await;
+    let res = app.get("/openapi.json").await;
     assert_eq!(
-        status,
+        res.status,
         StatusCode::OK,
-        "/openapi.json stays public in prod, got {status}"
+        "/openapi.json stays public in prod, got {}",
+        res.status
     );
-    let spec: serde_json::Value =
-        serde_json::from_slice(&body).expect("/openapi.json must be JSON");
+    let spec = res.json();
     assert_eq!(spec["info"]["title"], "Detag API");
 }
