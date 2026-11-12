@@ -164,7 +164,7 @@ async fn sweep_requeues_only_the_dead_workers_jobs() {
         &PoolConfig::default(),
     )
     .expect("pool builds");
-    let monitor = build_monitor(&config, hooks, &pool)
+    let (monitor, _inflight) = build_monitor(&config, hooks, &pool)
         .await
         .expect("monitor builds against the native Redis");
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();

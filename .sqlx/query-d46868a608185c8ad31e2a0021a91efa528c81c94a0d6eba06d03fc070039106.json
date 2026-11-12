@@ -1,0 +1,86 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT worker_id, pid, queues, in_flight, started_at, last_heartbeat_at\n           FROM worker_heartbeats\n           ORDER BY last_heartbeat_at DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "worker_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "worker_heartbeats",
+            "name": "worker_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "pid",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "worker_heartbeats",
+            "name": "pid"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "queues",
+        "type_info": "TextArray",
+        "origin": {
+          "Table": {
+            "table": "worker_heartbeats",
+            "name": "queues"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "in_flight",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "worker_heartbeats",
+            "name": "in_flight"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "started_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "worker_heartbeats",
+            "name": "started_at"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "last_heartbeat_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "worker_heartbeats",
+            "name": "last_heartbeat_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "d46868a608185c8ad31e2a0021a91efa528c81c94a0d6eba06d03fc070039106"
+}

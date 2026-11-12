@@ -1198,16 +1198,19 @@ version = "0.1.0"
 dependencies = [
  "apalis",
  "apalis-redis",
+ "axum",
  "chrono",
  "deadpool-redis",
  "detag-core",
  "libc",
  "serde",
  "serde_json",
+ "sqlx",
  "thiserror 2.0.21",
  "tokio",
  "tower",
  "tracing",
+ "url",
  "uuid",
 ]
 

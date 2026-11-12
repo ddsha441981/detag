@@ -48,7 +48,7 @@ async fn monitor_starts_and_processes_an_envelope() {
         &PoolConfig::default(),
     )
     .expect("pool builds");
-    let monitor = build_monitor(&config, hooks, &pool)
+    let (monitor, _inflight) = build_monitor(&config, hooks, &pool)
         .await
         .expect("monitor builds against the native Redis");
     // Run the monitor until the test signals shutdown.

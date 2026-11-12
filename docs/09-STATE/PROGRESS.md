@@ -5,7 +5,7 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-080
+- **Current ticket:** P0-081
 - **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007).
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
@@ -13,7 +13,7 @@
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 77 / 108 | — |
+| 0 | Foundation & Platform Baseline | 78 / 108 | — |
 | 1 | Identity & Billing | 0 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
@@ -34,11 +34,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-080 — Heartbeat + worker metrics
-2. P0-081 — Graceful drain
-3. P0-082 — Worker smoke job
-4. P0-083 — Dockerfile.api
-5. P0-084 — Dockerfile.worker
+1. P0-081 — Graceful drain
+2. P0-082 — Worker smoke job
+3. P0-083 — Dockerfile.api
+4. P0-084 — Dockerfile.worker
+5. P0-085 — compose.base.yml
 
 ## Bench history (append-only)
 

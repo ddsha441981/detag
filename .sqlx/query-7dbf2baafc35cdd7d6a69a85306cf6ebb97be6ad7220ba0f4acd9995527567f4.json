@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM worker_heartbeats WHERE worker_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7dbf2baafc35cdd7d6a69a85306cf6ebb97be6ad7220ba0f4acd9995527567f4"
+}

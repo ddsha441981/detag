@@ -12,8 +12,10 @@
 //! The `/metrics` route itself lives in the api crate
 //! (`apps/api/src/metrics.rs`): it serves [`Metrics::gather`] on a
 //! separate internal port (never on the public api port), bound to
-//! loopback. Compose network isolation (internal network only, port
-//! not published) lands with E0.9 — see ASSUMPTION-003 in
+//! loopback. The worker serves the same registry on its own
+//! internal port (P0-080, `apps/worker/src/metrics_server.rs`).
+//! Compose network isolation (internal network only, port not
+//! published) lands with E0.9 — see ASSUMPTION-003 in
 //! `docs/09-STATE/ISSUES.md`.
 
 use prometheus::{
@@ -29,6 +31,7 @@ pub struct Metrics {
     http: HttpMetrics,
     queue: QueueMetrics,
     cache: CacheMetrics,
+    worker: WorkerMetrics,
 }
 
 impl Metrics {
@@ -55,11 +58,13 @@ impl Metrics {
         let http = HttpMetrics::new(&registry);
         let queue = QueueMetrics::new(&registry);
         let cache = CacheMetrics::new(&registry);
+        let worker = WorkerMetrics::new(&registry);
         Metrics {
             registry,
             http,
             queue,
             cache,
+            worker,
         }
     }
 
@@ -83,6 +88,12 @@ impl Metrics {
     /// The cache metrics (hit/miss counters) registered in this registry.
     pub fn cache(&self) -> &CacheMetrics {
         &self.cache
+    }
+
+    /// The worker metrics (identity, in-flight gauge, heartbeat
+    /// age) registered in this registry.
+    pub fn worker(&self) -> &WorkerMetrics {
+        &self.worker
     }
 
     /// All metrics in Prometheus text format (what `/metrics` serves).
@@ -421,6 +432,111 @@ impl CacheMetrics {
     }
 }
 
+/// Worker metrics (P0-080): identity, in-flight jobs, and the
+/// heartbeat the worker writes to Postgres
+/// (`worker_heartbeats`). The api process registers the same
+/// families — its worker series are simply absent (never set),
+/// which is the honest signal: no worker runs in the api.
+///
+/// Label vocabulary (fixed, low cardinality):
+/// * `worker_id`: `{hostname}:{pid}` — one series per worker
+///   process (the same id as the heartbeat row).
+/// * `pid`: the OS pid, as a label for humans grepping logs.
+///
+/// `last_heartbeat_seconds` is a Unix timestamp, not an age:
+/// Prometheus computes the age as
+/// `time() - detag_worker_last_heartbeat_seconds`, which stays
+/// correct across scrapes and restarts; a value of 0 means no
+/// heartbeat has been written yet.
+#[derive(Clone, Debug)]
+pub struct WorkerMetrics {
+    info: IntGaugeVec,
+    inflight_jobs: IntGauge,
+    last_heartbeat_seconds: IntGauge,
+    heartbeats_total: prometheus::IntCounter,
+    heartbeat_failures_total: prometheus::IntCounter,
+}
+
+impl WorkerMetrics {
+    /// Register the families into `registry`.
+    pub fn new(registry: &Registry) -> Self {
+        let info = IntGaugeVec::new(
+            Opts::new(
+                "detag_worker_info",
+                "Worker identity: 1 for a live worker process, by worker id and pid.",
+            ),
+            &["worker_id", "pid"],
+        )
+        .expect("detag_worker_info builds");
+        let inflight_jobs = IntGauge::with_opts(Opts::new(
+            "detag_worker_inflight_jobs",
+            "Jobs currently being processed by this worker process.",
+        ))
+        .expect("detag_worker_inflight_jobs builds");
+        let last_heartbeat_seconds = IntGauge::with_opts(Opts::new(
+            "detag_worker_last_heartbeat_seconds",
+            "Unix timestamp of this worker's last successful heartbeat write (0 = none yet).",
+        ))
+        .expect("detag_worker_last_heartbeat_seconds builds");
+        let heartbeats_total = prometheus::IntCounter::with_opts(Opts::new(
+            "detag_worker_heartbeats_total",
+            "Heartbeat rows written by this worker process.",
+        ))
+        .expect("detag_worker_heartbeats_total builds");
+        let heartbeat_failures_total = prometheus::IntCounter::with_opts(Opts::new(
+            "detag_worker_heartbeat_failures_total",
+            "Heartbeat writes that failed (best-effort: the worker keeps running).",
+        ))
+        .expect("detag_worker_heartbeat_failures_total builds");
+        registry
+            .register(Box::new(info.clone()))
+            .expect("worker info registers into a fresh registry");
+        registry
+            .register(Box::new(inflight_jobs.clone()))
+            .expect("worker inflight registers into a fresh registry");
+        registry
+            .register(Box::new(last_heartbeat_seconds.clone()))
+            .expect("worker last_heartbeat registers into a fresh registry");
+        registry
+            .register(Box::new(heartbeats_total.clone()))
+            .expect("worker heartbeats counter registers into a fresh registry");
+        registry
+            .register(Box::new(heartbeat_failures_total.clone()))
+            .expect("worker heartbeat failures registers into a fresh registry");
+        WorkerMetrics {
+            info,
+            inflight_jobs,
+            last_heartbeat_seconds,
+            heartbeats_total,
+            heartbeat_failures_total,
+        }
+    }
+
+    /// Mark this process as a live worker (call once at startup).
+    pub fn set_info(&self, worker_id: &str, pid: u32) {
+        self.info
+            .with_label_values(&[worker_id, &pid.to_string()])
+            .set(1);
+    }
+
+    /// Set the current in-flight job count for this process.
+    pub fn set_inflight(&self, count: i64) {
+        self.inflight_jobs.set(count);
+    }
+
+    /// Record a successful heartbeat write at `at` (Unix seconds).
+    pub fn heartbeat_ok(&self, at: i64) {
+        self.last_heartbeat_seconds.set(at);
+        self.heartbeats_total.inc();
+    }
+
+    /// Record a failed heartbeat write (best-effort — the worker
+    /// keeps running; the row going stale is the dead signal).
+    pub fn heartbeat_failed(&self) {
+        self.heartbeat_failures_total.inc();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -540,6 +656,60 @@ mod tests {
         assert!(
             !text.contains("detag_queue_depth{queue=\"pipeline\"} 7"),
             "queue depth leaked across registries:\n{text}"
+        );
+    }
+
+    #[test]
+    fn worker_metrics_registered_and_gathered() {
+        // AC (P0-080): the worker families appear in the scrape
+        // text with the values the heartbeat loop sets.
+        let metrics = Metrics::new();
+        let worker = metrics.worker();
+        worker.set_info("host-42:1234", 1234);
+        worker.set_inflight(3);
+        worker.heartbeat_ok(1_792_000_000);
+        worker.heartbeat_failed();
+        let text = metrics.gather();
+        assert!(
+            text.contains("detag_worker_info{pid=\"1234\",worker_id=\"host-42:1234\"} 1"),
+            "worker info missing:\n{text}"
+        );
+        assert!(
+            text.contains("detag_worker_inflight_jobs 3"),
+            "inflight gauge missing:\n{text}"
+        );
+        assert!(
+            text.contains("detag_worker_last_heartbeat_seconds 1792000000"),
+            "last heartbeat missing:\n{text}"
+        );
+        assert!(
+            text.contains("detag_worker_heartbeats_total 1"),
+            "heartbeats counter missing:\n{text}"
+        );
+        assert!(
+            text.contains("detag_worker_heartbeat_failures_total 1"),
+            "heartbeat failures counter missing:\n{text}"
+        );
+    }
+
+    #[test]
+    fn worker_metrics_start_at_zero_before_any_heartbeat() {
+        // A fresh process has never heartbeated: last_heartbeat 0,
+        // no info series, inflight 0. The dashboard reads "no
+        // heartbeat yet" from the 0, not from a missing series.
+        let metrics = Metrics::new();
+        let text = metrics.gather();
+        assert!(
+            text.contains("detag_worker_last_heartbeat_seconds 0"),
+            "last heartbeat must start at 0:\n{text}"
+        );
+        assert!(
+            text.contains("detag_worker_inflight_jobs 0"),
+            "inflight must start at 0:\n{text}"
+        );
+        assert!(
+            !text.contains("detag_worker_info{"),
+            "no worker info before set_info:\n{text}"
         );
     }
 

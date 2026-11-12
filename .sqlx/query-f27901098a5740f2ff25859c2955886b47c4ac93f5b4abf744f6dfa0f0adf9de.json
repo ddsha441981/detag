@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM worker_heartbeats\n           WHERE last_heartbeat_at < $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f27901098a5740f2ff25859c2955886b47c4ac93f5b4abf744f6dfa0f0adf9de"
+}

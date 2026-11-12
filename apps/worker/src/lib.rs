@@ -7,6 +7,8 @@
 
 pub mod dlq;
 pub mod envelope;
+pub mod heartbeat;
+pub mod metrics_server;
 pub mod queue_hooks;
 pub mod registry;
 pub mod requeue;

@@ -5,7 +5,7 @@
 | Path | What it is |
 | --- | --- |
 | `dashboards/api-golden.json` | API golden signals: request rate, 5xx share, latency p50/p95/p99, in-flight, build info |
-| `dashboards/queue.json` | Queue health: depth per queue, enqueue/dequeue rate, stage duration p50/p95 |
+| `dashboards/queue.json` | Queue health: depth per queue, enqueue/dequeue rate, stage duration p50/p95, worker heartbeats (P0-080: in-flight jobs, heartbeat age, live workers) |
 | `dashboards/jobs.json` | Job pipeline health: stage p95, queue depth, worker CPU/memory |
 | `provisioning/datasources/prometheus.yml` | The Prometheus datasource (`${DS_PROMETHEUS}` in every query) |
 | `provisioning/dashboards/detags.yml` | Dashboard provider: loads the JSON files, re-reads every 10 s |

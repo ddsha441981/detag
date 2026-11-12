@@ -29,5 +29,6 @@ pub mod jobs;
 pub mod plans;
 pub mod uploads;
 pub mod users;
+pub mod worker_heartbeats;
 
 pub use error::RepoError;

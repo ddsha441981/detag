@@ -8,15 +8,23 @@
 //! (P0-076) dispatches each envelope to its handler; the
 //! handlers are Phase-0 stubs until the features that own them
 //! land — nothing enqueues jobs yet, so the workers idle on
-//! empty queues.
+//! empty queues. The process also writes a heartbeat row to
+//! Postgres every `PF_WORKER_HEARTBEAT_INTERVAL_SECS` (P0-080)
+//! and serves its metrics on an internal `/metrics` port.
 
 use detag_core::config::{warn_unknown_feature_flags, Settings};
 use detag_core::db::{connect_lazy, db_health, PoolConfig};
 use detag_core::metrics::Metrics;
-use detag_core::shutdown::shutdown_signal;
+use detag_core::shutdown::{shutdown_signal, SHUTDOWN_TIMEOUT};
 use detag_core::telemetry::{init_tracing, shutdown_telemetry};
+use detag_worker::heartbeat::{run_heartbeat, WorkerIdentity};
+use detag_worker::metrics_server::serve_metrics;
 use detag_worker::queue_hooks::{QueueHooks, QUEUES};
 use detag_worker::workers::{build_monitor, WorkerConfig};
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::Notify;
 
 #[tokio::main]
 async fn main() {
@@ -36,11 +44,17 @@ async fn main() {
     let metrics = Metrics::new();
     let hooks = QueueHooks::new(metrics.queue().clone());
     hooks.reset_depths();
+    // Worker identity (P0-080): the heartbeat row's key and the
+    // `detag_worker_info` label. Set before anything else reads
+    // the worker gauges.
+    let identity = WorkerIdentity::current();
+    metrics.worker().set_info(&identity.worker_id, identity.pid);
     // Postgres pool (P0-035, E0.4): lazy, like the api's — the worker
     // must not fail boot on a temporarily-down database. No jobs run
     // yet (E0.8); today the pool only proves the database is reachable
-    // at startup, backs the retry-event sink (P0-077), and the close
-    // below keeps shutdown clean.
+    // at startup, backs the retry-event sink (P0-077) and the
+    // heartbeat writer (P0-080), and the close below keeps shutdown
+    // clean.
     let pool = connect_lazy(&settings.database_url, &PoolConfig::default()).unwrap_or_else(|err| {
         eprintln!("detag-worker: invalid PF_DATABASE_URL: {err}");
         std::process::exit(1);
@@ -50,15 +64,51 @@ async fn main() {
     // queue. A dead Redis is a boot error — the worker cannot do
     // its job without the queue — so fail fast naming the var.
     let worker_config = WorkerConfig::from_settings(&settings);
-    let monitor = build_monitor(&worker_config, hooks, &pool)
+    let (monitor, inflight) = build_monitor(&worker_config, hooks, &pool)
         .await
         .unwrap_or_else(|err| {
             eprintln!("detag-worker: {err}");
             std::process::exit(1);
         });
+    // Internal /metrics server (P0-080): its own port on loopback,
+    // never on a public port. A taken port is a boot error — the
+    // gauges are part of the worker's contract, not a nice-to-have.
+    let metrics_addr = SocketAddr::from(([127, 0, 0, 1], settings.worker_metrics_port));
+    let metrics_listener = tokio::net::TcpListener::bind(metrics_addr)
+        .await
+        .unwrap_or_else(|err| {
+            eprintln!("detag-worker: cannot bind metrics port (PF_WORKER_METRICS_PORT): {err}");
+            std::process::exit(1);
+        });
+    // One signal listener, shared by the monitor, the metrics
+    // server and the heartbeat loop (the api's pattern, P0-023):
+    // on SIGTERM/SIGINT all three stop together.
+    let shutdown = Arc::new(Notify::new());
+    {
+        let shutdown = Arc::clone(&shutdown);
+        tokio::spawn(async move {
+            shutdown_signal().await;
+            shutdown.notify_waiters();
+        });
+    }
+    let metrics_task = tokio::spawn(serve_metrics(
+        metrics.clone(),
+        metrics_listener,
+        Arc::clone(&shutdown),
+    ));
+    let heartbeat_task = tokio::spawn(run_heartbeat(
+        pool.clone(),
+        identity.clone(),
+        inflight,
+        metrics.worker().clone(),
+        Duration::from_secs(settings.worker_heartbeat_interval_secs),
+        Arc::clone(&shutdown),
+    ));
     tracing::info!(
         queues = QUEUES.join(","),
         concurrency = settings.worker_concurrency,
+        worker_id = %identity.worker_id,
+        metrics_port = settings.worker_metrics_port,
         db_ok = db.ok,
         db_detail = db.detail,
         "started (queues: pipeline, cleanup, email, reconciliation)"
@@ -67,14 +117,27 @@ async fn main() {
     // jobs; the monitor waits for in-flight jobs, then the pool
     // closes. The drain semantics (timeout, checkpointing) land in
     // P0-081 — with stub handlers the in-flight set is empty.
+    let wait_shutdown = |shutdown: Arc<Notify>| async move {
+        shutdown.notified().await;
+        Ok::<(), std::io::Error>(())
+    };
     if let Err(err) = monitor
-        .run_with_signal(async {
-            shutdown_signal().await;
-            Ok::<(), std::io::Error>(())
-        })
+        .run_with_signal(wait_shutdown(Arc::clone(&shutdown)))
         .await
     {
         tracing::error!(error = %err, "worker monitor exited with an error");
+    }
+    // The heartbeat loop and the metrics server got the same
+    // signal: give them the drain window to finish (the heartbeat
+    // deletes its row), then stop waiting — a stuck task must not
+    // hang the deploy.
+    if tokio::time::timeout(SHUTDOWN_TIMEOUT, async {
+        let _ = tokio::join!(metrics_task, heartbeat_task);
+    })
+    .await
+    .is_err()
+    {
+        tracing::error!("metrics/heartbeat tasks did not stop within the drain window");
     }
     pool.close().await;
     shutdown_telemetry();

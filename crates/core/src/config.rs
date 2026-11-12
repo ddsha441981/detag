@@ -172,6 +172,16 @@ pub struct Settings {
     /// default, now explicit). Must be >= 1 and <
     /// PF_QUEUE_VISIBILITY_TIMEOUT_SECS.
     pub queue_keep_alive_secs: u64,
+    /// Env: PF_WORKER_METRICS_PORT — the worker's internal
+    /// `/metrics` port (P0-080), loopback only, never the public
+    /// port. Default 9092: 9090 is the api's metrics port and 9091
+    /// is Prometheus itself in compose (see
+    /// `ops/prometheus/prometheus.yml`). Must be 1..=65535.
+    pub worker_metrics_port: u16,
+    /// Env: PF_WORKER_HEARTBEAT_INTERVAL_SECS — how often the
+    /// worker writes its heartbeat row (P0-080): pid, queues,
+    /// in-flight count, started_at. Default 15. Must be >= 1.
+    pub worker_heartbeat_interval_secs: u64,
 }
 
 impl Default for Settings {
@@ -212,6 +222,8 @@ impl Default for Settings {
             web_origin: String::new(),
             environment: "dev".to_string(),
             worker_concurrency: 4,
+            worker_metrics_port: 9092,
+            worker_heartbeat_interval_secs: 15,
             queue_visibility_timeout_secs: 300,
             queue_keep_alive_secs: 30,
         }
@@ -255,6 +267,11 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("web_origin", "PF_WEB_ORIGIN"),
     ("environment", "PF_ENVIRONMENT"),
     ("worker_concurrency", "PF_WORKER_CONCURRENCY"),
+    ("worker_metrics_port", "PF_WORKER_METRICS_PORT"),
+    (
+        "worker_heartbeat_interval_secs",
+        "PF_WORKER_HEARTBEAT_INTERVAL_SECS",
+    ),
     (
         "queue_visibility_timeout_secs",
         "PF_QUEUE_VISIBILITY_TIMEOUT_SECS",
@@ -345,6 +362,8 @@ impl Settings {
             web_origin: field!(web_origin, String),
             environment: field!(environment, String),
             worker_concurrency: field!(worker_concurrency, usize),
+            worker_metrics_port: field!(worker_metrics_port, u16),
+            worker_heartbeat_interval_secs: field!(worker_heartbeat_interval_secs, u64),
             queue_visibility_timeout_secs: field!(queue_visibility_timeout_secs, u64),
             queue_keep_alive_secs: field!(queue_keep_alive_secs, u64),
         };
@@ -434,6 +453,15 @@ impl Settings {
         }
         if self.worker_concurrency == 0 {
             invalid("PF_WORKER_CONCURRENCY", "must be >= 1".to_string());
+        }
+        if self.worker_metrics_port == 0 {
+            invalid("PF_WORKER_METRICS_PORT", "must be 1..=65535".to_string());
+        }
+        if self.worker_heartbeat_interval_secs == 0 {
+            invalid(
+                "PF_WORKER_HEARTBEAT_INTERVAL_SECS",
+                "must be >= 1 (seconds)".to_string(),
+            );
         }
         if self.queue_keep_alive_secs == 0 {
             invalid(
@@ -868,6 +896,32 @@ mod tests {
         let settings = Settings::load_from(None).expect("600 > 15 must load");
         assert_eq!(settings.queue_visibility_timeout_secs, 600);
         assert_eq!(settings.queue_keep_alive_secs, 15);
+    }
+
+    /// P0-080: the worker metrics port defaults to 9092 (9090 is
+    /// the api, 9091 is Prometheus itself in compose) and the
+    /// heartbeat interval to 15 s; 0 fails naming the var.
+    #[test]
+    fn worker_metrics_port_and_heartbeat_interval_defaults() {
+        let _env = clean_env();
+        let settings = Settings::load_from(None).expect("defaults must load");
+        assert_eq!(settings.worker_metrics_port, 9092, "default is 9092");
+        assert_eq!(
+            settings.worker_heartbeat_interval_secs, 15,
+            "default is 15 s"
+        );
+        env::set_var("PF_WORKER_HEARTBEAT_INTERVAL_SECS", "0");
+        let err = Settings::load_from(None).expect_err("0 s heartbeat must fail");
+        assert!(
+            err.to_string()
+                .contains("PF_WORKER_HEARTBEAT_INTERVAL_SECS"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_WORKER_HEARTBEAT_INTERVAL_SECS", "5");
+        env::set_var("PF_WORKER_METRICS_PORT", "19092");
+        let settings = Settings::load_from(None).expect("5 s + 19092 must load");
+        assert_eq!(settings.worker_heartbeat_interval_secs, 5);
+        assert_eq!(settings.worker_metrics_port, 19092);
     }
 
     /// P0-067: the Swagger UI gate — docs in dev and stage, never

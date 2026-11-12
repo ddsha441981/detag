@@ -48,3 +48,5 @@
 | `PF_UPLOAD_PART_URL_TTL_SECS` | `600` | storage |
 | `PF_WEB_ORIGIN` | (empty) | api |
 | `PF_WORKER_CONCURRENCY` | `4` | worker |
+| `PF_WORKER_HEARTBEAT_INTERVAL_SECS` | `15` | worker |
+| `PF_WORKER_METRICS_PORT` | `9092` | worker |

@@ -34,6 +34,7 @@ feature_flags   idempotency_keys   email_outbox     plans (catalog)
 **feature_flags** — key PK, enabled bool, rollout jsonb, updated_by, updated_at (cached 30 s).
 **idempotency_keys** — key PK, user_id, endpoint, response jsonb, expires_at.
 **email_outbox** — id, to_hash?, template, payload jsonb, scheduled_at, sent_at, attempts, last_error (worker drains; supports retry + test assertions).
+**worker_heartbeats** — worker_id PK (`{hostname}:{pid}`), pid, queues text[], in_flight int (>= 0), started_at, last_heartbeat_at (upserted every heartbeat tick, P0-080; staleness = dead worker; pruned after 1 h).
 
 ## Retention & cleanup jobs
 
@@ -44,7 +45,7 @@ feature_flags   idempotency_keys   email_outbox     plans (catalog)
 
 ## Indexes (minimum)
 
-jobs(user_id, created_at desc), jobs(status, lane, priority), uploads(user_id, status), sessions(refresh_hash) unique, api_keys(prefix), usage_counters PK(user_id, day), audit_logs(actor_user_id, created_at desc), audit_logs(target_type, target_id), webhook_deliveries(endpoint_id, created_at desc), idempotency_keys(expires_at) for GC.
+jobs(user_id, created_at desc), jobs(status, lane, priority), uploads(user_id, status), sessions(refresh_hash) unique, api_keys(prefix), usage_counters PK(user_id, day), audit_logs(actor_user_id, created_at desc), audit_logs(target_type, target_id), webhook_deliveries(endpoint_id, created_at desc), idempotency_keys(expires_at) for GC, worker_heartbeats(last_heartbeat_at) for staleness scans.
 
 ## Migration policy
 

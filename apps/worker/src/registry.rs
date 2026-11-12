@@ -206,6 +206,7 @@ async fn handle_reconciliation(envelope: &JobEnvelope, ctx: &WorkerContext) -> R
 mod tests {
     use super::*;
     use detag_core::metrics::Metrics;
+    use std::sync::atomic::AtomicUsize;
     use std::sync::Arc;
 
     fn context() -> WorkerContext {
@@ -216,6 +217,7 @@ mod tests {
             hooks,
             registry: JobRegistry::new(),
             dlq: Arc::new(crate::dlq::test_support::RecordingDeadLetterSink::default()),
+            inflight: Arc::new(AtomicUsize::new(0)),
         }
     }
 

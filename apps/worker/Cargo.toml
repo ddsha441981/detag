@@ -19,6 +19,7 @@ serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 tower.workspace = true
+axum.workspace = true
 deadpool-redis.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
@@ -28,3 +29,5 @@ detag-core = { path = "../../crates/core" }
 
 [dev-dependencies]
 libc.workspace = true
+sqlx.workspace = true
+url.workspace = true

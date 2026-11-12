@@ -81,7 +81,7 @@ async fn poison_is_quarantined_with_its_payload_snapshot() {
         &PoolConfig::default(),
     )
     .expect("pool builds");
-    let monitor = build_monitor(&config, hooks, &pool)
+    let (monitor, _inflight) = build_monitor(&config, hooks, &pool)
         .await
         .expect("monitor builds against the native Redis");
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();

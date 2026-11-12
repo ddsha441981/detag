@@ -53,6 +53,7 @@ use apalis_redis::{Config as RedisConfig, RedisStorage};
 use detag_core::config::Settings;
 use detag_core::db::DbPool;
 use detag_core::redis::{create_pool, RedisPoolConfig};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -129,6 +130,32 @@ pub struct WorkerContext {
     pub registry: JobRegistry,
     /// Dead-letter sink (P0-078).
     pub dlq: Arc<dyn DeadLetterSink + Send + Sync>,
+    /// Jobs inside a handler right now, across all workers in
+    /// this process (P0-080): the heartbeat row and the
+    /// `detag_worker_inflight_jobs` gauge read this counter.
+    pub inflight: Arc<AtomicUsize>,
+}
+
+/// RAII guard: counts one job in flight while it lives.
+/// Created at the top of [`handle_envelope`] so every exit path
+/// — success, quarantine early-return, handler error — decrements.
+struct InflightGuard {
+    inflight: Arc<AtomicUsize>,
+}
+
+impl InflightGuard {
+    fn new(inflight: &Arc<AtomicUsize>) -> Self {
+        inflight.fetch_add(1, Ordering::SeqCst);
+        Self {
+            inflight: Arc::clone(inflight),
+        }
+    }
+}
+
+impl Drop for InflightGuard {
+    fn drop(&mut self) {
+        self.inflight.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 /// Building the monitor failed. The Redis URL is never echoed —
@@ -159,11 +186,16 @@ pub enum WorkerError {
 /// Each worker's handler is wrapped in the P0-077 retry layer
 /// (per-queue policy + `job_events` sink from `pool`). The DLQ
 /// pool (P0-078) is built once here and shared by every worker.
+///
+/// Returns the monitor plus the shared in-flight counter
+/// (P0-080): every handler increments it on entry and decrements
+/// on exit, so the heartbeat loop and the gauges read one number
+/// for the whole process.
 pub async fn build_monitor(
     config: &WorkerConfig,
     hooks: QueueHooks,
     pool: &DbPool,
-) -> Result<Monitor, WorkerError> {
+) -> Result<(Monitor, Arc<AtomicUsize>), WorkerError> {
     let conn = apalis_redis::connect(config.redis_url.as_str()).await?;
     let sink = PostgresRetryEventSink::new(pool.clone());
     let dlq_pool = create_pool(&config.redis_url, &RedisPoolConfig::default())?;
@@ -171,6 +203,7 @@ pub async fn build_monitor(
         dlq_pool,
         config.dlq_prefix.clone(),
     ));
+    let inflight = Arc::new(AtomicUsize::new(0));
     let mut monitor = Monitor::new();
     for queue in QUEUES {
         let storage = RedisStorage::new_with_config(conn.clone(), apalis_config(config, queue));
@@ -180,6 +213,7 @@ pub async fn build_monitor(
                 hooks: hooks.clone(),
                 registry: JobRegistry::new(),
                 dlq: dlq.clone(),
+                inflight: inflight.clone(),
             };
             let worker = WorkerBuilder::new(format!("{queue}-{replica}"))
                 .data(ctx)
@@ -195,7 +229,7 @@ pub async fn build_monitor(
             monitor = monitor.register(worker);
         }
     }
-    Ok(monitor)
+    Ok((monitor, inflight))
 }
 
 /// Handler: version-check, hash-check, record the dequeue,
@@ -207,6 +241,10 @@ pub async fn build_monitor(
 /// payload snapshot) and acknowledged. Retrying the same bytes
 /// cannot fix either failure.
 async fn handle_envelope(job: JobEnvelope, ctx: Data<WorkerContext>) -> Result<(), Error> {
+    // Count this job in flight for the whole handler — every exit
+    // path below (quarantine early-return, handler error, success)
+    // drops the guard and decrements.
+    let _inflight = InflightGuard::new(&ctx.inflight);
     if let Err(err) = job.check_version() {
         ctx.hooks.quarantined(ctx.queue);
         ctx.dlq
@@ -267,6 +305,25 @@ async fn handle_envelope(job: JobEnvelope, ctx: Data<WorkerContext>) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// P0-080: the guard counts one job in flight while it lives
+    /// and decrements on drop — the heartbeat row and the gauge
+    /// read the same counter the handler maintains.
+    #[test]
+    fn inflight_guard_counts_while_it_lives() {
+        let inflight = Arc::new(AtomicUsize::new(0));
+        {
+            let _first = InflightGuard::new(&inflight);
+            assert_eq!(inflight.load(Ordering::SeqCst), 1);
+            let _second = InflightGuard::new(&inflight);
+            assert_eq!(inflight.load(Ordering::SeqCst), 2);
+        }
+        assert_eq!(
+            inflight.load(Ordering::SeqCst),
+            0,
+            "dropped guards decrement"
+        );
+    }
 
     /// P0-079: the storage config carries the configured
     /// keep-alive and visibility timeout — never the apalis

@@ -485,7 +485,7 @@ live Grafana to look at yet.
 | Dashboard | What to read | What "good" looks like |
 | --- | --- | --- |
 | **Detag API — golden signals** (`api-golden.json`) | Request rate by route, 5xx share, latency p50/p95/p99, in-flight requests, build info | 5xx share near 0; p95 flat while rate rises; in-flight drains after deploys |
-| **Detag queues** (`queue.json`) | Depth per queue, enqueue/dequeue rate, stage duration p50/p95, stage runs observed | Depth near 0 between bursts; dequeue keeps up with enqueue; stage p95 stable |
+| **Detag queues** (`queue.json`) | Depth per queue, enqueue/dequeue rate, stage duration p50/p95, stage runs observed, worker in-flight jobs, heartbeat age, live workers | Depth near 0 between bursts; dequeue keeps up with enqueue; stage p95 stable; heartbeat age under ~30 s per worker |
 | **Detag jobs** (`jobs.json`) | Stage duration p95 by stage, queue depth (all queues), worker CPU/memory | No single stage dominates p95; worker CPU/memory flat, not climbing |
 
 Reading a bad dashboard: p95 rising *with* queue depth means the
