@@ -507,13 +507,23 @@ id to look up. Flow:
    in the backend and the log lines share the id. When it is empty,
    logs are the only record.
 
-Access-log sampling (P0-019): the per-request `request completed`
-event is emitted always for errors (status >= 400) and slow
-requests (> 250 ms), and for a deterministic 1% of successes (a
-hash of the request id, so the same id always decides the same
-way). The span itself exists for every request regardless of
-sampling — the id is always in the logs, even when the access event
-is not.
+Access log (P0-019, P0-072): every request gets a `request completed`
+event only when it should be logged — always for errors (status >=
+400) and slow requests (> 250 ms, the NFR-1 threshold), and for a
+deterministic 1% of fast successes (a hash of the request id, so the
+same id always decides the same way). The `http_request` span exists
+for every request regardless of sampling — the id is always in the
+logs, even when the access event is not.
+The event line carries `request_id`, `method`, `route` (the matched
+path template, `unmatched` for 404s), `status`, `elapsed_ms`, and
+`sampled`: true only when the line exists because the 1% sample
+picked the request, false for errors and slow requests. No query
+string is ever logged.
+Read the access log with: `docker compose logs api | grep 'request completed'`
+(all logged requests); add `grep 'sampled=true'` for the 1% sample
+only, or `grep 'status=5'` for server errors. A slow request is any
+line with `elapsed_ms` over 250; the p99 for auth/jobs/status must
+stay under 250 ms (NFR-1).
 
 Log hygiene (P0-032): logs never contain emails, passwords, tokens,
 or raw IPs — values are redacted (`[email]`, `[redacted]`) or

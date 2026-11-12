@@ -9,12 +9,23 @@
 //! 404s so spans stay low-cardinality) and `method` for the whole
 //! downstream call.
 //!
-//! Log sampling (configured here; the full structured access log lands
-//! in P0-072): the per-request `request completed` event is emitted
-//! always for errors (status >= 400) and slow requests (> 250 ms), and
-//! for a deterministic 1% of successes — the decision is a hash of the
+//! Log sampling (P0-019, full structured access log P0-072): the
+//! per-request `request completed` event is emitted always for
+//! errors (status >= 400) and slow requests (> 250 ms), and for a
+//! deterministic 1% of successes — the decision is a hash of the
 //! request id, so the same id always decides the same way. The span
 //! itself is created for every request regardless of sampling.
+//!
+//! The event carries `status` + `elapsed_ms` as its own fields, and
+//! `sampled`: true only when the line exists because the 1% sample
+//! picked this request (a fast success) — false for errors and slow
+//! requests, which always log. `request_id`, `route` and `method`
+//! travel on the `http_request` span and appear on the same line
+//! (the JSON formatter carries span fields — see the telemetry
+//! module's `json_logs_parse_and_carry_span_fields` test), so the
+//! line as a whole is the access log: method, route, status,
+//! latency, request id, and why the line exists. No query string
+//! is ever logged (it can carry tokens — log hygiene, P0-032).
 
 use axum::{
     body::Body,
@@ -71,10 +82,12 @@ pub async fn request_id_middleware(mut req: Request<Body>, next: Next) -> Respon
         if let Ok(value) = HeaderValue::from_str(&id) {
             res.headers_mut().insert(REQUEST_ID_HEADER, value);
         }
-        if should_log(status, start.elapsed(), &id) {
+        let elapsed = start.elapsed();
+        if should_log(status, elapsed, &id) {
             tracing::info!(
                 status = status,
-                elapsed_ms = start.elapsed().as_millis() as u64,
+                elapsed_ms = elapsed.as_millis() as u64,
+                sampled = is_sampled(status, elapsed),
                 "request completed"
             );
         }
@@ -107,6 +120,13 @@ pub fn should_log(status: u16, elapsed: Duration, request_id: &str) -> bool {
     hasher.finish().is_multiple_of(100)
 }
 
+/// True when this request's access event exists only because the 1%
+/// sample picked it (a fast success) — false for errors and slow
+/// requests, which always log. The `sampled` field on the event.
+pub fn is_sampled(status: u16, elapsed: Duration) -> bool {
+    status < 400 && elapsed <= SLOW_THRESHOLD
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,6 +150,20 @@ mod tests {
         for id in ["a", "b", "c", "01JREQUESTID"] {
             assert_eq!(should_log(200, fast, id), should_log(200, fast, id));
         }
+    }
+
+    #[test]
+    fn sampled_flag_is_true_only_for_sampled_successes() {
+        let fast = Duration::from_millis(10);
+        // A fast success is the only case the event exists because
+        // of sampling.
+        assert!(is_sampled(200, fast));
+        assert!(is_sampled(301, fast));
+        // Errors and slow requests always log, so they are not
+        // "sampled" lines.
+        assert!(!is_sampled(400, fast));
+        assert!(!is_sampled(500, fast));
+        assert!(!is_sampled(200, Duration::from_millis(251)));
     }
 
     /// 1% sampling over 10k generated UUIDv7s: the hash is deterministic
