@@ -5,17 +5,19 @@
 //! already are problem+json and pass through untouched. But axum
 //! itself generates responses the handlers never see: 404 (no
 //! route matched), 413 (the body-limit layer rejected the body),
+//! 415 (a `Json` extractor rejected a non-JSON content type),
 //! and 400/422 (an extractor rejected the request: bad JSON, bad
 //! query). Left alone those are empty or plain-text bodies with
 //! no `PF-` code — a client cannot tell them apart, and the
 //! plain-text variants can echo user input. The mapper rewrites
-//! exactly those four statuses into the problem envelope:
+//! exactly those five statuses into the problem envelope:
 //!
 //! | status | `AppError` | code |
 //! | ------ | ---------- | ---- |
 //! | 404 | `NotFound` | PF-2010 |
 //! | 400, 422 | `ValidationFailed` | PF-2002 |
 //! | 413 | `PayloadTooLarge` | PF-2003 |
+//! | 415 | `UnsupportedMediaType` | PF-2001 |
 //!
 //! Deliberately NOT mapped: 405 (no taxonomy variant; axum's
 //! `Allow` header is worth keeping verbatim) and 5xx (a handler
@@ -42,7 +44,7 @@ use axum::{
 };
 use detag_core::error::{AppError, Profile};
 
-/// Axum middleware: rewrite framework 400/404/413/422 responses
+/// Axum middleware: rewrite framework 400/404/413/415/422 responses
 /// into the problem+json envelope (see the module docs).
 pub async fn error_mapper_middleware(req: Request<Body>, next: Next) -> Response {
     let request_id = req.extensions().get::<RequestId>().map(|id| id.0.clone());
@@ -54,7 +56,8 @@ pub async fn error_mapper_middleware(req: Request<Body>, next: Next) -> Response
         StatusCode::NOT_FOUND => AppError::NotFound,
         StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => AppError::ValidationFailed,
         StatusCode::PAYLOAD_TOO_LARGE => AppError::PayloadTooLarge,
-        _ => unreachable!("needs_mapping only admits 400/404/413/422"),
+        StatusCode::UNSUPPORTED_MEDIA_TYPE => AppError::UnsupportedMediaType,
+        _ => unreachable!("needs_mapping only admits 400/404/413/415/422"),
     };
     let problem = err.to_problem(Profile::Production, request_id.as_deref(), None);
     let (mut parts, _body) = res.into_parts();
@@ -67,7 +70,7 @@ pub async fn error_mapper_middleware(req: Request<Body>, next: Next) -> Response
 }
 
 /// True when the response is a framework error that must become a
-/// problem body: status 400/404/413/422 and not already
+/// problem body: status 400/404/413/415/422 and not already
 /// problem+json.
 fn needs_mapping(res: &Response) -> bool {
     matches!(
@@ -75,6 +78,7 @@ fn needs_mapping(res: &Response) -> bool {
         StatusCode::BAD_REQUEST
             | StatusCode::NOT_FOUND
             | StatusCode::PAYLOAD_TOO_LARGE
+            | StatusCode::UNSUPPORTED_MEDIA_TYPE
             | StatusCode::UNPROCESSABLE_ENTITY
     ) && !is_problem(res)
 }
@@ -113,6 +117,14 @@ mod tests {
         assert!(needs_mapping(&response_with(
             StatusCode::PAYLOAD_TOO_LARGE,
             None
+        )));
+        assert!(needs_mapping(&response_with(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            Some("text/plain")
+        )));
+        assert!(!needs_mapping(&response_with(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            Some("application/problem+json")
         )));
         assert!(needs_mapping(&response_with(
             StatusCode::BAD_REQUEST,
