@@ -85,12 +85,15 @@ pub struct WorkerConfig {
 }
 
 impl WorkerConfig {
-    /// Production config from loaded settings.
+    /// Production config from loaded settings. The namespace
+    /// comes from PF_WORKER_QUEUE_NAMESPACE (P0-081, default
+    /// `pf:queue`): a test or staging worker points it at its
+    /// own namespace so it never reads production jobs.
     pub fn from_settings(settings: &Settings) -> Self {
         Self {
             redis_url: settings.redis_url.clone(),
             concurrency: settings.worker_concurrency,
-            namespace_prefix: QUEUE_NAMESPACE_PREFIX.to_string(),
+            namespace_prefix: settings.worker_queue_namespace.clone(),
             dlq_prefix: DLQ_PREFIX.to_string(),
             visibility_timeout: Duration::from_secs(settings.queue_visibility_timeout_secs),
             keep_alive: Duration::from_secs(settings.queue_keep_alive_secs),

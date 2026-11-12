@@ -631,11 +631,12 @@
   - **AC:**
     - [x] gauges visible
 
-- [ ] **P0-081** — Graceful drain
+- [x] **P0-081** — Graceful drain
   - **Type:** feat · **Area:** worker · **Est:** S · **Deps:** P0-080 · **Prio:** P1
   - **Spec:** SIGTERM: stop accepting, finish or checkpoint in-flight within timeout, exit 0; integration test asserts no lost job.
   - **AC:**
-    - [ ] drain test green
+    - [x] drain test green
+  - **Status:** `main.rs` wraps the apalis `run_with_signal` await in `tokio::time::timeout(PF_WORKER_DRAIN_TIMEOUT_SECS)` (new setting, default 30 = the api's drain bound): apalis waits unboundedly, so the bound is ours — past it the process exits 1 (per `crates/core/src/shutdown.rs`: never hang a deploy) and the un-acked jobs re-queue when the visibility timeout expires (NFR-21). New `PF_WORKER_QUEUE_NAMESPACE` (default `pf:queue`) so the drain test spawns the real binary against a unique namespace. `ping` gained a drain-drill seam: payload `sleep_ms` (capped at 30 s, pure helper unit-tested) holds a job in flight. New `tests/drain.rs` (spawned-binary pattern): slow job finishes on SIGTERM, exit 0, handled line carries the job id; drain timeout (2 s) exits non-zero promptly with the job NOT reported handled. Both green twice. Checkpointing: the Phase-0 handlers are stubs with no partial state, so "finish" is the whole story — a handler that grows resumable state must checkpoint before returning. Bug found by the new config test: `ALL_VARS` (test env isolation) was missing 11 vars (all worker/queue + api/metrics/web/upload vars) — a test leaving an invalid value behind broke the next test's defaults; all 40 vars now listed. `just verify` green (run as direct cargo commands — the `just` binary was wiped by the VM reset, see ISSUES.md ASSUMPTION-010).
 
 - [ ] **P0-082** — Worker smoke job
   - **Type:** test · **Area:** worker · **Est:** S · **Deps:** P0-081 · **Prio:** P1

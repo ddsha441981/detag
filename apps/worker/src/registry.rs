@@ -27,6 +27,7 @@
 use crate::envelope::JobEnvelope;
 use crate::workers::WorkerContext;
 use apalis::prelude::*;
+use std::time::Duration;
 
 /// The known job kinds, plus the unknown-kind carrier.
 ///
@@ -153,7 +154,37 @@ impl JobRegistry {
 }
 
 /// Phase-0 stub: the smoke probe only proves the loop works.
+///
+/// Drain-drill seam (P0-081): a `ping` payload may carry
+/// `sleep_ms` — the handler sleeps that long before acking, so
+/// a drain test can catch a job in flight when SIGTERM lands.
+/// Capped at 30 s: a drill must never turn a stub into a hang,
+/// and a real handler's slowness is its own business. Absent
+/// or non-numeric `sleep_ms` means no sleep; the value is
+/// logged so a slow ping in production is never mysterious.
+const PING_SLEEP_CAP_MS: u64 = 30_000;
+
+/// The sleep a `ping` payload asks for, capped. Pure, so the
+/// cap is unit-testable without sleeping.
+fn ping_sleep_ms(payload: &serde_json::Value) -> u64 {
+    payload
+        .get("sleep_ms")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0)
+        .min(PING_SLEEP_CAP_MS)
+}
+
 async fn handle_ping(envelope: &JobEnvelope, ctx: &WorkerContext) -> Result<(), Error> {
+    let sleep_ms = ping_sleep_ms(&envelope.payload);
+    if sleep_ms > 0 {
+        tracing::info!(
+            job_id = %envelope.job_id,
+            queue = ctx.queue,
+            sleep_ms,
+            "ping sleeping (drain-drill seam)"
+        );
+        tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+    }
     tracing::info!(
         job_id = %envelope.job_id,
         queue = ctx.queue,
@@ -273,6 +304,35 @@ mod tests {
                 "dispatch {kind}"
             );
         }
+    }
+
+    #[test]
+    fn ping_sleep_ms_is_absent_zero_and_capped() {
+        assert_eq!(
+            ping_sleep_ms(&serde_json::json!({})),
+            0,
+            "absent means no sleep"
+        );
+        assert_eq!(
+            ping_sleep_ms(&serde_json::json!({"sleep_ms": 0})),
+            0,
+            "0 means no sleep"
+        );
+        assert_eq!(
+            ping_sleep_ms(&serde_json::json!({"sleep_ms": 2000})),
+            2000,
+            "a small sleep passes through"
+        );
+        assert_eq!(
+            ping_sleep_ms(&serde_json::json!({"sleep_ms": 999_999})),
+            PING_SLEEP_CAP_MS,
+            "an unbounded sleep is capped at 30 s"
+        );
+        assert_eq!(
+            ping_sleep_ms(&serde_json::json!({"sleep_ms": "2000"})),
+            0,
+            "a non-numeric sleep_ms is not a sleep"
+        );
     }
 
     #[tokio::test]

@@ -22,6 +22,7 @@ use detag_worker::metrics_server::serve_metrics;
 use detag_worker::queue_hooks::{QueueHooks, QUEUES};
 use detag_worker::workers::{build_monitor, WorkerConfig};
 use std::net::SocketAddr;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Notify;
@@ -96,6 +97,9 @@ async fn main() {
         metrics_listener,
         Arc::clone(&shutdown),
     ));
+    // The drain log reads the same counter the heartbeat loop
+    // writes (P0-080): clone it before the loop takes ownership.
+    let drain_inflight = Arc::clone(&inflight);
     let heartbeat_task = tokio::spawn(run_heartbeat(
         pool.clone(),
         identity.clone(),
@@ -113,20 +117,49 @@ async fn main() {
         db_detail = db.detail,
         "started (queues: pipeline, cleanup, email, reconciliation)"
     );
-    // Graceful shutdown (P0-023): SIGTERM/SIGINT stops picking up new
-    // jobs; the monitor waits for in-flight jobs, then the pool
-    // closes. The drain semantics (timeout, checkpointing) land in
-    // P0-081 — with stub handlers the in-flight set is empty.
+    // Graceful drain (P0-081): SIGTERM/SIGINT stops picking up
+    // new jobs and the monitor finishes the in-flight ones — but
+    // only for `PF_WORKER_DRAIN_TIMEOUT_SECS` (default 30 s).
+    // apalis's `run_with_signal` waits unboundedly, so the bound
+    // is ours: past it the process exits 1 rather than hanging a
+    // deploy, and the un-acked jobs are NOT lost — apalis
+    // re-queues them when the visibility timeout expires (NFR-21;
+    // the kill-mid-job drill lands in Phase 3). Checkpointing:
+    // the Phase-0 handlers are stubs with no partial state to
+    // checkpoint, so "finish" is the whole story until real
+    // handlers land — a handler that grows resumable state must
+    // checkpoint it before returning.
     let wait_shutdown = |shutdown: Arc<Notify>| async move {
         shutdown.notified().await;
         Ok::<(), std::io::Error>(())
     };
-    if let Err(err) = monitor
-        .run_with_signal(wait_shutdown(Arc::clone(&shutdown)))
-        .await
+    let drain_timeout = Duration::from_secs(settings.worker_drain_timeout_secs);
+    let drained_cleanly = match tokio::time::timeout(
+        drain_timeout,
+        monitor.run_with_signal(wait_shutdown(Arc::clone(&shutdown))),
+    )
+    .await
     {
-        tracing::error!(error = %err, "worker monitor exited with an error");
-    }
+        Ok(Ok(())) => {
+            tracing::info!(
+                in_flight = drain_inflight.load(Ordering::SeqCst),
+                "worker drained"
+            );
+            true
+        }
+        Ok(Err(err)) => {
+            tracing::error!(error = %err, "worker monitor exited with an error");
+            false
+        }
+        Err(_) => {
+            tracing::error!(
+                in_flight = drain_inflight.load(Ordering::SeqCst),
+                drain_timeout_secs = settings.worker_drain_timeout_secs,
+                "drain timed out — in-flight jobs requeue via visibility timeout (NFR-21)"
+            );
+            false
+        }
+    };
     // The heartbeat loop and the metrics server got the same
     // signal: give them the drain window to finish (the heartbeat
     // deletes its row), then stop waiting — a stuck task must not
@@ -142,6 +175,12 @@ async fn main() {
     pool.close().await;
     shutdown_telemetry();
     tracing::info!("shutting down");
+    // A failed drain (monitor error, or the timeout) exits
+    // non-zero: the deploy must know the worker did not stop
+    // cleanly, even though no job was lost (NFR-21 re-queues).
+    if !drained_cleanly {
+        std::process::exit(1);
+    }
 }
 
 #[cfg(test)]

@@ -182,6 +182,21 @@ pub struct Settings {
     /// worker writes its heartbeat row (P0-080): pid, queues,
     /// in-flight count, started_at. Default 15. Must be >= 1.
     pub worker_heartbeat_interval_secs: u64,
+    /// Env: PF_WORKER_DRAIN_TIMEOUT_SECS — the graceful-drain
+    /// bound (P0-081): after SIGTERM/SIGINT the worker finishes
+    /// in-flight jobs for at most this long, then exits non-zero
+    /// rather than hanging a deploy. Jobs still in flight at the
+    /// deadline are NOT lost — apalis re-queues them when the
+    /// visibility timeout expires (NFR-21). Default 30 (the same
+    /// bound the api uses for request drains). Must be >= 1.
+    pub worker_drain_timeout_secs: u64,
+    /// Env: PF_WORKER_QUEUE_NAMESPACE — the Redis key namespace
+    /// for the four queues (P0-081): `pf:queue:{queue}` in
+    /// production. Overridable so a test worker (or a staging
+    /// deployment sharing a Redis) never reads production jobs
+    /// — the drain test spawns the real binary against a unique
+    /// namespace. Default `pf:queue`. Must be non-empty.
+    pub worker_queue_namespace: String,
 }
 
 impl Default for Settings {
@@ -224,6 +239,8 @@ impl Default for Settings {
             worker_concurrency: 4,
             worker_metrics_port: 9092,
             worker_heartbeat_interval_secs: 15,
+            worker_drain_timeout_secs: 30,
+            worker_queue_namespace: "pf:queue".to_string(),
             queue_visibility_timeout_secs: 300,
             queue_keep_alive_secs: 30,
         }
@@ -272,6 +289,8 @@ const FIELD_VARS: &[(&str, &str)] = &[
         "worker_heartbeat_interval_secs",
         "PF_WORKER_HEARTBEAT_INTERVAL_SECS",
     ),
+    ("worker_drain_timeout_secs", "PF_WORKER_DRAIN_TIMEOUT_SECS"),
+    ("worker_queue_namespace", "PF_WORKER_QUEUE_NAMESPACE"),
     (
         "queue_visibility_timeout_secs",
         "PF_QUEUE_VISIBILITY_TIMEOUT_SECS",
@@ -364,6 +383,8 @@ impl Settings {
             worker_concurrency: field!(worker_concurrency, usize),
             worker_metrics_port: field!(worker_metrics_port, u16),
             worker_heartbeat_interval_secs: field!(worker_heartbeat_interval_secs, u64),
+            worker_drain_timeout_secs: field!(worker_drain_timeout_secs, u64),
+            worker_queue_namespace: field!(worker_queue_namespace, String),
             queue_visibility_timeout_secs: field!(queue_visibility_timeout_secs, u64),
             queue_keep_alive_secs: field!(queue_keep_alive_secs, u64),
         };
@@ -462,6 +483,15 @@ impl Settings {
                 "PF_WORKER_HEARTBEAT_INTERVAL_SECS",
                 "must be >= 1 (seconds)".to_string(),
             );
+        }
+        if self.worker_drain_timeout_secs == 0 {
+            invalid(
+                "PF_WORKER_DRAIN_TIMEOUT_SECS",
+                "must be >= 1 (seconds)".to_string(),
+            );
+        }
+        if self.worker_queue_namespace.trim().is_empty() {
+            invalid("PF_WORKER_QUEUE_NAMESPACE", "must be non-empty".to_string());
         }
         if self.queue_keep_alive_secs == 0 {
             invalid(
@@ -659,8 +689,12 @@ mod tests {
         }
     }
 
-    /// All 29 vars, so a test can start from a clean env.
+    /// All 40 vars, so a test can start from a clean env.
+    /// Keep this in sync with FIELD_VARS: a var missing here
+    /// leaks between tests (P0-081 — a test that leaves an
+    /// invalid value behind breaks the next test's defaults).
     const ALL_VARS: &[&str] = &[
+        "PF_API_PORT",
         "PF_DATABASE_URL",
         "PF_REDIS_URL",
         "PF_S3_ENDPOINT",
@@ -670,6 +704,7 @@ mod tests {
         "PF_S3_REGION",
         "PF_JWT_SECRET",
         "PF_PUBLIC_BASE_URL",
+        "PF_METRICS_PORT",
         "PF_STRIPE_SECRET_KEY",
         "PF_STRIPE_WEBHOOK_SECRET",
         "PF_RAZORPAY_KEY",
@@ -690,6 +725,15 @@ mod tests {
         "PF_LOG_LEVEL",
         "PF_OTEL_ENDPOINT",
         "PF_ENVIRONMENT",
+        "PF_WEB_ORIGIN",
+        "PF_UPLOAD_PART_URL_TTL_SECS",
+        "PF_WORKER_CONCURRENCY",
+        "PF_WORKER_METRICS_PORT",
+        "PF_WORKER_HEARTBEAT_INTERVAL_SECS",
+        "PF_WORKER_DRAIN_TIMEOUT_SECS",
+        "PF_WORKER_QUEUE_NAMESPACE",
+        "PF_QUEUE_VISIBILITY_TIMEOUT_SECS",
+        "PF_QUEUE_KEEP_ALIVE_SECS",
     ];
 
     fn clean_env() -> EnvLock {
@@ -922,6 +966,37 @@ mod tests {
         let settings = Settings::load_from(None).expect("5 s + 19092 must load");
         assert_eq!(settings.worker_heartbeat_interval_secs, 5);
         assert_eq!(settings.worker_metrics_port, 19092);
+    }
+
+    /// P0-081: the drain timeout defaults to 30 s and the queue
+    /// namespace to `pf:queue`; 0 s fails naming the var, an
+    /// empty namespace fails naming the var, custom values load.
+    #[test]
+    fn worker_drain_timeout_and_queue_namespace_defaults() {
+        let _env = clean_env();
+        let settings = Settings::load_from(None).expect("defaults must load");
+        assert_eq!(settings.worker_drain_timeout_secs, 30, "default is 30 s");
+        assert_eq!(
+            settings.worker_queue_namespace, "pf:queue",
+            "default namespace is pf:queue"
+        );
+        env::set_var("PF_WORKER_DRAIN_TIMEOUT_SECS", "0");
+        let err = Settings::load_from(None).expect_err("0 s drain must fail");
+        assert!(
+            err.to_string().contains("PF_WORKER_DRAIN_TIMEOUT_SECS"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_WORKER_DRAIN_TIMEOUT_SECS", "5");
+        env::set_var("PF_WORKER_QUEUE_NAMESPACE", "pf:test-drain");
+        let settings = Settings::load_from(None).expect("5 s + namespace must load");
+        assert_eq!(settings.worker_drain_timeout_secs, 5);
+        assert_eq!(settings.worker_queue_namespace, "pf:test-drain");
+        env::set_var("PF_WORKER_QUEUE_NAMESPACE", "   ");
+        let err = Settings::load_from(None).expect_err("blank namespace must fail");
+        assert!(
+            err.to_string().contains("PF_WORKER_QUEUE_NAMESPACE"),
+            "error must name the var, got: {err}"
+        );
     }
 
     /// P0-067: the Swagger UI gate — docs in dev and stage, never
