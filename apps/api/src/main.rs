@@ -1,8 +1,8 @@
-//! detag-api binary: load settings, serve the router from the lib.
+//! detag-api binary: load settings, build the state, serve the
+//! router from the lib on two listeners (P0-063, E0.7).
 
-use detag_api::{build_router, metrics::metrics_router};
+use detag_api::{build_router, metrics::metrics_router, AppState};
 use detag_core::config::{warn_unknown_feature_flags, Settings};
-use detag_core::db::{connect_lazy, PoolConfig};
 use detag_core::metrics::Metrics;
 use detag_core::shutdown::{shutdown_signal, SHUTDOWN_TIMEOUT};
 use detag_core::telemetry::{init_tracing, shutdown_telemetry};
@@ -22,14 +22,17 @@ async fn main() {
     // Unknown PF_FEATURE_* flags warn (a typo must not silently do nothing).
     warn_unknown_feature_flags();
     let metrics = Metrics::new();
-    // Postgres pool (P0-035, E0.4): lazy, so boot never fails on a
-    // temporarily-down database — /readyz reports it down instead.
-    // A malformed PF_DATABASE_URL still fails boot here.
-    let pool = connect_lazy(&settings.database_url, &PoolConfig::default()).unwrap_or_else(|err| {
-        eprintln!("detag-api: invalid PF_DATABASE_URL: {err}");
+    // The state (P0-063): pool + redis pool + storage + settings +
+    // clock. Construction is lazy where it can be (a down Postgres
+    // or Redis does NOT fail boot — /readyz reports it) and fails
+    // fast only on malformed configuration. The error message is a
+    // static string per failure — it never echoes a URL or secret.
+    let state = AppState::from_settings(&settings).unwrap_or_else(|err| {
+        eprintln!("detag-api: cannot build state: {err}");
         std::process::exit(1);
     });
-    let app = build_router(metrics.clone(), pool.clone(), settings.redis_url.clone());
+    let pool = state.pool.clone();
+    let app = build_router(state, metrics.clone());
     let addr = SocketAddr::from(([127, 0, 0, 1], settings.api_port));
     tracing::info!(addr = %addr, "listening");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();

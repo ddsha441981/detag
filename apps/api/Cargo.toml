@@ -16,7 +16,11 @@ tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+chrono.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
 detag-core = { path = "../../crates/core" }
+detag-storage = { path = "../../crates/storage" }
 
 [dev-dependencies]
 tracing-subscriber.workspace = true

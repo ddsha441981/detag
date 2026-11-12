@@ -5,9 +5,8 @@
 //! via a capturing global subscriber installed once for the binary.
 
 use axum::http::{Request, StatusCode};
-use detag_api::build_router;
+use detag_api::{build_router, AppState};
 use detag_core::config::Settings;
-use detag_core::db::{connect_lazy, PoolConfig};
 use detag_core::metrics::Metrics;
 use std::{
     io::Write,
@@ -63,12 +62,11 @@ fn header_id(res: &axum::http::Response<axum::body::Body>) -> String {
         .to_string()
 }
 
-/// Router under test. The pool is lazy (no connection attempted), so
-/// these tests need no database; /readyz is not exercised here.
+/// Router under test. The state is lazy (no connection attempted),
+/// so these tests need no database; /readyz is not exercised here.
 fn test_router() -> axum::Router {
-    let pool = connect_lazy(&Settings::default().database_url, &PoolConfig::default())
-        .expect("dev-default URL is well-formed");
-    build_router(Metrics::new(), pool, Settings::default().redis_url)
+    let state = AppState::from_settings(&Settings::default()).expect("default settings build");
+    build_router(state, Metrics::new())
 }
 
 #[tokio::test]

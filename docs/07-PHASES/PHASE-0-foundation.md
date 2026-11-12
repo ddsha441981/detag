@@ -498,12 +498,13 @@
 
 ## E0.7 — API skeleton (area: api)
 
-- [ ] **P0-063** — Axum server bootstrap
+- [x] **P0-063** — Axum server bootstrap
   - **Type:** feat · **Area:** api · **Est:** M · **Deps:** — · **Prio:** P1
   - **Spec:** apps/api main: router, state (pool, redis, storage, settings, clock), tower layer order documented, two listeners (public 8080, metrics 8081).
   - **AC:**
-    - [ ] server boots
-    - [ ] layer order documented
+    - [x] server boots
+    - [x] layer order documented
+  - **Status:** `crates/core/src/clock.rs` (new): `Clock` trait (`Send + Sync + Debug`, `now() -> DateTime<Utc>`), `SystemClock`, `ManualClock` (frozen, `set`/`advance`, clones share the instant) — coding standards forbid scattered `Utc::now()` in services. `apps/api/src/lib.rs`: `AppState { pool: DbPool, redis: RedisPool, storage: S3Storage, settings: Arc<Settings>, clock: Arc<dyn Clock> }` + `from_settings` (lazy pg/redis pools so a down dependency never fails boot; fail-fast only on malformed config via `AppStateError`, whose Display is a static string per failure — the redis inner error can contain a URL, so it is never echoed) + `with_clock` for tests. `build_router(state, metrics)` uses `with_state` (readyz now reads `State<AppState>`); `Metrics` stays an `Extension` (shared with the /metrics listener). `main.rs` builds the state and serves the two existing listeners (public 8080, metrics 9090). **Deviation from the spec line:** the spec says "metrics 8081", but the shipped default is 9090 (P0-026, runbook + config reference + ASSUMPTION-003 all agree) — 9090 stands; changing a documented default to match a stale spec number would break the config. Layer order is documented as an outer→inner table + principles in the lib.rs module docs (`Extension<Metrics>` outermost → `http_metrics` timer → `request_id` → routes + state). Tests: 2 clock unit tests, 5 lib tests (full-state build, frozen clock, malformed redis/S3 fail boot, error Display leaks nothing — the 4 sync ones had to become `#[tokio::test]` because `connect_lazy` needs a Tokio context), new `tests/bootstrap.rs` (real socket on :0, /healthz 200 + /readyz 200-or-503 with a well-formed readiness body), `tests/request_id.rs` updated to the new signature. The spawned-binary readyz (3) + shutdown tests still pass. `just verify` green on attempt 1.
 
 - [ ] **P0-064** — Router module pattern
   - **Type:** feat · **Area:** api · **Est:** S · **Deps:** P0-063 · **Prio:** P1

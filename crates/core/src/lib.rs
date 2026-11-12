@@ -3,6 +3,7 @@
 
 pub mod audit;
 pub mod checksum;
+pub mod clock;
 pub mod config;
 pub mod db;
 pub mod error;
