@@ -2,3 +2,14 @@ target/
 .scratch/
 .env
 *.orig
+.env
+*.log
+.idea/
+.vscode/
+node_modules/
+web/.next/
+coverage/
+*.pem
+*.key
+.DS_Store
+dist/
