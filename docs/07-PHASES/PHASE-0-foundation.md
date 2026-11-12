@@ -541,11 +541,12 @@
     - [x] unit tests incl. tamper
   - **Status:** New `crates/core/src/pagination.rs` (shared helper — list endpoints in Phase 1+ consume it from core, not the api crate): `Cursor { ts: i64 millis, id: Uuid }` with base64url-no-pad JSON encode/decode (strict — bad base64, bad JSON, missing field, bad uuid all fail as `PaginationError::InvalidCursor`, mapped to `AppError::ValidationFailed` PF-2002 400); `clamp_limit` (None → 20, clamp 1..=100, 0 → 1); generic `Page<T> { items, next_cursor }` + `Page::from_window` (takes the limit+1 rows, truncates past the limit, cursor = new last row); `next_link` (RFC 8288 `<uri>; rel="next"`, preserves other query params, replaces `cursor`). Tests (7): round-trip + url-safety, tamper (flip at start/middle/end + truncated/garbage/non-JSON/missing-field/bad-uuid), 400 mapping (PF-2002), clamp table, from_window (exact page / over-full / empty), spec JSON shape (next_cursor omitted on the last page), next_link. `just verify` green on attempt 1.
 
-- [ ] **P0-069** — Body & size gates
+- [x] **P0-069** — Body & size gates
   - **Type:** feat · **Area:** api · **Est:** S · **Deps:** P0-068 · **Prio:** P1
   - **Spec:** Global JSON body limit 1MB; uploads route exempt (presign path only); oversize PF-2003.
   - **AC:**
-    - [ ] oversize rejected
+    - [x] oversize rejected
+  - **Status:** Already implemented by P0-065 — no new code in this ticket. The 1 MiB limit (`MAX_JSON_BODY_BYTES`, `body_limit.rs`) is applied per-module to every JSON route (auth, jobs, billing, admin, meta — `routes::api_router`), the uploads nest carries no limit layer (exempt structurally: upload bytes never transit the api, presigned S3 PUTs only), and the error mapper rewrites the limit layer's 413 to PF-2003 problem+json. Verified live in this ticket: the existing order tests prove 1 MiB+1 POST to `/v1/auth/login` → 413 + PF-2003 + request id + outer headers, and a 2 MiB POST to `/v1/uploads` → 501 (exempt, not 413); added one test proving the limit is global, not auth-only — 1 MiB+1 POST to `/v1/jobs` → 413 + PF-2003. `just verify` green on attempt 1.
 
 - [ ] **P0-070** — Auth extractor skeleton
   - **Type:** feat · **Area:** api · **Est:** M · **Deps:** P0-069 · **Prio:** P1

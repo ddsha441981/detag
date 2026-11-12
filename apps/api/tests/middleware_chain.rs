@@ -241,6 +241,31 @@ async fn oversize_body_is_a_mapped_413_with_outer_headers() {
     assert_eq!(json["request_id"], PROBE_ID);
 }
 
+/// P0-069: the limit is global, not just on auth — an oversize
+/// body to a second module (jobs) is rejected the same way.
+#[tokio::test]
+async fn oversize_body_rejected_on_jobs_too() {
+    let router = router_with_origin(ORIGIN);
+    let big = vec![b'x'; MAX_JSON_BODY_BYTES + 1];
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/jobs")
+        .header("x-request-id", PROBE_ID)
+        .header(header::ORIGIN, ORIGIN)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(
+            header::CONTENT_LENGTH,
+            (MAX_JSON_BODY_BYTES + 1).to_string(),
+        )
+        .body(Body::from(big))
+        .unwrap();
+    let res = router.oneshot(req).await.expect("oneshot oversize job");
+    assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let json = json_body(res).await;
+    assert_eq!(json["code"], "PF-2003", "{json}");
+    assert_eq!(json["request_id"], PROBE_ID);
+}
+
 #[tokio::test]
 async fn uploads_are_exempt_from_the_body_limit() {
     let router = router_with_origin(ORIGIN);
