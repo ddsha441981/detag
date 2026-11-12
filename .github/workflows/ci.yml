@@ -93,6 +93,8 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: just
+      - name: openapi-check (committed spec matches generated, P0-067)
+        run: just openapi-check
       - name: compose-db-check (Postgres compose file validates)
         run: just compose-db-check
       - name: compose-redis-check (Redis compose file validates)

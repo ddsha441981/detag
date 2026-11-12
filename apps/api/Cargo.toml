@@ -23,6 +23,8 @@ thiserror.workspace = true
 detag-core = { path = "../../crates/core" }
 detag-storage = { path = "../../crates/storage" }
 detag-engine = { path = "../../crates/engine" }
+utoipa.workspace = true
+utoipa-swagger-ui.workspace = true
 
 [dev-dependencies]
 tracing-subscriber.workspace = true

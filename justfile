@@ -132,6 +132,23 @@ smoke:
 fixtures-gen:
     @echo "pending: fixture generator lands in P0-093" >&2; exit 1
 
+# Regenerate the committed OpenAPI document from code (P0-067).
+# The spec is generated, never hand-edited: `just openapi-check`
+# (CI) fails when this file drifts from the code.
+openapi:
+    mkdir -p docs/api
+    cargo run --quiet -p detag-api --bin openapi > docs/api/openapi.json
+
+# Fail if the committed OpenAPI document drifts from the code
+# (P0-067; CI runs this). Regenerate with `just openapi`.
+openapi-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    tmp="$(mktemp)"
+    trap 'rm -f "$tmp"' EXIT
+    cargo run --quiet -p detag-api --bin openapi > "$tmp"
+    diff -u docs/api/openapi.json "$tmp" || { echo "openapi-check: docs/api/openapi.json is stale — run 'just openapi' and commit it" >&2; exit 1; }
+
 # Fail if .env.example drifts from PF_* vars referenced in code or
 # documented in the runbook table (P0-011).
 env-check:

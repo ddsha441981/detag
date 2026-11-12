@@ -5,7 +5,7 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-067
+- **Current ticket:** P0-068
 - **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007).
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
@@ -13,7 +13,7 @@
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 64 / 108 | — |
+| 0 | Foundation & Platform Baseline | 65 / 108 | — |
 | 1 | Identity & Billing | 0 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
@@ -34,11 +34,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-067 — OpenAPI scaffold
-2. P0-068 — Pagination helpers
-3. P0-069 — Body & size gates
-4. P0-070 — Auth extractor skeleton
-5. P0-071 — Integration harness
+1. P0-068 — Pagination helpers
+2. P0-069 — Body & size gates
+3. P0-070 — Auth extractor skeleton
+4. P0-071 — Integration harness
+5. P0-072 — Request logging sampling
 
 ## Bench history (append-only)
 

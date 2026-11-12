@@ -60,7 +60,7 @@ impl Default for PoolConfig {
 /// to the outcome — including the timeout path, so a slow
 /// component reports a large latency instead of a missing one.
 /// A sub-millisecond probe honestly reports 0.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct ComponentHealth {
     pub name: &'static str,
     pub ok: bool,
@@ -90,7 +90,7 @@ impl ComponentHealth {
 /// Overall readiness: `"ok"` only when every component is ok (and
 /// at least one component was checked — an empty report is
 /// `"degraded"`, never `"ok"`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct Readiness {
     pub status: &'static str,
     pub components: Vec<ComponentHealth>,

@@ -147,6 +147,11 @@ pub struct Settings {
     /// change, not a comma list (an allowlist that grows by
     /// accident is how CORS stops meaning anything).
     pub web_origin: String,
+    /// Env: PF_ENVIRONMENT — deployment environment: dev | stage | prod.
+    /// Gates dev-only surfaces: the Swagger UI (`/docs`) is
+    /// served in dev and stage only, never in prod (P0-067).
+    /// Default dev.
+    pub environment: String,
 }
 
 impl Default for Settings {
@@ -185,6 +190,7 @@ impl Default for Settings {
             log_level: "info".to_string(),
             otel_endpoint: String::new(),
             web_origin: String::new(),
+            environment: "dev".to_string(),
         }
     }
 }
@@ -224,6 +230,7 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("log_level", "PF_LOG_LEVEL"),
     ("otel_endpoint", "PF_OTEL_ENDPOINT"),
     ("web_origin", "PF_WEB_ORIGIN"),
+    ("environment", "PF_ENVIRONMENT"),
 ];
 
 impl Settings {
@@ -307,6 +314,7 @@ impl Settings {
             log_level: field!(log_level, String),
             otel_endpoint: field!(otel_endpoint, String),
             web_origin: field!(web_origin, String),
+            environment: field!(environment, String),
         };
         settings.validate(&mut problems);
         if problems.is_empty() {
@@ -418,6 +426,25 @@ impl Settings {
                 "must be one of: trace, debug, info, warn, error".to_string(),
             );
         }
+
+        // Environment must be known (case-insensitive).
+        if !matches!(
+            self.environment.to_lowercase().as_str(),
+            "dev" | "stage" | "prod"
+        ) {
+            invalid(
+                "PF_ENVIRONMENT",
+                "must be one of: dev, stage, prod".to_string(),
+            );
+        }
+    }
+
+    /// Is the Swagger UI (`/docs`) served in this environment?
+    /// Dev and stage only — never prod (P0-067). The OpenAPI
+    /// document itself (`/openapi.json`) is public in every
+    /// environment: the console viewer (P4-064) fetches it in prod.
+    pub fn docs_enabled(&self) -> bool {
+        !matches!(self.environment.to_lowercase().as_str(), "prod")
     }
 
     /// Typed view over the feature flags in these settings.
@@ -547,7 +574,7 @@ mod tests {
         }
     }
 
-    /// All 28 vars, so a test can start from a clean env.
+    /// All 29 vars, so a test can start from a clean env.
     const ALL_VARS: &[&str] = &[
         "PF_DATABASE_URL",
         "PF_REDIS_URL",
@@ -577,6 +604,7 @@ mod tests {
         "PF_FEATURE_PROVENANCE_STRIP",
         "PF_LOG_LEVEL",
         "PF_OTEL_ENDPOINT",
+        "PF_ENVIRONMENT",
     ];
 
     fn clean_env() -> EnvLock {
@@ -646,6 +674,8 @@ mod tests {
         assert_eq!(s.log_level, "info");
         assert!(s.otel_endpoint.is_empty());
         assert!(s.web_origin.is_empty());
+        assert_eq!(s.environment, "dev");
+        assert!(s.docs_enabled());
     }
 
     #[test]
@@ -708,6 +738,38 @@ mod tests {
             message.contains("PF_LOG_LEVEL"),
             "error must name the var, got: {message}"
         );
+    }
+
+    /// P0-067: PF_ENVIRONMENT must be dev | stage | prod (case-insensitive);
+    /// anything else fails naming the var.
+    #[test]
+    fn bad_environment_fails_with_var_name() {
+        let _env = clean_env();
+        env::set_var("PF_ENVIRONMENT", "qa");
+        let err = Settings::load_from(None).expect_err("bad env must fail");
+        let message = err.to_string();
+        assert!(
+            message.contains("PF_ENVIRONMENT"),
+            "error must name the var, got: {message}"
+        );
+    }
+
+    /// P0-067: the Swagger UI gate — docs in dev and stage, never
+    /// in prod (case-insensitive match).
+    #[test]
+    fn docs_enabled_in_dev_and_stage_only() {
+        let _env = clean_env();
+        let settings = Settings::load_from(None).expect("defaults must load");
+        assert!(settings.docs_enabled(), "dev must serve /docs");
+        env::set_var("PF_ENVIRONMENT", "stage");
+        let settings = Settings::load_from(None).expect("stage must load");
+        assert!(settings.docs_enabled(), "stage must serve /docs");
+        env::set_var("PF_ENVIRONMENT", "prod");
+        let settings = Settings::load_from(None).expect("prod must load");
+        assert!(!settings.docs_enabled(), "prod must not serve /docs");
+        env::set_var("PF_ENVIRONMENT", "PROD");
+        let settings = Settings::load_from(None).expect("PROD must load");
+        assert!(!settings.docs_enabled(), "PROD must not serve /docs");
     }
 
     #[test]

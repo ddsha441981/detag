@@ -13,6 +13,7 @@
 | `PF_ENGINE_GPU` | `0` | worker/engine |
 | `PF_ENGINE_MODELS_DIR` | `./models` | worker/engine |
 | `PF_ENGINE_TILES_MAX` | `1024` | worker/engine |
+| `PF_ENVIRONMENT` | `dev` | all |
 | `PF_FEATURE_PROVENANCE_STRIP` | `false` | api |
 | `PF_FEATURE_RAZORPAY` | `false` | billing |
 | `PF_JWT_SECRET` | `dev-fixed` | api |

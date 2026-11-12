@@ -62,6 +62,7 @@ pub mod cors;
 pub mod error_mapper;
 pub mod http_metrics;
 pub mod metrics;
+pub mod openapi;
 pub mod problem;
 pub mod request_id;
 pub mod routes;
@@ -153,7 +154,14 @@ impl AppState {
 pub fn build_router(state: AppState, metrics: Metrics) -> Router {
     // CORS needs the origin before the state moves into the router.
     let web_origin = state.settings.web_origin.clone();
-    routes::api_router()
+    // The Swagger UI (/docs) is dev+stage only (P0-067); the spec
+    // document (/openapi.json, a meta route) is public in prod too.
+    let docs_enabled = state.settings.docs_enabled();
+    let mut router = routes::api_router();
+    if docs_enabled {
+        router = router.merge(openapi::docs_router());
+    }
+    router
         .with_state(state)
         .layer(middleware::from_fn(error_mapper::error_mapper_middleware))
         .layer(middleware::from_fn(http_metrics::http_metrics_middleware))

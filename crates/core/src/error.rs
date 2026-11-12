@@ -47,7 +47,7 @@ pub enum Profile {
 }
 
 /// RFC 7807 problem body, as served by the api (`application/problem+json`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 pub struct Problem {
     /// `https://docs.pureframe.dev/errors/<code>` (kit URL, verbatim).
     #[serde(rename = "type")]

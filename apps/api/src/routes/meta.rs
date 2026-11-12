@@ -11,11 +11,20 @@ use detag_core::redis::redis_health;
 use detag_engine::registry::models_health;
 use detag_storage::health::storage_health;
 
+use crate::openapi::openapi_json;
 use crate::AppState;
 
 /// Liveness: the process answers. Readiness (below) is the
 /// dependency check.
-async fn healthz() -> &'static str {
+#[utoipa::path(
+    get,
+    path = "/healthz",
+    responses(
+        (status = 200, description = "Process is alive", body = String, content_type = "text/plain")
+    ),
+    tag = "meta"
+)]
+pub(crate) async fn healthz() -> &'static str {
     "ok"
 }
 
@@ -26,7 +35,16 @@ async fn healthz() -> &'static str {
 /// reports its probe latency in `latency_ms` (P0-066). The body is
 /// always the same JSON — the status code is the signal, the body
 /// is the diagnosis.
-async fn readyz(State(state): State<AppState>) -> (StatusCode, Json<Readiness>) {
+#[utoipa::path(
+    get,
+    path = "/readyz",
+    responses(
+        (status = 200, description = "All components ok", body = Readiness),
+        (status = 503, description = "One or more components down", body = Readiness)
+    ),
+    tag = "meta"
+)]
+pub(crate) async fn readyz(State(state): State<AppState>) -> (StatusCode, Json<Readiness>) {
     let (db, redis, storage, models) = tokio::join!(
         db_health(&state.pool),
         redis_health(&state.settings.redis_url),
@@ -42,9 +60,12 @@ async fn readyz(State(state): State<AppState>) -> (StatusCode, Json<Readiness>) 
     (status, Json(report))
 }
 
-/// The meta nest: unversioned health + readiness at the root.
+/// The meta nest: unversioned health + readiness at the root, plus
+/// the generated OpenAPI document (P0-067 — always on, including
+/// prod; only the interactive UI at `/docs` is gated).
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .route("/openapi.json", get(openapi_json))
 }
