@@ -82,12 +82,12 @@
     - [x] CI job active
     - [x] vocabulary documented
 
-- [ ] **P0-007** — cargo-deny setup
+- [x] **P0-007** — cargo-deny setup
   - **Type:** chore · **Area:** repo · **Est:** S · **Deps:** P0-006 · **Prio:** P1
   - **Spec:** deny.toml: advisories deny unpatched; licenses allow Apache/MIT/BSD/ISC/Unicode/MPL-2.0/Zlib, deny server-side AGPL; `cargo deny check` passes and joins CI.
   - **AC:**
-    - [ ] cargo deny check green
-    - [ ] CI wired
+    - [x] cargo deny check green
+    - [x] CI wired
 
 - [ ] **P0-008** — gitleaks secret scanning
   - **Type:** chore · **Area:** repo · **Est:** S · **Deps:** P0-007 · **Prio:** P1

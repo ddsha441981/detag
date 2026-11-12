@@ -5,14 +5,14 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-007
+- **Current ticket:** P0-008
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
 ## Phase status
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 6 / 108 | — |
+| 0 | Foundation & Platform Baseline | 7 / 108 | — |
 | 1 | Identity & Billing | 0 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
@@ -33,11 +33,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-007 — cargo-deny setup
-2. P0-008 — gitleaks secret scanning
-3. P0-009 — Issue/PR templates
-4. P0-010 — Release tooling (cocogitto)
-5. P0-011 — .env.example v1
+1. P0-008 — gitleaks secret scanning
+2. P0-009 — Issue/PR templates
+3. P0-010 — Release tooling (cocogitto)
+4. P0-011 — .env.example v1
+5. P0-012 — Dev bootstrap (just dev)
 
 ## Bench history (append-only)
 

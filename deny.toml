@@ -1,0 +1,47 @@
+# cargo-deny configuration (P0-007, NFR-52). cargo-deny 0.20.2.
+#
+# Policy:
+# - Advisories: RUSTSEC vulnerability advisories are errors (cargo-deny
+#   0.20 has no severity knob for them — they always fail `check` unless
+#   listed in `ignore` with a reason). Yanked crates are denied.
+# - Licenses: only the permissive set in `allow` is accepted. cargo-deny
+#   denies any license not in `allow` by default, so server-side copyleft
+#   (AGPL) is denied without needing an explicit list. A crate
+#   dual-licensed "X OR Y" passes when any one of its licenses is allowed.
+# - Sources: only crates.io; a git dependency needs an explicit exception
+#   (add it here with a comment + ADR) — none exist today.
+#
+# Run locally: `just deny` (or `cargo deny check`).
+
+[advisories]
+# Yanked crates must not enter the tree.
+yanked = "deny"
+# Unmaintained advisories error for every crate in the graph (upstream
+# default scope). If one fires on a transitive crate we cannot fix, add
+# its id to `ignore` below with a reason — do not weaken this.
+unmaintained = "all"
+# Unsound advisories error for workspace crates only (upstream default).
+unsound = "workspace"
+# Ignored advisories (each needs a reason). Empty by policy.
+ignore = []
+
+[licenses]
+# Allow-list (spec: Apache / MIT / BSD / ISC / Unicode / MPL-2.0 / Zlib).
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "Zlib",
+]
+# Warn on allow-listed licenses that no crate in the tree actually uses,
+# so the list stays honest as dependencies change.
+unused-allowed-license = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

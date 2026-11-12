@@ -25,6 +25,10 @@ lint-commits args="--single HEAD":
 test-lint-commits:
     python3 -m unittest discover -s scripts -p "test_*.py"
 
+# Supply-chain check: RUSTSEC advisories + license allow-list (P0-007).
+deny:
+    cargo deny check
+
 # Run the full unit + integration test suite.
 test:
     cargo test --workspace

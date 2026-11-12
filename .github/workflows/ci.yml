@@ -1,0 +1,24 @@
+# Supply-chain checks (P0-007, NFR-52).
+#
+# Runs cargo-deny: RUSTSEC advisories + the license allow-list in
+# deny.toml. This workflow grows in P0-013 (verify + smoke pipeline);
+# until then it is the only job here, so a supply-chain regression
+# fails fast on every push / PR.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: EmbarkStudios/cargo-deny-action@v2

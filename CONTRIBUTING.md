@@ -11,6 +11,8 @@ build plan lives in `docs/` (the PureFrame agent kit): start at
   make sure `~/.cargo/bin` is on your PATH.
 - `just` 1.42+ task runner (`just --list`). `cargo-deny`, `gitleaks`,
   `cocogitto` are used by CI; install them when touching P0-007/P0-008/P0-010.
+  Supply-chain policy lives in `deny.toml`; run `just deny` locally —
+  unpatched RUSTSEC advisories and non-allow-listed licenses fail the build.
 - `just verify` must be green before any commit: fmt + clippy `-D warnings`
   + tests. Compose smoke is `just smoke` (lands in P0-090).
 
