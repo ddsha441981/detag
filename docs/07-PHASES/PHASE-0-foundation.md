@@ -197,12 +197,12 @@
     - [x] no dropped in-flight request
     - [x] exit 0
 
-- [ ] **P0-024** — Config reference doc
+- [x] **P0-024** — Config reference doc
   - **Type:** docs · **Area:** core/config · **Est:** S · **Deps:** P0-023 · **Prio:** P1
   - **Spec:** Test/xtask generates settings table (name, default, used-by) and fails when .env.example or runbook drift.
   - **AC:**
-    - [ ] generated table committed
-    - [ ] drift test green
+    - [x] generated table committed
+    - [x] drift test green
 
 ---
 

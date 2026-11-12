@@ -77,6 +77,8 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: env-check (.env.example drift)
         run: python3 scripts/env_check.py
+      - name: config-table-check (generated settings table drift)
+        run: python3 scripts/gen_config_table.py --check
       - name: Install nextest + llvm-cov
         uses: taiki-e/install-action@v2
         with:

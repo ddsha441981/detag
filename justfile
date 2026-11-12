@@ -92,5 +92,16 @@ fixtures-gen:
 env-check:
     python3 scripts/env_check.py
 
+# Regenerate the PF_* settings reference table (P0-024). The table is
+# generated from .env.example (name + dev default) and the runbook env
+# table (used-by); never edit docs/06-DELIVERY/04-config-reference.md
+# by hand.
+gen-config-table:
+    python3 scripts/gen_config_table.py
+
+# Fail if the committed settings table is stale (P0-024); runs in CI.
+config-table-check:
+    python3 scripts/gen_config_table.py --check
+
 # Full gate incl. smoke, for use once P0-090 lands.
 verify-full: verify smoke

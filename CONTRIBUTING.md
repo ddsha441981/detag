@@ -133,6 +133,15 @@ locally and CI runs it on every push/PR. The rules:
   (lints HEAD; `just lint-commits "--range main~3..HEAD"` for a range).
   The linter is `scripts/lint_commits.py` (unit tests in
   `scripts/test_lint_commits.py`).
+- Config changes: a new or renamed `PF_*` var goes in `Settings`
+  (`crates/core/src/config.rs`), `.env.example`, and the runbook env
+  table (`docs/06-DELIVERY/03-deploy-runbook.md`) in the same commit —
+  `just env-check` fails on drift. Then regenerate the settings
+  reference table with `just gen-config-table` and commit
+  `docs/06-DELIVERY/04-config-reference.md` with it;
+  `just config-table-check` (and CI) fail when the table is stale.
+  Script tests run with `just test-lint-commits` (discovers all
+  `scripts/test_*.py`, despite the name).
 - Every ticket: code + tests land together; tick the checkbox in its phase
   file and update `docs/09-STATE/PROGRESS.md` in the same commit.
 - No secrets in the repo — see "Secrets policy" above.
