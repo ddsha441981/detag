@@ -35,7 +35,7 @@ For every `/v1` endpoint × role {anonymous, user-A, user-B, support, admin, api
 
 ## Headers & transport
 
-CSP (web), HSTS, X-Content-Type-Options, frame-ancestors none for app routes — asserted by a route test against a header table. TLS terminated at caddy in prod; internal services never exposed (compose networks: `internal` vs `edge`).
+CSP (web), HSTS (prod only — dev is plain http, so dev responses carry the rest of the table but no HSTS), X-Content-Type-Options, Referrer-Policy, frame-ancestors none for app routes; the Swagger UI at `/docs` gets its own same-origin CSP (the api's `default-src 'none'` would block its JS) — asserted by a route test against a header table. TLS terminated at caddy in prod; internal services never exposed (compose networks: `internal` vs `edge`).
 
 ## Secrets & supply chain
 

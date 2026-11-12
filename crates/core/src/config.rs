@@ -579,6 +579,16 @@ impl Settings {
         !matches!(self.environment.to_lowercase().as_str(), "prod")
     }
 
+    /// Is the HSTS header stamped on responses (P0-102)? Every
+    /// environment except dev: HSTS is only honoured over TLS,
+    /// and only stage/prod run behind the TLS-terminating Caddy
+    /// — on plain-http localhost it is meaningless noise, so dev
+    /// responses carry the rest of the secure-header table but
+    /// no HSTS.
+    pub fn hsts_enabled(&self) -> bool {
+        !matches!(self.environment.to_lowercase().as_str(), "dev")
+    }
+
     /// Typed view over the feature flags in these settings.
     pub fn feature_flags(&self) -> FeatureFlags {
         FeatureFlags::from_settings(self)
@@ -1052,6 +1062,25 @@ mod tests {
         env::set_var("PF_ENVIRONMENT", "PROD");
         let settings = Settings::load_from(None).expect("PROD must load");
         assert!(!settings.docs_enabled(), "PROD must not serve /docs");
+    }
+
+    /// P0-102: HSTS is stamped in every environment except dev
+    /// (case-insensitive match) — stage and prod run behind TLS,
+    /// dev is plain-http localhost.
+    #[test]
+    fn hsts_enabled_everywhere_except_dev() {
+        let _env = clean_env();
+        let settings = Settings::load_from(None).expect("defaults must load");
+        assert!(!settings.hsts_enabled(), "dev must not stamp HSTS");
+        env::set_var("PF_ENVIRONMENT", "stage");
+        let settings = Settings::load_from(None).expect("stage must load");
+        assert!(settings.hsts_enabled(), "stage must stamp HSTS");
+        env::set_var("PF_ENVIRONMENT", "prod");
+        let settings = Settings::load_from(None).expect("prod must load");
+        assert!(settings.hsts_enabled(), "prod must stamp HSTS");
+        env::set_var("PF_ENVIRONMENT", "PROD");
+        let settings = Settings::load_from(None).expect("PROD must load");
+        assert!(settings.hsts_enabled(), "PROD must stamp HSTS");
     }
 
     #[test]

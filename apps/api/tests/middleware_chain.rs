@@ -18,12 +18,20 @@
 //!   inside the body limit (it sees the 413 the limit makes).
 //! - a 2 MiB POST to `/v1/uploads` is NOT 413: the uploads nest
 //!   is exempt from the limit.
+//! - P0-102: HSTS is prod-only — a dev response carries the rest
+//!   of the table but no HSTS, a prod response carries it; and
+//!   `/docs` carries the docs CSP (same-origin scripts/styles)
+//!   instead of the api's `default-src 'none'`, which would
+//!   break the Swagger UI.
 
 use axum::{
     body::Body,
     http::{header, Method, Request, StatusCode},
 };
-use detag_api::{body_limit::MAX_JSON_BODY_BYTES, secure_headers::SECURE_HEADERS};
+use detag_api::{
+    body_limit::MAX_JSON_BODY_BYTES,
+    secure_headers::{DOCS_CSP, HSTS_HEADER, SECURE_HEADERS},
+};
 use detag_api::{build_router, AppState};
 use detag_core::config::Settings;
 use detag_core::metrics::Metrics;
@@ -37,8 +45,15 @@ const WRONG_ORIGIN: &str = "https://evil.example.test";
 const PROBE_ID: &str = "019aa1b2-c3d4-7e5f-8000-000000000002";
 
 fn router_with_origin(origin: &str) -> axum::Router {
+    router_with_environment(origin, "dev")
+}
+
+/// Same router, with the deployment environment set explicitly
+/// (P0-102: HSTS is prod-only, `/docs` is dev/stage only).
+fn router_with_environment(origin: &str, environment: &str) -> axum::Router {
     let settings = Settings {
         web_origin: origin.to_string(),
+        environment: environment.to_string(),
         ..Settings::default()
     };
     let state = AppState::from_settings(&settings).expect("default settings build");
@@ -334,5 +349,117 @@ async fn wrong_origin_gets_no_acao() {
             .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
             .is_none(),
         "a non-console origin must not get ACAO"
+    );
+}
+
+/// P0-102: HSTS is prod-only. A dev response (plain-http
+/// localhost) carries the rest of the table but no HSTS.
+#[tokio::test]
+async fn dev_responses_carry_no_hsts() {
+    let router = router_with_environment(ORIGIN, "dev");
+    let res = router
+        .oneshot(request(
+            Method::GET,
+            "/healthz",
+            Some(ORIGIN),
+            Body::empty(),
+        ))
+        .await
+        .expect("oneshot /healthz dev");
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_secure_headers(&res);
+    assert!(
+        res.headers().get(HSTS_HEADER.0).is_none(),
+        "dev is plain http: no HSTS header may be stamped"
+    );
+}
+
+/// P0-102: the same request in prod carries HSTS with the exact
+/// value from the header table, on top of the base table.
+#[tokio::test]
+async fn prod_responses_carry_hsts() {
+    let router = router_with_environment(ORIGIN, "prod");
+    let res = router
+        .oneshot(request(
+            Method::GET,
+            "/healthz",
+            Some(ORIGIN),
+            Body::empty(),
+        ))
+        .await
+        .expect("oneshot /healthz prod");
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_secure_headers(&res);
+    assert_eq!(
+        res.headers()
+            .get(HSTS_HEADER.0)
+            .and_then(|v| v.to_str().ok()),
+        Some(HSTS_HEADER.1),
+        "prod must carry HSTS: {HSTS_HEADER:?}"
+    );
+}
+
+/// P0-102: the Swagger UI page gets the docs CSP — same-origin
+/// scripts/styles so it can load — not the api's
+/// `default-src 'none'`, which would block its JS. Every other
+/// secure header still comes from the api table, and the docs
+/// page is never framed (the docs CSP keeps
+/// `frame-ancestors 'none'`). (The UI redirects `/docs` → `/docs/`,
+/// so the test hits the trailing-slash page.)
+#[tokio::test]
+async fn docs_page_carries_docs_csp() {
+    let router = router_with_environment(ORIGIN, "dev");
+    let res = router
+        .oneshot(request(Method::GET, "/docs/", Some(ORIGIN), Body::empty()))
+        .await
+        .expect("oneshot /docs/");
+    assert_eq!(res.status(), StatusCode::OK);
+    // The docs CSP replaces the api CSP (one CSP header, the
+    // docs one — two would be ANDed and re-break the UI).
+    assert_eq!(
+        res.headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .and_then(|v| v.to_str().ok()),
+        Some(DOCS_CSP),
+        "the /docs page must carry the docs CSP, not the api one"
+    );
+    assert!(
+        res.headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .is_some_and(|v| v.to_str().unwrap().contains("frame-ancestors 'none'")),
+        "the docs CSP must still forbid framing"
+    );
+    // The rest of the table is untouched on the docs page.
+    for (name, value) in SECURE_HEADERS {
+        if *name == "content-security-policy" {
+            continue;
+        }
+        assert_eq!(
+            res.headers().get(*name).and_then(|v| v.to_str().ok()),
+            Some(*value),
+            "the /docs page must still carry secure header {name}"
+        );
+    }
+    assert!(
+        res.headers().get(HSTS_HEADER.0).is_none(),
+        "dev /docs: no HSTS, same as the api"
+    );
+    // And the api route next to it still gets the strict CSP.
+    let router = router_with_environment(ORIGIN, "dev");
+    let res = router
+        .oneshot(request(
+            Method::GET,
+            "/healthz",
+            Some(ORIGIN),
+            Body::empty(),
+        ))
+        .await
+        .expect("oneshot /healthz after /docs");
+    assert_eq!(
+        res.headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .and_then(|v| v.to_str().ok()),
+        Some("default-src 'none'; frame-ancestors 'none'"),
+        "the docs CSP must not leak onto api routes"
     );
 }
