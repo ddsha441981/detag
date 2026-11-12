@@ -76,6 +76,11 @@
 - Assumption: redis tickets (P0-046+) verify against native redis-server 7.0.15 on 127.0.0.1:6379 (installed via apt, started manually with `redis-server /etc/redis/redis.conf`; `/etc/redis/redis.conf` carries the dev cache-role flags — `save ""`, `maxmemory 256mb`, `maxmemory-policy allkeys-lru` — mirroring ops/compose.redis.yml, original backed up at `/etc/redis/redis.conf.detag-orig`). The compose file stays the canonical service definition and E0.9 folds it into compose.base.yml unchanged in shape. The redis-server systemd unit CANNOT start on this VM (fails 217/USER, "Failed to set up user namespacing" — same missing-capabilities family as DOCKER-001), so after a VM reboot redis must be started manually with that command until docker works.
 - Status: open
 
+### ASSUMPTION-011 [assumption] P0-061 live-MinIO test is compile-checked only; first live run is in CI (P0-061)
+- Date: 2026-11-12 · Ticket: P0-061
+- Assumption: the storage integration suite's live leg (`live_minio_testcontainers`, `crates/storage/tests/storage_integration.rs`) cannot run on this VM — docker is gone (DOCKER-001) — so it is env-gated (`PF_TEST_LIVE_MINIO=1`) and SKIPs here. What runs here is the offline leg (`offline_memory_fake`, same cases against `MemoryStorage`), which is the P0-061 AC ("suite green offline"). The live leg is compile-checked here (`cargo check --tests`, testcontainers 0.28 API verified against the vendored crate source: `GenericImage` + `ImageExt` + `AsyncRunner` + `WaitFor::message_on_stdout("API: http://")`), and its first real run is in CI where docker exists. One genuine backend difference is designed into the suite, not papered over: real S3 verifies part ETags against uploaded bytes, so cases get ETags through a `PartSource` — fabricated for the fake, real SDK `upload_part` calls (5 MiB first part) for MinIO.
+- Status: open
+
 ## Closed issues (keep for history; prune to last 50)
 
 (none yet)
