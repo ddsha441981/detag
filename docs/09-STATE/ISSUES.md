@@ -15,6 +15,11 @@
 - Assumption: the real sqlx `FlagStore` and Redis `FlagCache` cannot be built or verified in this ticket — no sqlx/redis client in the workspace, no local Postgres/Redis, no migration runner (P0-036), and Docker Hub pulls fail (ADR-0017), so a live DB-backed test is impossible today. P0-022 therefore delivers the behaviour the ACs pin down (flip visible within TTL; invalidation test green) behind traits: `FlagResolver` (hides the source), `FlagStore` (repo interface) + `InMemoryFlagStore`, `FlagCache` + `InMemoryFlagCache`, `CachedFlagResolver` (30 s TTL, invalidate on admin edit), plus the `feature_flags` table as `migrations/0001_feature_flags.sql` (P0-036's runner applies it). The in-memory cache is test/dev only — in-proc caching breaks NFR-10; production uses Redis behind the same trait. `rollout` is stored, not yet evaluated (percentage rollouts are future work).
 - Status: open
 
+### ASSUMPTION-003 [assumption] /metrics binds loopback; compose isolation lands with E0.9 (P0-026)
+- Date: 2026-11-12 · Ticket: P0-026
+- Assumption: the /metrics server binds 127.0.0.1:PF_METRICS_PORT (default 9090) on its own port, never on the public api port — that satisfies "not on edge network" at the code level (verified: /metrics on the api port 404s). Compose network isolation (internal network only, port not published) cannot land here: no compose files exist yet (E0.9, P0-085..P0-090). E0.9 may need to revisit the loopback bind: a Prometheus container on another host in the compose network cannot scrape a loopback-bound listener, so the bind may have to become 0.0.0.0 with isolation enforced by the (unpublished) compose network instead.
+- Status: open
+
 ## Closed issues (keep for history; prune to last 50)
 
 (none yet)

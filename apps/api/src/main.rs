@@ -1,10 +1,13 @@
 //! detag-api binary: load settings, serve the router from the lib.
 
-use detag_api::build_router;
+use detag_api::{build_router, metrics::metrics_router};
 use detag_core::config::{warn_unknown_feature_flags, Settings};
+use detag_core::metrics::Metrics;
 use detag_core::shutdown::{shutdown_signal, SHUTDOWN_TIMEOUT};
 use detag_core::telemetry::init_tracing;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::sync::Notify;
 
 #[tokio::main]
 async fn main() {
@@ -21,15 +24,48 @@ async fn main() {
     let addr = SocketAddr::from(([127, 0, 0, 1], settings.api_port));
     tracing::info!(addr = %addr, "listening");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    // Graceful shutdown (P0-023): on SIGTERM/SIGINT stop accepting and
-    // drain in-flight requests. A stuck drain is cut off after
+
+    // Internal /metrics server (P0-026, FR-X-02): its own port on
+    // loopback, never on the public api port. Compose network isolation
+    // (internal network only, port not published) lands with E0.9.
+    let metrics = Metrics::new();
+    let metrics_addr = SocketAddr::from(([127, 0, 0, 1], settings.metrics_port));
+    tracing::info!(addr = %metrics_addr, "metrics listening");
+    let metrics_listener = tokio::net::TcpListener::bind(metrics_addr).await.unwrap();
+
+    // One signal listener, shared by both servers: on SIGTERM/SIGINT
+    // both stop accepting and drain in-flight requests.
+    let shutdown = Arc::new(Notify::new());
+    {
+        let shutdown = Arc::clone(&shutdown);
+        tokio::spawn(async move {
+            shutdown_signal().await;
+            shutdown.notify_waiters();
+        });
+    }
+    let wait_shutdown = |shutdown: Arc<Notify>| async move {
+        shutdown.notified().await;
+    };
+    // Graceful shutdown (P0-023): a stuck drain is cut off after
     // SHUTDOWN_TIMEOUT and the process exits non-zero rather than
     // hanging a deploy. Pool closes hook in here when pools land (E0.4).
-    let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
-    match tokio::time::timeout(SHUTDOWN_TIMEOUT, server).await {
-        Ok(Ok(())) => tracing::info!("shut down gracefully"),
-        Ok(Err(err)) => {
-            eprintln!("detag-api serve error: {err}");
+    let api_server =
+        axum::serve(listener, app).with_graceful_shutdown(wait_shutdown(Arc::clone(&shutdown)));
+    let metrics_server = axum::serve(metrics_listener, metrics_router(metrics))
+        .with_graceful_shutdown(wait_shutdown(Arc::clone(&shutdown)));
+    let drained = tokio::time::timeout(SHUTDOWN_TIMEOUT, async {
+        tokio::join!(api_server, metrics_server)
+    })
+    .await;
+    match drained {
+        Ok((Ok(()), Ok(()))) => tracing::info!("shut down gracefully"),
+        Ok((api, metrics)) => {
+            if let Err(err) = api {
+                eprintln!("detag-api serve error: {err}");
+            }
+            if let Err(err) = metrics {
+                eprintln!("detag-api metrics serve error: {err}");
+            }
             std::process::exit(1);
         }
         Err(_) => {

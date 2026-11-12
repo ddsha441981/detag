@@ -18,6 +18,7 @@
 | `PF_JWT_SECRET` | `dev-fixed` | api |
 | `PF_LOG_LEVEL` | `info` | all |
 | `PF_MAIL_FROM` | `noreply@detag.local` | mailer |
+| `PF_METRICS_PORT` | `9090` | api |
 | `PF_OTEL_ENDPOINT` | (empty) | all |
 | `PF_PUBLIC_BASE_URL` | `http://localhost:8080` | api |
 | `PF_RAZORPAY_KEY` | `rzp_test_placeholder` | billing |

@@ -5,6 +5,7 @@ pub mod audit;
 pub mod config;
 pub mod error;
 pub mod flags;
+pub mod metrics;
 pub mod shutdown;
 pub mod state_machine;
 pub mod telemetry;

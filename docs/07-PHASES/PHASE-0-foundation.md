@@ -215,12 +215,12 @@
     - [x] redaction helper unit tested
     - [x] json logs parse
 
-- [ ] **P0-026** — Prometheus /metrics
+- [x] **P0-026** — Prometheus /metrics
   - **Type:** feat · **Area:** observability · **Est:** S · **Deps:** P0-025 · **Prio:** P1
   - **Spec:** Internal-port route; process metrics + custom registry; network isolation in compose (internal only).
   - **AC:**
-    - [ ] metrics scrape works
-    - [ ] not on edge network
+    - [x] metrics scrape works
+    - [x] not on edge network
 
 - [ ] **P0-027** — OpenTelemetry export
   - **Type:** feat · **Area:** observability · **Est:** M · **Deps:** P0-026 · **Prio:** P1

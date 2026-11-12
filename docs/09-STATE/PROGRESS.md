@@ -5,14 +5,14 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-026
+- **Current ticket:** P0-027
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
 ## Phase status
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 25 / 108 | — |
+| 0 | Foundation & Platform Baseline | 26 / 108 | — |
 | 1 | Identity & Billing | 0 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
@@ -33,11 +33,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-026 — Prometheus /metrics
-2. P0-027 — OpenTelemetry export
-3. P0-028 — HTTP metrics middleware
-4. P0-029 — Job/queue metrics hooks
-5. P0-030 — Grafana dashboards as code
+1. P0-027 — OpenTelemetry export
+2. P0-028 — HTTP metrics middleware
+3. P0-029 — Job/queue metrics hooks
+4. P0-030 — Grafana dashboards as code
+5. P0-031 — Prometheus config + alerts file
 
 ## Bench history (append-only)
 

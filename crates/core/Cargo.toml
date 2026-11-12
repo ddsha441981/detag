@@ -11,6 +11,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+prometheus.workspace = true
 chrono.workspace = true
 figment.workspace = true
 url.workspace = true

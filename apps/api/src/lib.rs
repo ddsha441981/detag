@@ -4,6 +4,7 @@
 //! The router lives in the lib target so integration tests
 //! (`apps/api/tests/`) can drive it without spawning the binary.
 
+pub mod metrics;
 pub mod request_id;
 
 use axum::{middleware, routing::get, Router};
