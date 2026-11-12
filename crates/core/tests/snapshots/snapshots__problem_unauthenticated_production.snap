@@ -1,0 +1,12 @@
+---
+source: crates/core/tests/snapshots.rs
+expression: "problem(AppError::Unauthenticated, Profile::Production, Some(REQUEST_ID),\nNone).to_json()"
+---
+{
+  "code": "PF-1001",
+  "detail": "authentication is required for this resource",
+  "request_id": "01JREQID123",
+  "status": 401,
+  "title": "unauthenticated",
+  "type": "https://docs.pureframe.dev/errors/PF-1001"
+}

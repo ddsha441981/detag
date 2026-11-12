@@ -1,0 +1,24 @@
+---
+source: crates/core/tests/snapshots.rs
+expression: page
+---
+{
+  "items": [
+    {
+      "type": "https://docs.pureframe.dev/errors/PF-2002",
+      "title": "validation_failed",
+      "status": 400,
+      "code": "PF-2002",
+      "detail": "the request failed validation",
+      "request_id": "01JREQID123"
+    },
+    {
+      "type": "https://docs.pureframe.dev/errors/PF-2010",
+      "title": "not_found",
+      "status": 404,
+      "code": "PF-2010",
+      "detail": "the requested resource was not found"
+    }
+  ],
+  "next_cursor": "eyJ0cyI6MTc5MDAwMDAwMDAwMCwiaWQiOiIwMTlhMWIyYy0zZDRlLTdmODAtOTBhMS1iMmMzZDRlNWY2MDcifQ"
+}

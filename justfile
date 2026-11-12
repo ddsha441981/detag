@@ -65,6 +65,14 @@ changelog:
 test:
     cargo test --workspace
 
+# Snapshot tests in check mode (P0-095): fails on any new or changed
+# insta snapshot instead of writing it. Review with
+# `cargo insta review`; accept with
+# `INSTA_UPDATE=always cargo test -p detag-core --test snapshots`
+# only after reading the diff (see 05-QUALITY/01-test-strategy.md).
+snapshots-check:
+    INSTA_UPDATE=no cargo test -p detag-core --test snapshots
+
 # Verify gate: fmt + clippy + tests. (Compose smoke is `just smoke`,
 # kept separate: it needs a working docker daemon, which this VM does
 # not have (DOCKER-001); see ADR-0017 in docs/09-STATE/DECISIONS.md.)

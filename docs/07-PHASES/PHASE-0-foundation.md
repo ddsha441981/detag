@@ -738,11 +738,12 @@
     - [x] manifest checksums verified
   - **Status:** `scripts/templates_gen.py` + `just templates-gen` / `just templates-check`: 8 synthesized RGBA templates (4 badges: `badge-ai-generated`, `badge-made-with-ai`, `badge-ai`, `badge-sparkle-ai` — sparkle glyph drawn, not an emoji/font hack; 4 text marks: `text-ai-generated`, `text-made-with-ai`, `text-generated-with-ai`, `text-ai`), rendered into `templates/dev/` (label `SYNTHETIC-TEST-ONLY`, `synthetic-` file prefix) and `templates/prod/` (v1, same tooling/seeds/pixels — only label/dir/prefix differ) + `manifest.json` per pack (name, file, sha256, bytes, kind, dimensions, `has_alpha`, `params`: text/font/sizes/RGBA colors/corner radius + matcher `match_threshold` 0.80 badge / 0.75 text and `scales` [0.5, 0.75, 1.0, 1.5, 2.0]) + `templates/README.md` (versioning rule: bump `pack_version`, never mutate a shipped version). All text generic — no brand/stock-agency marks synthesized or scraped. Verified: `just templates-check` green (regen-to-temp byte compare + every manifest sha256/bytes field matches its file); 119 python script tests OK incl. 7 new (determinism, real alpha incl. translucent text at 200, no banned brand names). `just verify` green on attempt 1 (336 passed, 0 failed). `templates-check` step added to the CI verify job (Pillow pinned).
 
-- [ ] **P0-095** — Snapshot testing (insta)
+- [x] **P0-095** — Snapshot testing (insta)
   - **Type:** feat · **Area:** testing · **Est:** S · **Deps:** P0-094 · **Prio:** P1
   - **Spec:** cargo-insta for JSON responses (problem+json, reports); review flow documented.
   - **AC:**
-    - [ ] snapshots accepted
+    - [x] snapshots accepted
+  - **Status:** insta 1.49 (`json` feature) as a workspace dev-dependency + `cargo-insta` 1.49.0 installed (binary, `~/.cargo/bin`). `crates/core/tests/snapshots.rs`: 7 snapshot tests — 5 problem+json bodies (ValidationFailed prod + dev, NotFound without request_id, Unauthenticated, CacheUnavailable PF-5003) + 2 `Page<Problem>` envelopes — with 7 committed `.snap` files in `crates/core/tests/snapshots/`. Snapshots prove the profile rule in bytes: prod shows the static detail ("the request failed validation") while dev shows the caller detail ("email must be valid"); `request_id` is omitted when absent; the page cursor is a real encoded `Cursor`. Review flow documented in `05-QUALITY/01-test-strategy.md` ("Snapshot testing"): `cargo insta review`, accept-only-after-reading, `INSTA_UPDATE=no` check mode; CI verify job runs with `INSTA_UPDATE=no` so unaccepted snapshots fail the build; `just snapshots-check` recipe added. Engine quality reports are NOT snapshotted here — no report type exists in Phase 0 (engine is a placeholder); the Phase 2 golden suite snapshots reports with this harness. `just verify` green (343 passed, 0 failed — 336 + 7 new snapshot tests).
 
 - [ ] **P0-096** — proptest harness
   - **Type:** feat · **Area:** testing · **Est:** S · **Deps:** P0-095 · **Prio:** P1

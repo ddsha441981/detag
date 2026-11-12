@@ -1,0 +1,12 @@
+---
+source: crates/core/tests/snapshots.rs
+expression: "problem(AppError::CacheUnavailable, Profile::Production, Some(REQUEST_ID),\nNone).to_json()"
+---
+{
+  "code": "PF-5003",
+  "detail": "the cache is temporarily unavailable",
+  "request_id": "01JREQID123",
+  "status": 503,
+  "title": "cache_unavailable",
+  "type": "https://docs.pureframe.dev/errors/PF-5003"
+}

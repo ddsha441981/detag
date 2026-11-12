@@ -1,0 +1,11 @@
+---
+source: crates/core/tests/snapshots.rs
+expression: "problem(AppError::NotFound, Profile::Production, None, None).to_json()"
+---
+{
+  "code": "PF-2010",
+  "detail": "the requested resource was not found",
+  "status": 404,
+  "title": "not_found",
+  "type": "https://docs.pureframe.dev/errors/PF-2010"
+}

@@ -73,6 +73,9 @@ jobs:
       # `.sqlx/` data (P0-041); the prepare --check step below still
       # connects live via DATABASE_URL.
       SQLX_OFFLINE: "true"
+      # Snapshot gate (P0-095): unaccepted insta snapshots fail the
+      # build; review with `cargo insta review` and commit the .snap.
+      INSTA_UPDATE: "no"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

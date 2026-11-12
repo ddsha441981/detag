@@ -25,6 +25,32 @@ Fixtures in `fixtures/` (all synthesized in-house or permissively licensed):
 
 Every fixture has an expected-metrics envelope (`fixtures/expected/*.json`). Engine changes must keep all envelopes green (floors from `02-REQUIREMENTS/04-quality-policy.md`). Determinism: run twice, outputs must be bit-identical (FR-D-06).
 
+## Snapshot testing (P0-095)
+
+JSON the api serves is pinned with [insta](https://insta.rs/)
+(`crates/core/tests/snapshots.rs`, snapshots in
+`crates/core/tests/snapshots/*.snap`): `problem+json` bodies in both
+profiles and the `Page<T>` list envelope today; engine quality
+reports join with the Phase 2 golden suite (same harness, same gate
+— no report type is faked before it exists).
+
+Snapshots are code: a changed snapshot is reviewed like a code
+change, and the `.snap` files are committed with the code that
+produced them. Never accept a snapshot you have not read.
+
+- **Review:** `cargo insta review` (install once:
+  `cargo install cargo-insta`) — shows the diff per snapshot,
+  accept/reject one by one. Without the CLI:
+  `INSTA_UPDATE=always cargo test -p detag-core --test snapshots`
+  overwrites the `.snap` files — only after reading the `git diff`.
+- **Check locally:** `INSTA_UPDATE=no cargo test -p detag-core --test snapshots`
+  (also the CI mode — see below).
+- **CI gate:** the verify job runs with `INSTA_UPDATE=no`; any new
+  or changed snapshot fails the build until it is reviewed and
+  committed. A test that produces a snapshot with a nondeterministic
+  value (timestamp, random id, port) is a bug in the test, not in
+  insta — pin the value (fixed request ids, fixed cursors).
+
 ## Flaky-test policy
 
 A test that fails twice without a product change is quarantined (`#[ignore = "flaky:<issue>"]`) with an ISSUES.md entry; fix or delete within the week. Nightly run surfaces quarantined tests on the report.

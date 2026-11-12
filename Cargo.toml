@@ -47,6 +47,7 @@ deadpool-redis = { version = "0.22", features = ["rt_tokio_1", "script"] }
 aws-sdk-s3 = "1"
 aws-smithy-types = "1"
 testcontainers = "0.28"
+insta = { version = "1.49", features = ["json"] }
 sha2 = "0.11"
 base64 = "0.22"
 utoipa = { version = "5", features = ["axum_extras"] }
