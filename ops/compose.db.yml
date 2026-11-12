@@ -27,6 +27,11 @@ services:
     image: postgres:16-alpine
     container_name: detag-postgres
     network_mode: host
+    # Slow-query log (P0-044, NFR-12 bar: clean < 50 ms): log every
+    # statement slower than 50 ms. The native dev DB gets the same
+    # setting from the cluster config — see
+    # docs/05-QUALITY/04-slow-query-checklist.md.
+    command: ["postgres", "-c", "log_min_duration_statement=50ms"]
     environment:
       POSTGRES_USER: ${PF_POSTGRES_USER:-pf}
       POSTGRES_PASSWORD: ${PF_POSTGRES_PASSWORD:-pf}

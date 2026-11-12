@@ -345,12 +345,13 @@
     - [x] seed idempotent (run twice ok)
   - **Status:** `scripts/seed.sql` + `crates/core/src/seed.rs` (`seed(pool) -> SeedReport { plans, flags }`, `include_str!` of the SQL) + `crates/core/examples/seed.rs` (`just seed`: "seeded: 3 plans, 3 feature flags"). Plans are verbatim the migration 003 seed (FR-P-01, amounts in paise); flags are the 3 known keys (razorpay, provenance_strip, gpu), all OFF with updated_by 'seed'. Every INSERT is ON CONFLICT DO NOTHING — verified by live test `crates/core/tests/seed_live.rs` (run twice same counts; an admin plan edit + flag flip survive a re-seed). `just db::reset` (module `db.just`, `mod db` in the justfile) drops + recreates the local dev DB, migrates, seeds — implemented as a `reset` arm in `crates/core/examples/migrate.rs` (localhost-only guard, bare-identifier check on the DB name, `AssertSqlSafe` with an audit comment; DROP/CREATE run as two single `query` calls because `raw_sql` wraps in a transaction block and DROP DATABASE cannot run inside one). Verified end-to-end on the dev DB (recreated `pf`, 5 migrations, 3 plans + 3 flags OFF, second `just seed` a no-op) and the non-local refusal (exit 2). NOT done: the "admin invite" — no invites table or invite flow exists in the kit and the runbook's `pf-admin-create` CLI has no owning ticket; the seed invents no admin user/credential (DECISIONS.md #8, owner-input-needed). NOTE: the ticket spells the command `just db:reset` (single colon) but just 1.42 does not accept it — `just db::reset` (or `just db reset`) is the real invocation.
 
-- [ ] **P0-044** — Slow-query log + index checklist
+- [x] **P0-044** — Slow-query log + index checklist
   - **Type:** chore · **Area:** db · **Est:** S · **Deps:** P0-043 · **Prio:** P1
   - **Spec:** pg slow-query log in dev; EXPLAIN checklist from data-model doc as a doc fixture; revisit at NFR-12.
   - **AC:**
-    - [ ] log enabled
-    - [ ] checklist committed
+    - [x] log enabled
+    - [x] checklist committed
+  - **Status:** Threshold is the NFR-12 bar: `log_min_duration_statement = 50ms`. Compose: `command: ["postgres", "-c", "log_min_duration_statement=50ms"]` in `ops/compose.db.yml` (`just compose-db-check` green). Native dev DB: cluster-wide in `/etc/postgresql/16/main/postgresql.conf` + `pg_reload_conf()` — cluster-wide (not ALTER DATABASE) because the `pf` role is not a superuser (`ALTER DATABASE ... SET` is refused for this SUSET parameter) and a cluster setting survives `just db::reset`. Verified live: `SHOW` returns 50ms, `pg_sleep(0.06)` logged `duration: 60.710 ms` in `/var/log/postgresql/postgresql-16-main.log`, a fast query adds no line. Checklist: `docs/05-QUALITY/04-slow-query-checklist.md` — all 10 doc-listed indexes, each EXPLAIN (ANALYZE)-verified on a scratch DB (200 users / 20k jobs / ANALYZE): 8 index-backed directly, `api_keys` seq-scanned at 200 rows (planner cost — index proven with `enable_seqscan = off`, 0.019 ms), `audit_logs` actor + `webhook_deliveries` endpoint used Bitmap Index Scan + quicksort. Revisit at NFR-12 (100k jobs/day load) recorded in the doc.
 
 - [ ] **P0-045** — Schema docs automation
   - **Type:** docs · **Area:** db · **Est:** S · **Deps:** P0-044 · **Prio:** P1
