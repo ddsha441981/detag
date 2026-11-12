@@ -1,0 +1,53 @@
+# Data Model (Postgres 16, sqlx migrations)
+
+Naming: snake_case, plural tables, UUIDv7 PKs, `created_at/updated_at` everywhere, soft-delete only where stated. Migrations numbered, additive-first policy (see runbook).
+
+## ERD (textual)
+
+```
+users 1─* sessions        users 1─* api_keys       users 1─1 subscriptions
+users 1─* uploads 1─1 jobs 1─* job_events          plans 1─* subscriptions
+jobs 1─* artifacts        jobs 1─1 quality_reports  users 1─* usage_counters(daily)
+users 1─* attestations    users 1─* webhook_endpoints 1─* webhook_deliveries
+audit_logs (actor: users, action, target)           abuse_reports ─ jobs
+feature_flags   idempotency_keys   email_outbox     plans (catalog)
+```
+
+## Tables
+
+**users** — id, email (citext, unique), password_hash (argon2id), email_verified_at, role (user|support|admin), status (active|suspended|deletion_pending), tos_version, deleted_at (grace), settings jsonb.
+**sessions** — id, user_id, refresh_hash (sha256), family_id (rotation lineage), device (ua, ip-hashed), expires_at, revoked_at, replaced_by.
+**api_keys** — id, user_id, name, prefix, secret_hash, scopes text[], last_used_at, revoked_at, rate_limit_tier.
+**plans** — id, code (free|pro|business), stripe_price_id, currency, amount, entitlements jsonb (daily_images, daily_video_seconds, max_bytes, result_ttl_hours, concurrency, lane, features jsonb).
+**subscriptions** — id, user_id, plan_id, provider (stripe|razorpay), provider_customer_id, provider_subscription_id, status (trialing|active|past_due|canceled), current_period_end, cancel_at_period_end.
+**usage_counters** — user_id, day (date), images_used, video_seconds_used, unique(user_id, day); Redis mirrors for hot path.
+**uploads** — id, user_id, kind, filename, bytes, sha256, phash, mime, width, height, duration_s?, metadata jsonb (exif summary, icc present, container atoms), status (pending_parts|ready|aborted), storage_key, parts int.
+**jobs** — id, user_id, upload_id, kind (image|video|batch), mode, params jsonb, status, stage, progress real, priority/lane, attempts int, idempotency_key unique, error jsonb, attestation_id, webhook_url?, started_at, finished_at.
+**job_events** — id, job_id, at, type (stage|progress|note|state_change), payload jsonb (append-only).
+**artifacts** — id, job_id, type (output|mask|preview_before|preview_after|report|batch_zip), storage_key, bytes, sha256, expires_at.
+**quality_reports** — id, job_id, engine_version, models jsonb, metrics jsonb (ssim/psnr/vmaf…), encode jsonb, regions jsonb, gate (pass|fail), retried bool, seed text.
+**attestations** — id, user_id, upload_id, text_version, ip_hash, client (web|api_key), created_at (immutable).
+**audit_logs** — id, actor_user_id?, actor_client, action, target_type, target_id, before jsonb, after jsonb, reason, created_at. Append-only: no UPDATE/DELETE grants.
+**webhook_endpoints** — id, user_id, url, secret_hash, events text[], disabled_at.
+**webhook_deliveries** — id, endpoint_id, event_id, event_type, payload jsonb, attempts int, last_status, last_response_code, next_retry_at.
+**abuse_reports** — id, reporter_contact?, job_id?, reason, status (open|reviewing|resolved), resolution, notes.
+**feature_flags** — key PK, enabled bool, rollout jsonb, updated_by, updated_at (cached 30 s).
+**idempotency_keys** — key PK, user_id, endpoint, response jsonb, expires_at.
+**email_outbox** — id, to_hash?, template, payload jsonb, scheduled_at, sent_at, attempts, last_error (worker drains; supports retry + test assertions).
+
+## Retention & cleanup jobs
+
+- artifacts: `expires_at` = now + plan TTL → hard delete object + row (daily worker).
+- uploads: pending_parts > 24 h → abort + delete.
+- webhook_deliveries: 30 d. email_outbox sent rows: 30 d. audit_logs: 365 d. app logs: 90 d (log shipper/rotate).
+- usage_counters: keep 400 d.
+
+## Indexes (minimum)
+
+jobs(user_id, created_at desc), jobs(status, lane, priority), uploads(user_id, status), sessions(refresh_hash) unique, api_keys(prefix), usage_counters PK(user_id, day), audit_logs(actor_user_id, created_at desc), audit_logs(target_type, target_id), webhook_deliveries(endpoint_id, created_at desc), idempotency_keys(expires_at) for GC.
+
+## Migration policy
+
+1. Migrations in `migrations/`, `sqlx migrate`; CI checks a clean migrate + `sqlx prepare` freshness.
+2. Night runs: additive only (add table/column/index with defaults). Contract steps (drop/rename) wait for owner-ok, tagged in ISSUES.md.
+3. Every schema change updates this file in the same commit.
