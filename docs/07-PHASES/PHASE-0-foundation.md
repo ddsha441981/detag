@@ -183,12 +183,12 @@
     - [x] flag defaults off
     - [x] unknown flag warns
 
-- [ ] **P0-022** — DB-backed flags + cache
+- [x] **P0-022** — DB-backed flags + cache
   - **Type:** feat · **Area:** core/config · **Est:** M · **Deps:** P0-021 · **Prio:** P1
   - **Spec:** feature_flags table + repo + Redis cache (30s TTL) + invalidation on admin edit; resolver trait hides the source.
   - **AC:**
-    - [ ] flag flip visible within TTL
-    - [ ] invalidation test green
+    - [x] flag flip visible within TTL
+    - [x] invalidation test green
 
 - [ ] **P0-023** — Graceful shutdown
   - **Type:** feat · **Area:** core/config · **Est:** S · **Deps:** P0-022 · **Prio:** P1
