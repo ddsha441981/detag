@@ -1,0 +1,30 @@
+# Nightly (P0-096): scheduled re-run of the property suite.
+#
+# The prop tests (`crates/core/tests/prop/`, 1000 cases each) also run
+# on every push inside the CI verify job — nightly is a scheduled
+# re-run, not the only run. The golden suite and e2e join this
+# workflow when they exist (Phase 2 / web e2e); until then this job
+# stays small on purpose.
+name: Nightly
+
+on:
+  schedule:
+    # 02:00 UTC daily.
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prop:
+    runs-on: ubuntu-latest
+    env:
+      # sqlx `query!` macros compile offline from the checked-in
+      # `.sqlx/` data; the prop tests are pure (no services needed).
+      SQLX_OFFLINE: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: property tests (1000 cases, P0-096)
+        run: cargo test -p detag-core --test prop

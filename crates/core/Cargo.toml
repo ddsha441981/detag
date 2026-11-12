@@ -30,3 +30,4 @@ utoipa.workspace = true
 [dev-dependencies]
 tokio.workspace = true
 insta.workspace = true
+proptest.workspace = true

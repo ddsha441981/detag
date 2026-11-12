@@ -745,11 +745,12 @@
     - [x] snapshots accepted
   - **Status:** insta 1.49 (`json` feature) as a workspace dev-dependency + `cargo-insta` 1.49.0 installed (binary, `~/.cargo/bin`). `crates/core/tests/snapshots.rs`: 7 snapshot tests — 5 problem+json bodies (ValidationFailed prod + dev, NotFound without request_id, Unauthenticated, CacheUnavailable PF-5003) + 2 `Page<Problem>` envelopes — with 7 committed `.snap` files in `crates/core/tests/snapshots/`. Snapshots prove the profile rule in bytes: prod shows the static detail ("the request failed validation") while dev shows the caller detail ("email must be valid"); `request_id` is omitted when absent; the page cursor is a real encoded `Cursor`. Review flow documented in `05-QUALITY/01-test-strategy.md` ("Snapshot testing"): `cargo insta review`, accept-only-after-reading, `INSTA_UPDATE=no` check mode; CI verify job runs with `INSTA_UPDATE=no` so unaccepted snapshots fail the build; `just snapshots-check` recipe added. Engine quality reports are NOT snapshotted here — no report type exists in Phase 0 (engine is a placeholder); the Phase 2 golden suite snapshots reports with this harness. `just verify` green (343 passed, 0 failed — 336 + 7 new snapshot tests).
 
-- [ ] **P0-096** — proptest harness
+- [x] **P0-096** — proptest harness
   - **Type:** feat · **Area:** testing · **Est:** S · **Deps:** P0-095 · **Prio:** P1
   - **Spec:** Property tests scaffold: mask codec roundtrip, cursor codec, key scheme; shrink-friendly; nightly job.
   - **AC:**
-    - [ ] properties hold 1000 cases
+    - [x] properties hold 1000 cases
+  - **Status:** proptest 1 as a workspace dev-dependency. `crates/core/tests/prop.rs` + `tests/prop/{cursor,keys,state_machine}.rs`: 13 properties at 1000 cases each (`ProptestConfig::with_cases(1000)` in code) + 1 plain test — cursor encode/decode roundtrip + truncation/garbage rejection; key-scheme shape invariants (`pf:{ns}:{key}`, distinct namespaces, typed-helper prefixes); state-machine spellings roundtrip, terminal-state rejection, valid/shuffled complete → Ready, dropped/empty-part/wrong-total → ValidationFailed. 14/14 green. Mask codec properties are NOT here — no mask codec exists yet (engine is a Phase 2 placeholder); they land in `tests/prop/mask.rs` with the codec. Nightly job added (`.github/workflows/nightly.yml`, 02:00 UTC + workflow_dispatch; prop suite only — golden/e2e join when they exist) + `just prop` recipe + "Property testing" section in the test strategy doc. Two harness lessons recorded in the code: `prop_assert!` cannot use implicit format captures (hoist expected strings / use `{}` + args), and `prop_assume` on a 1-in-3 condition trips the global-reject limit (the abort test is a plain test, not a property). `just verify` green (357 passed, 0 failed — 343 + 14 new) after 3 attempts (FLAKY-001 ×1, FLAKY-002 ×1).
 
 - [ ] **P0-097** — Criterion benches scaffold
   - **Type:** chore · **Area:** testing · **Est:** M · **Deps:** P0-096 · **Prio:** P1

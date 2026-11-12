@@ -51,6 +51,19 @@ produced them. Never accept a snapshot you have not read.
   value (timestamp, random id, port) is a bug in the test, not in
   insta — pin the value (fixed request ids, fixed cursors).
 
+## Property testing (P0-096)
+
+Property tests live in `crates/core/tests/prop/` (cursor codec,
+Redis key scheme, upload state machine; the mask codec's roundtrips
+join with the Phase 2 codec). Each `proptest!` block runs
+**1000 cases** (`ProptestConfig::with_cases(1000)` in the test
+file — not an env var, so the count is pinned in code). Strategies
+use proptest's standard generators, so a failure shrinks to a
+minimal case automatically; turn a shrunk failure into a regression
+test. Run: `just prop`. Also runs on every push (part of
+`cargo test --workspace`) and on the nightly job
+(`.github/workflows/nightly.yml`, 02:00 UTC).
+
 ## Flaky-test policy
 
 A test that fails twice without a product change is quarantined (`#[ignore = "flaky:<issue>"]`) with an ISSUES.md entry; fix or delete within the week. Nightly run surfaces quarantined tests on the report.

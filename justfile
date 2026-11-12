@@ -73,6 +73,12 @@ test:
 snapshots-check:
     INSTA_UPDATE=no cargo test -p detag-core --test snapshots
 
+# Property tests (P0-096): proptest harness, 1000 cases per property
+# (config lives in the test files). Also runs in CI on every push
+# and on the nightly job.
+prop:
+    cargo test -p detag-core --test prop
+
 # Verify gate: fmt + clippy + tests. (Compose smoke is `just smoke`,
 # kept separate: it needs a working docker daemon, which this VM does
 # not have (DOCKER-001); see ADR-0017 in docs/09-STATE/DECISIONS.md.)
