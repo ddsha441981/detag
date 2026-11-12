@@ -7,12 +7,15 @@
 //! - [`create_pool`] — the deadpool-redis connection manager
 //!   (P0-047): one pool per process, checked out per operation.
 //! - [`keys`] — the `pf:{ns}:{key}` naming convention + TTL constants.
+//! - [`ratelimit`] — fixed-window + token-bucket primitives
+//!   (P0-048), atomic Lua scripts over the pool.
 //!
 //! Only the `redis://` scheme is probed (plain TCP). A `rediss://`
 //! URL reports down with an explicit detail — TLS needs the client,
 //! not this probe.
 
 pub mod keys;
+pub mod ratelimit;
 
 use crate::db::ComponentHealth;
 use crate::telemetry::redact;

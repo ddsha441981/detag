@@ -378,12 +378,13 @@
     - [x] key helper unit tested
   - **Status:** `crates/core/src/redis/` (restructured from `redis.rs` into `mod.rs` + `keys.rs`): `create_pool(url, &RedisPoolConfig::default())` — deadpool-redis 0.22.1 (redis 0.32.7), defaults 16 connections / 2 s wait+create timeouts, no idle recycle; fails fast on a malformed URL, lazy on an unreachable server (checkout reports it). `keys`: `pf:{ns}:{key}` with a `Namespace` enum (flags, usage, ratelimit, cache, pubsub, idempotency, jobs) + typed helpers (`flags_key`, `usage_key(user, day)`, `rate_limit_key`, `cache_key`, `job_events_channel`, `idempotency_key`, `job_key`); keys must be non-empty without whitespace/control (panics — programming error). TTL consts, each with its source: `TTL_FLAG_CACHE` 30 s (= `FLAG_CACHE_TTL`), `TTL_USAGE_COUNTER` 48 h (day + 24 h grace; DB keeps 400 d), `TTL_RESULT_MAX` 72 h (longest plan TTL, Business, FR-P-01). Deliberately NO consts for rate-limit windows, per-call cache TTLs, or idempotency expiry — those are set by the caller (see the module docs). Tests: 5 key-helper unit tests (AC) + 5 probe tests, and live `crates/core/tests/redis_live.rs` (3 tests: PING + SET/GET/DEL roundtrip on a unique `pf:cache:test:{uuid}` key, malformed URL fails creation, closed port fails checkout). `just deny` green on the new deps (advisories/bans/licenses/sources ok). Not wired into api/worker yet — the pool is used by the features that need it (P0-048 rate limiter first); `/readyz` keeps the client-free PING probe from P0-046.
 
-- [ ] **P0-048** — Rate-limit primitives
+- [x] **P0-048** — Rate-limit primitives
   - **Type:** feat · **Area:** redis · **Est:** M · **Deps:** P0-047 · **Prio:** P1
   - **Spec:** Fixed-window + token-bucket Lua scripts (atomic) per-ns limits; unit + integration tests race-safe under 50 concurrent.
   - **AC:**
-    - [ ] no over-admission under race
-    - [ ] scripts tested
+    - [x] no over-admission under race
+    - [x] scripts tested
+  - **Status:** `crates/core/src/redis/ratelimit.rs` + `fixed_window.lua` / `token_bucket.lua` (loaded via `include_str!`, `redis::Script` = EVALSHA with EVAL fallback; needed the `script` feature on deadpool-redis, which forwards to `redis/script`). `FixedWindow::new(limit, window)` — INCR + conditional EXPIRE in one script, returns `{count, ttl}`; `TokenBucket::new(capacity, refill_per_sec)` — HMGET/HSET refill + deduct in one script, returns `{allowed, tokens as string}` (string because Redis cannot return a fractional integer reply); bucket TTL = ceil(capacity/refill) + 60 s, 24 h when refill is 0. Keys via `keys::rate_limit_key` (`pf:ratelimit:{scope}:{id}`). Both return `RateLimit { allowed, remaining, reset_in }`. Primitives only — limits are per-plan config (open question #17, Phase 5 tuning) and the 429 + `X-RateLimit-*` HTTP layer lands with Phase 1 auth. Tests: 4 unit tests (config validation, bucket TTL, Lua-source sanity) + live `crates/core/tests/ratelimit_live.rs` (5 tests: fixed-window admit/deny + per-id independence, token-bucket burst + 1.1 s refill, both 50-way races admit exactly the limit/capacity — 10 and 5 — re-run 3x stable, bad token count rejected). `just verify` needed one retry for FLAKY-001 (shutdown test).
 
 - [ ] **P0-049** — Cache helper
   - **Type:** feat · **Area:** redis · **Est:** M · **Deps:** P0-048 · **Prio:** P1
