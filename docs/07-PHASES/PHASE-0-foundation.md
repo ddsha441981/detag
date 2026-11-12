@@ -170,11 +170,11 @@
   - **AC:**
     - [x] integration test asserts id echo + span
 
-- [ ] **P0-020** — Typed settings fail-fast report
+- [x] **P0-020** — Typed settings fail-fast report
   - **Type:** feat · **Area:** core/config · **Est:** S · **Deps:** P0-019 · **Prio:** P1
   - **Spec:** Boot validation aggregates ALL invalid vars into one report (not first-failure); messages include runbook var names.
   - **AC:**
-    - [ ] two invalid vars produce one report listing both
+    - [x] two invalid vars produce one report listing both
 
 - [ ] **P0-021** — Static feature flags
   - **Type:** feat · **Area:** core/config · **Est:** S · **Deps:** P0-020 · **Prio:** P1

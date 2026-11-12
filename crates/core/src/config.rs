@@ -18,6 +18,10 @@
 //! must be a known level, required strings must be non-empty. All
 //! problems are reported at once (`ConfigError::Multiple`), each naming
 //! its `PF_*` var, so a bad boot tells the operator everything to fix.
+//! Type errors (a non-number where a number belongs, a non-bool where a
+//! bool belongs) are collected the same way: fields are extracted one by
+//! one and a bad field falls back to its default so the rest can still
+//! be checked (P0-020 — never first-failure).
 
 use figment::{
     providers::{Env, Format, Serialized, Toml},
@@ -204,6 +208,13 @@ impl Settings {
     /// Load settings with an explicit optional config file (`None` skips
     /// the file layer entirely). Used by tests and by binaries that keep
     /// their config elsewhere.
+    ///
+    /// Fail-fast aggregate (P0-020): every invalid var is collected into
+    /// ONE report — a bad value in one field can never hide a bad value
+    /// in another. Fields are extracted one by one; a field that fails
+    /// to parse falls back to its default so semantic validation can
+    /// still run on the rest, and all problems (type + semantic) are
+    /// returned together.
     pub fn load_from(file: Option<&Path>) -> Result<Settings, ConfigError> {
         let mut figment = Figment::new()
             .merge(Serialized::defaults(Settings::default()))
@@ -213,28 +224,69 @@ impl Settings {
                 figment = figment.merge(Toml::file(path));
             }
         }
-        let settings: Settings = figment.extract().map_err(|err| {
-            let message = err.to_string();
-            // Figment reports the key in env case (e.g. "SMTP_PORT"), so
-            // match field names case-insensitively.
-            let lower = message.to_lowercase();
-            let var = FIELD_VARS
-                .iter()
-                .find(|(field, _)| lower.contains(field))
-                .map(|(_, var)| (*var).to_string())
-                .unwrap_or_else(|| "PF_*".to_string());
-            ConfigError::Invalid {
-                var,
-                reason: message,
-            }
-        })?;
-        settings.validate()?;
-        Ok(settings)
+        let defaults = Settings::default();
+        let mut problems: Vec<ConfigError> = Vec::new();
+        macro_rules! field {
+            ($name:ident, $ty:ty) => {
+                match figment.extract_inner::<$ty>(stringify!($name)) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        let var = FIELD_VARS
+                            .iter()
+                            .find(|(field, _)| *field == stringify!($name))
+                            .map(|(_, var)| (*var).to_string())
+                            .unwrap_or_else(|| "PF_*".to_string());
+                        problems.push(ConfigError::Invalid {
+                            var,
+                            reason: err.to_string(),
+                        });
+                        defaults.$name
+                    }
+                }
+            };
+        }
+        let settings = Settings {
+            database_url: field!(database_url, String),
+            redis_url: field!(redis_url, String),
+            s3_endpoint: field!(s3_endpoint, String),
+            s3_bucket: field!(s3_bucket, String),
+            s3_access_key: field!(s3_access_key, String),
+            s3_secret_key: field!(s3_secret_key, String),
+            s3_region: field!(s3_region, String),
+            jwt_secret: field!(jwt_secret, String),
+            public_base_url: field!(public_base_url, String),
+            stripe_secret_key: field!(stripe_secret_key, String),
+            stripe_webhook_secret: field!(stripe_webhook_secret, String),
+            razorpay_key: field!(razorpay_key, String),
+            razorpay_secret: field!(razorpay_secret, String),
+            feature_razorpay: field!(feature_razorpay, bool),
+            smtp_host: field!(smtp_host, String),
+            smtp_port: field!(smtp_port, u16),
+            smtp_user: field!(smtp_user, String),
+            smtp_pass: field!(smtp_pass, String),
+            mail_from: field!(mail_from, String),
+            engine_models_dir: field!(engine_models_dir, String),
+            engine_gpu: field!(engine_gpu, u8),
+            engine_tiles_max: field!(engine_tiles_max, u32),
+            results_ttl_free_h: field!(results_ttl_free_h, u64),
+            results_ttl_pro_h: field!(results_ttl_pro_h, u64),
+            results_ttl_business_h: field!(results_ttl_business_h, u64),
+            feature_provenance_strip: field!(feature_provenance_strip, bool),
+            log_level: field!(log_level, String),
+            otel_endpoint: field!(otel_endpoint, String),
+        };
+        settings.validate(&mut problems);
+        if problems.is_empty() {
+            Ok(settings)
+        } else if problems.len() == 1 {
+            Err(problems.into_iter().next().unwrap())
+        } else {
+            Err(ConfigError::multiple(problems))
+        }
     }
 
-    /// Check every rule; returns all problems at once.
-    fn validate(&self) -> Result<(), ConfigError> {
-        let mut problems: Vec<ConfigError> = Vec::new();
+    /// Check every rule, appending each problem to `problems`.
+    fn validate(&self, problems: &mut Vec<ConfigError>) {
         let mut invalid = |var: &str, reason: String| {
             problems.push(ConfigError::Invalid {
                 var: var.to_string(),
@@ -311,14 +363,6 @@ impl Settings {
                 "PF_LOG_LEVEL",
                 "must be one of: trace, debug, info, warn, error".to_string(),
             );
-        }
-
-        if problems.is_empty() {
-            Ok(())
-        } else if problems.len() == 1 {
-            Err(problems.into_iter().next().unwrap())
-        } else {
-            Err(ConfigError::multiple(problems))
         }
     }
 }
@@ -620,5 +664,59 @@ mod tests {
             err.to_string().contains("PF_OTEL_ENDPOINT"),
             "error must name the var, got: {err}"
         );
+    }
+
+    /// P0-020 AC: two invalid vars produce ONE report listing both.
+    /// (Before P0-020, figment's whole-struct extract reported only the
+    /// first type error — PF_ENGINE_TILES_MAX hid PF_SMTP_PORT.)
+    #[test]
+    fn two_invalid_type_vars_produce_one_report() {
+        let _env = clean_env();
+        env::set_var("PF_SMTP_PORT", "abc");
+        env::set_var("PF_ENGINE_TILES_MAX", "xyz");
+        let err = Settings::load_from(None).expect_err("two bad types");
+        match &err {
+            ConfigError::Multiple { count, details } => {
+                assert_eq!(*count, 2);
+                assert!(details.contains("PF_SMTP_PORT"), "got: {details}");
+                assert!(details.contains("PF_ENGINE_TILES_MAX"), "got: {details}");
+            }
+            other => panic!("expected Multiple, got: {other}"),
+        }
+    }
+
+    /// Type errors and semantic (validation) errors aggregate together:
+    /// a bad port, a bad URL and a bad log level are all in one report.
+    #[test]
+    fn mixed_type_and_validation_errors_aggregate() {
+        let _env = clean_env();
+        env::set_var("PF_SMTP_PORT", "abc");
+        env::set_var("PF_DATABASE_URL", "junk");
+        env::set_var("PF_LOG_LEVEL", "verbose");
+        let err = Settings::load_from(None).expect_err("mixed bad vars");
+        match &err {
+            ConfigError::Multiple { count, details } => {
+                assert_eq!(*count, 3);
+                for var in ["PF_SMTP_PORT", "PF_DATABASE_URL", "PF_LOG_LEVEL"] {
+                    assert!(details.contains(var), "missing {var} in: {details}");
+                }
+            }
+            other => panic!("expected Multiple, got: {other}"),
+        }
+    }
+
+    /// A non-bool where a bool belongs is a type error naming the var,
+    /// and a single one stays a plain Invalid.
+    #[test]
+    fn bool_type_error_names_var() {
+        let _env = clean_env();
+        env::set_var("PF_FEATURE_RAZORPAY", "maybe");
+        let err = Settings::load_from(None).expect_err("bad bool must fail");
+        match &err {
+            ConfigError::Invalid { var, .. } => {
+                assert_eq!(var, "PF_FEATURE_RAZORPAY");
+            }
+            other => panic!("expected Invalid, got: {other}"),
+        }
     }
 }
