@@ -38,13 +38,13 @@
 
 ## E0.1 — Repo & Tooling (area: repo)
 
-- [ ] **P0-001** — Bootstrap cargo workspace
+- [x] **P0-001** — Bootstrap cargo workspace
   - **Type:** chore · **Area:** repo · **Est:** S · **Deps:** — · **Prio:** P1
   - **Spec:** Create Cargo workspace: members apps/api, apps/worker, crates/{core,engine,storage,billing,mailer}; workspace release profile (lto=thin, codegen-units=1, strip=symbols); rust-toolchain.toml pins stable MSRV.
   - **AC:**
-    - [ ] cargo build --workspace passes
-    - [ ] clippy -D warnings clean on empty crates
-    - [ ] toolchain pinned and CI-ready
+    - [x] cargo build --workspace passes
+    - [x] clippy -D warnings clean on empty crates
+    - [x] toolchain pinned and CI-ready
 
 - [ ] **P0-002** — Scaffold crate skeletons
   - **Type:** chore · **Area:** repo · **Est:** S · **Deps:** P0-001 · **Prio:** P1

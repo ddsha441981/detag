@@ -4,27 +4,27 @@
 
 ## Where we are
 
-- **Current phase:** — (not started)
-- **Current ticket:** —
-- **Last run:** — (see NIGHT-REPORTS/)
+- **Current phase:** 0 — Foundation & Platform Baseline
+- **Current ticket:** P0-002
+- **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
 ## Phase status
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 0 / TBD | — |
-| 1 | Identity & Billing | 0 / TBD | — |
-| 2 | Removal Engine (images) | 0 / TBD | — |
-| 3 | Pipeline & Video | 0 / TBD | — |
-| 4 | Console & Admin | 0 / TBD | — |
-| 5 | Hardening & Release | 0 / TBD | — |
-| 6 | Provenance & Roadmap (gated research) | 0 / TBD | — |
+| 0 | Foundation & Platform Baseline | 1 / 108 | — |
+| 1 | Identity & Billing | 0 / 111 | — |
+| 2 | Removal Engine (images) | 0 / 102 | — |
+| 3 | Pipeline & Video | 0 / 105 | — |
+| 4 | Console & Admin | 0 / 102 | — |
+| 5 | Hardening & Release | 0 / 101 | — |
+| 6 | Provenance & Roadmap (gated research) | 0 / 43 | — |
 
 ## Health snapshot
 
 | Signal | Value |
 | --- | --- |
-| `just verify` | — |
+| `just verify` | not yet defined (justfile lands P0-005); cargo build + clippy green on P0-001 |
 | Coverage (core/engine/api) | — / — / — |
 | Golden suite | — |
 | Bench snapshot (image 4K p95 / video factor) | — |
@@ -33,11 +33,11 @@
 
 ## Next-up queue (top 5)
 
-1. —
-2. —
-3. —
-4. —
-5. —
+1. P0-002 — Scaffold crate skeletons
+2. P0-003 — Formatting + lint policy
+3. P0-004 — Repo hygiene files
+4. P0-005 — justfile task runner
+5. P0-006 — Commit conventions + CI check
 
 ## Bench history (append-only)
 

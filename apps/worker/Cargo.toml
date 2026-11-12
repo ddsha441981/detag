@@ -1,0 +1,13 @@
+[package]
+name = "detag-worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "detag-worker"
+path = "src/main.rs"
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true

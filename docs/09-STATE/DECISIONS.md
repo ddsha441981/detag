@@ -15,16 +15,38 @@
 
 (appended below by the agent as work proceeds)
 
+
+## ADR-0013 — Product renamed PureFrame → Detag (2026-11-12, Phase 0)
+**Context:** Owner renamed the product and created repo https://github.com/ddsha441981/detag.git (private, empty, default branch main). Kit docs still say PureFrame.
+**Decision:** Code/repo/brand use `detag`; kit docs under `docs/` keep the PureFrame name as the spec source until the owner asks for a doc rename. Binary/crate names use `detag-*`. Pricing/plan defaults unchanged (Free ₹0 / Pro ₹499 / Business ₹1,999).
+**Consequences:** Docs refer to PureFrame; code refers to Detag. A doc-rename ticket may be added later; no functional impact.
+
+## ADR-0014 — Docker on this VM via systemd + egress proxy, no bridge networking (2026-11-12, Phase 0)
+**Context:** VM has no NET_ADMIN capability: stock dockerd fails creating the NAT bridge (iptables permission denied). Egress to registries goes via the VM proxy.
+**Decision:** docker.io 29.1.3 installed via apt; daemon runs via systemd with an http-proxy drop-in pointing at the VM egress proxy; daemon.json sets `"iptables": false, "bridge": "none"`. Containers therefore run with `--network host` (compose services use `network_mode: host`) until/unless bridge networking becomes available. Compose plugin v2.40.3 installed.
+**Consequences:** Compose files in this repo use host networking in dev; prod compose keeps bridge networks as documented and is validated with `docker compose config` only on this VM. `just smoke` must pass with host networking.
+
+## ADR-0015 — Toolchain pinned (2026-11-12, Phase 0)
+**Context:** Rust 1.99.1 stable was already installed in ~/.cargo/bin (not on PATH by default); `just` 1.42.0 installed to ~/.local/bin.
+**Decision:** `rust-toolchain.toml` pins channel `1.99.1`; PATH in CI/dev setup must include ~/.cargo/bin and ~/.local/bin. `CARGO_BUILD_JOBS=2` in `.cargo/config.toml` (4 CPUs, ~7.7 GB RAM) to avoid OOM during parallel rustc.
+**Consequences:** Toolchain upgrades are deliberate (ADR on majors).
+
+## ADR-0016 — Push policy for this run (2026-11-12, Phase 0)
+**Context:** GitHub access to ddsha441981/detag verified by the owner (private, empty, main). The parent agent batch-pushes commits.
+**Decision:** This coordinator commits locally only, one commit per ticket, and never pushes or tags. The parent pushes/tags after the run report.
+**Consequences:** Local `git log` is the source of truth until the parent pushes.
+
 ## owner-input-needed queue
 
 | # | Date | Question | Temporary default in use | Owner answer |
 | --- | --- | --- | --- | --- |
-| 1 | kit start | Product name / brand | PureFrame (working title) | pending |
+| 1 | kit start | Product name / brand | PureFrame (working title) | Detag — owner decided 2026-11-12, repo ddsha441981/detag |
 | 2 | kit start | Final pricing (INR/USD) | Free ₹0 / Pro ₹499 / Business ₹1,999 | pending |
 | 3 | kit start | Live payment keys (Stripe/Razorpay) | TEST MODE only | pending |
 | 4 | kit start | Domain + email sender | localhost + MailHog dev defaults | pending |
 | 5 | kit start | Legal-review gate: provenance_strip (C2PA) | flag OFF; preserve-only shipped | pending |
 | 6 | kit start | SynthID scope beyond research | research memo only | pending |
+| 7 | 2026-11-12 | Relation of ~/workspace/cleanupload skeleton to Detag (merge or fresh?) | Fresh repo, no reuse, no silent merge | pending |
 
 ## Research log (Phase 6)
 
