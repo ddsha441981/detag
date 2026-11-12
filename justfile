@@ -92,6 +92,12 @@ fixtures-gen:
 env-check:
     python3 scripts/env_check.py
 
+# Validate Grafana dashboards + provisioning (P0-030, NFR-62):
+# JSON parses, uids unique, panels well-formed, every PromQL expr
+# queries only series the code registers.
+dashboards-check:
+    python3 scripts/validate_dashboards.py
+
 # Regenerate the PF_* settings reference table (P0-024). The table is
 # generated from .env.example (name + dev default) and the runbook env
 # table (used-by); never edit docs/06-DELIVERY/04-config-reference.md

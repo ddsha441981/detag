@@ -11,6 +11,12 @@
 - Evidence it is not a P0-029 regression: the test touches only `detag-api` + shutdown code, which P0-029 did not change; identical code fails and passes across runs.
 - Status: open — re-running `just verify` until green is the workaround; a fix (e.g. complete the request before signalling, or retry the drain assertion) belongs to a hardening ticket, not P0-029.
 
+### ASSUMPTION-004 [assumption] Dashboards validated statically; "visible in Grafana" unverified until E0.9 (P0-030)
+- Date: 2026-11-12 · Ticket: P0-030
+- Assumption: the P0-030 AC "dashboards visible in grafana" cannot be verified today — no compose files exist yet (E0.9, P0-085..P0-090), no Grafana runs on this VM, and Grafana cannot be installed via Docker Hub pulls (ADR-0017). The ticket instead delivers schema-valid dashboard JSON + provisioning, validated by `scripts/validate_dashboards.py` (JSON, uids, panels, PromQL allow-list) and enforced in CI; live visibility is re-verified when the compose stack lands.
+- Chosen default: job-outcome/storage/Redis/backup panels are omitted (not faked as "No data" queries) and listed as gaps in `ops/grafana/README.md`; they land with E0.8/E0.4/E0.5/Phase 2.
+- Status: open
+
 ### ASSUMPTION-001 [assumption] `just dev` is a partial stack until E0.9/E0.4 land (P0-012)
 - Date: 2026-11-12 · Ticket: P0-012
 - Assumption: `just dev` (scripts/dev.sh) starts what exists today (api + worker via `cargo run`, /healthz wait) and reports compose deps, /readyz, migrations and seed as pending with their ticket ids — it does not fake a full stack. The Phase 0 exit gate re-verifies `just dev` against the full stack once P0-036 (migrations), P0-043 (seed) and P0-085..P0-090 (compose) land.

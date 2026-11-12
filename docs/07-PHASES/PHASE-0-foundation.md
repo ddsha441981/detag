@@ -241,12 +241,12 @@
   - **AC:**
     - [x] gauges/counters registered
 
-- [ ] **P0-030** — Grafana dashboards as code
+- [x] **P0-030** — Grafana dashboards as code
   - **Type:** chore · **Area:** observability · **Est:** M · **Deps:** P0-029 · **Prio:** P1
   - **Spec:** ops/grafana/dashboards: api-golden, queue, jobs; provisioning config; loaded in compose.
   - **AC:**
-    - [ ] dashboards visible in grafana
-    - [ ] provisioning reload documented
+    - [x] dashboards visible in grafana — statically validated only; live visibility deferred to E0.9 per ASSUMPTION-004 (no Grafana/compose on this VM yet)
+    - [x] provisioning reload documented
 
 - [ ] **P0-031** — Prometheus config + alerts file
   - **Type:** chore · **Area:** observability · **Est:** S · **Deps:** P0-030 · **Prio:** P1

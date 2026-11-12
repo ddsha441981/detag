@@ -5,14 +5,14 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-030
+- **Current ticket:** P0-031
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
 ## Phase status
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 29 / 108 | — |
+| 0 | Foundation & Platform Baseline | 30 / 108 | — |
 | 1 | Identity & Billing | 0 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
@@ -33,11 +33,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-030 — Grafana dashboards as code
-2. P0-031 — Prometheus config + alerts file
-3. P0-032 — Logging hygiene tests
-4. P0-033 — Observability runbook section
-5. P0-034 — Postgres in compose
+1. P0-031 — Prometheus config + alerts file
+2. P0-032 — Logging hygiene tests
+3. P0-033 — Observability runbook section
+4. P0-034 — Postgres in compose
+5. P0-035 — sqlx wiring
 
 ## Bench history (append-only)
 

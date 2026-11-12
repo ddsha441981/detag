@@ -1,0 +1,13 @@
+# Datasources provisioned into Grafana (P0-030, NFR-62).
+# The Prometheus service name/port come from the compose file (E0.9,
+# P0-085+); the api/worker /metrics endpoints are scraped by
+# Prometheus per ops/prometheus/prometheus.yml (P0-031).
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false

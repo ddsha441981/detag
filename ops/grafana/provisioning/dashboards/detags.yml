@@ -1,0 +1,20 @@
+# Dashboard provider (P0-030, NFR-62): Grafana loads every JSON file
+# under the dashboards path at startup and re-reads it every
+# updateIntervalSeconds, so editing a dashboard JSON is enough to
+# update the live dashboard — no import step, no UI edits (UI edits
+# are overwritten by the file; dashboards are code).
+#
+# The compose file (E0.9, P0-085+) mounts:
+#   ops/grafana/dashboards/  -> /var/lib/grafana/dashboards (read-only)
+#   ops/grafana/provisioning/ -> /etc/grafana/provisioning (read-only)
+apiVersion: 1
+
+providers:
+  - name: detag
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: true
