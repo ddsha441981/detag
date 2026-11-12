@@ -128,8 +128,16 @@ seed:
 
 # Compose smoke: up, health checks, enqueue ping job, assert processed.
 # Lands in P0-090; see ADR-0017 for why `verify` does not call it yet.
+# It will call the `smoke-ping` bin (P0-082) against the compose stack.
 smoke:
     @echo "pending: smoke script lands in P0-090 (blocked: docker image pulls, see docs/09-STATE/ISSUES.md)" >&2; exit 1
+
+# Native-stack smoke probe (P0-082): enqueue a ping job on the
+# pipeline queue and assert the worker processes it. Run with the
+# api + worker up on the native stack; `just smoke` (P0-090) calls
+# the same bin against the compose stack.
+smoke-ping:
+    cargo run --quiet -p detag-worker --bin smoke-ping
 
 # Generate deterministic golden fixtures (lands in P0-093).
 fixtures-gen:

@@ -12,6 +12,10 @@ path = "src/main.rs"
 name = "queue-sweep"
 path = "src/bin/queue-sweep.rs"
 
+[[bin]]
+name = "smoke-ping"
+path = "src/bin/smoke-ping.rs"
+
 [dependencies]
 tokio.workspace = true
 serde.workspace = true

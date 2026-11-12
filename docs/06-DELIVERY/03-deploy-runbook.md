@@ -473,6 +473,22 @@ into `compose.base.yml`; the Dockerfile `HEALTHCHECK` lands with
 P0-083). Until then, `just dev` reports `/readyz` after boot and
 `just smoke` (P0-090) waits on both endpoints for every service.
 
+### Smoke ping (P0-082)
+
+`just smoke-ping` runs the `smoke-ping` bin
+(`apps/worker/src/bin/smoke-ping.rs`): it checks the api's
+`/healthz`, enqueues one `ping` envelope on the `pipeline` queue,
+and waits until the worker's `/metrics` shows the dequeue count
+rise and the in-flight gauge return to 0, then prints `smoke ping
+done (job_id=...)` and exits 0. A non-zero exit names what was
+observed (api down, metrics unreachable, or the ping not processed
+within `--timeout-secs`, default 30 s). Run it against the native
+stack with the api + worker up; `just smoke` (P0-090) calls the
+same bin against the compose stack. Honest boundary: the probe
+proves the redis → worker leg plus the api being up — it does not
+prove the api enqueues, because `POST /v1/jobs` is a 501 stub
+until job creation lands in Phase 1.
+
 ### Dashboards (Grafana, as code)
 
 Dashboards live in `ops/grafana/dashboards/` and are provisioned
