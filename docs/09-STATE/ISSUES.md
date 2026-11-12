@@ -4,6 +4,13 @@
 
 ## Open issues
 
+### FLAKY-001 [flaky] `sigterm_drains_in_flight_request_and_exits_zero` fails intermittently (P0-029)
+- Date: 2026-11-12 · Ticket: P0-029
+- Symptom: `apps/api/tests/shutdown.rs` fails with `Connection reset by peer` on `read response` (finished in 0.11 s); the next identical run passes (0.21 s). Seen: fail, fail, pass across three consecutive runs of the same binary.
+- Cause (suspected): timing race in the test itself — SIGTERM is sent while the request is still partial, then the test completes it; if the server starts draining first, hyper closes the mid-headers connection before the final blank line arrives.
+- Evidence it is not a P0-029 regression: the test touches only `detag-api` + shutdown code, which P0-029 did not change; identical code fails and passes across runs.
+- Status: open — re-running `just verify` until green is the workaround; a fix (e.g. complete the request before signalling, or retry the drain assertion) belongs to a hardening ticket, not P0-029.
+
 ### ASSUMPTION-001 [assumption] `just dev` is a partial stack until E0.9/E0.4 land (P0-012)
 - Date: 2026-11-12 · Ticket: P0-012
 - Assumption: `just dev` (scripts/dev.sh) starts what exists today (api + worker via `cargo run`, /healthz wait) and reports compose deps, /readyz, migrations and seed as pending with their ticket ids — it does not fake a full stack. The Phase 0 exit gate re-verifies `just dev` against the full stack once P0-036 (migrations), P0-043 (seed) and P0-085..P0-090 (compose) land.

@@ -235,11 +235,11 @@
   - **AC:**
     - [x] histograms present with template labels
 
-- [ ] **P0-029** — Job/queue metrics hooks
+- [x] **P0-029** — Job/queue metrics hooks
   - **Type:** feat · **Area:** observability · **Est:** S · **Deps:** P0-028 · **Prio:** P1
   - **Spec:** Queue depth gauge, enqueue/dequeue counters, stage timers exported from worker skeleton (values wired in later phases).
   - **AC:**
-    - [ ] gauges/counters registered
+    - [x] gauges/counters registered
 
 - [ ] **P0-030** — Grafana dashboards as code
   - **Type:** chore · **Area:** observability · **Est:** M · **Deps:** P0-029 · **Prio:** P1
