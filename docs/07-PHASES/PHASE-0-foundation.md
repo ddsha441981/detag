@@ -353,11 +353,12 @@
     - [x] checklist committed
   - **Status:** Threshold is the NFR-12 bar: `log_min_duration_statement = 50ms`. Compose: `command: ["postgres", "-c", "log_min_duration_statement=50ms"]` in `ops/compose.db.yml` (`just compose-db-check` green). Native dev DB: cluster-wide in `/etc/postgresql/16/main/postgresql.conf` + `pg_reload_conf()` — cluster-wide (not ALTER DATABASE) because the `pf` role is not a superuser (`ALTER DATABASE ... SET` is refused for this SUSET parameter) and a cluster setting survives `just db::reset`. Verified live: `SHOW` returns 50ms, `pg_sleep(0.06)` logged `duration: 60.710 ms` in `/var/log/postgresql/postgresql-16-main.log`, a fast query adds no line. Checklist: `docs/05-QUALITY/04-slow-query-checklist.md` — all 10 doc-listed indexes, each EXPLAIN (ANALYZE)-verified on a scratch DB (200 users / 20k jobs / ANALYZE): 8 index-backed directly, `api_keys` seq-scanned at 200 rows (planner cost — index proven with `enable_seqscan = off`, 0.019 ms), `audit_logs` actor + `webhook_deliveries` endpoint used Bitmap Index Scan + quicksort. Revisit at NFR-12 (100k jobs/day load) recorded in the doc.
 
-- [ ] **P0-045** — Schema docs automation
+- [x] **P0-045** — Schema docs automation
   - **Type:** docs · **Area:** db · **Est:** S · **Deps:** P0-044 · **Prio:** P1
   - **Spec:** xtask/test diffs migrations against 03-ARCHITECTURE/04-data-model.md table list; fails when a table exists in db but not doc.
   - **AC:**
-    - [ ] drift test green
+    - [x] drift test green
+  - **Status:** `scripts/check_schema_docs.py` (+ `just schema-docs-check`, CI step after config-table-check): parses `CREATE TABLE` from every `*.sql` except `*.down.sql` and the `**<name>**` lines under the doc's `## Tables` section; fails (exit 1) when a table is in migrations but not the doc, or vice versa; `_sqlx_migrations` excluded (sqlx-internal). Static only — no DB needed. Follows the P0-024 precedent (Python script + just recipe + CI step) instead of a Rust xtask — no xtask crate exists in the workspace. Unit tests in `scripts/test_check_schema_docs.py` (6 tests, incl. the real-repo drift test: 19 tables agree). Verified the gate fails: a drifted copy (extra `zebra_stripes` table + deleted `abuse_reports` doc line) exits 1 naming both.
 
 ---
 

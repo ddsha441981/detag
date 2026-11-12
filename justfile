@@ -132,6 +132,12 @@ fixtures-gen:
 env-check:
     python3 scripts/env_check.py
 
+# Fail when a table exists in the migrations but not in the
+# data-model doc, or vice versa (P0-045, NFR-52). Static only —
+# it parses SQL files, no database needed. Runs in CI.
+schema-docs-check:
+    python3 scripts/check_schema_docs.py
+
 # Validate the Postgres dev compose file (P0-034): parses, env
 # interpolates, healthcheck + named volume render. Static only — it
 # does not start containers (CI's postgres service container already
