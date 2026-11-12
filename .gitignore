@@ -13,3 +13,6 @@ coverage/
 *.key
 .DS_Store
 dist/
+
+__pycache__/
+*.py[cod]

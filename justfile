@@ -16,6 +16,15 @@ fmt-check:
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
 
+# Lint commit messages for the conventional-commit policy (P0-006, NFR-52).
+# Default: the HEAD commit only; pass e.g. '--range main~3..HEAD' for more.
+lint-commits args="--single HEAD":
+    python3 scripts/lint_commits.py {{args}}
+
+# Unit-test the commit-message linter (stdlib unittest).
+test-lint-commits:
+    python3 -m unittest discover -s scripts -p "test_*.py"
+
 # Run the full unit + integration test suite.
 test:
     cargo test --workspace

@@ -1,0 +1,45 @@
+# Conventional-commit lint (P0-006, NFR-52).
+#
+# Every commit must be a conventional commit carrying its ticket id and an
+# FR/NFR trace, e.g.:
+#   feat(auth): P1-014 refresh token rotation with reuse detection
+# The linter itself is scripts/lint_commits.py (stdlib only, unit-tested in
+# scripts/test_lint_commits.py). Scope vocabulary lives in CONTRIBUTING.md.
+name: Commits
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Lint commit messages
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="${{ github.event.pull_request.base.sha }}..HEAD"
+          else
+            BEFORE="${{ github.event.before }}"
+            if [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              # First push to a new branch: only the head commit exists in range.
+              python3 scripts/lint_commits.py --single HEAD
+              exit 0
+            fi
+            RANGE="$BEFORE..${{ github.sha }}"
+          fi
+          echo "Linting range: $RANGE"
+          python3 scripts/lint_commits.py --range "$RANGE"
+
+      - name: Unit-test the linter
+        run: python3 -m unittest discover -s scripts -p "test_*.py" -v

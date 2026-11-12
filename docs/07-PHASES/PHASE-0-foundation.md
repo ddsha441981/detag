@@ -75,12 +75,12 @@
     - [x] just verify runs all gates
     - [x] documented
 
-- [ ] **P0-006** — Commit conventions + CI check
+- [x] **P0-006** — Commit conventions + CI check
   - **Type:** chore · **Area:** repo · **Est:** S · **Deps:** P0-005 · **Prio:** P1
   - **Spec:** Conventional-commit lint job; ticket id required in commit body (NFR-52); scope vocabulary documented (auth, engine, api, worker, web, ops).
   - **AC:**
-    - [ ] CI job active
-    - [ ] vocabulary documented
+    - [x] CI job active
+    - [x] vocabulary documented
 
 - [ ] **P0-007** — cargo-deny setup
   - **Type:** chore · **Area:** repo · **Est:** S · **Deps:** P0-006 · **Prio:** P1

@@ -26,6 +26,34 @@ build plan lives in `docs/` (the PureFrame agent kit): start at
 - Conventional commits, one ticket per commit:
   `feat(auth): P1-014 refresh token rotation with reuse detection`
   Ticket id + FR/NFR trace go in the commit body.
+- Subject format (enforced by CI, `.github/workflows/commits.yml`):
+  `<type>(<scope>): P<phase>-<num> <description>`, subject ≤ 100 chars,
+  and the message must reference at least one requirement id
+  (`FR-<area>-<n>` or `NFR-<n>`).
+- Types: `feat`, `fix`, `chore`, `docs`, `test`, `refactor`, `perf`,
+  `ci`, `build`, `revert`.
+- Scope vocabulary — use the area the change belongs to:
+
+  | Scope | Meaning |
+  | --- | --- |
+  | `auth` | Identity, sessions, API keys, RBAC (Phase 1) |
+  | `engine` | Removal engine: detect / mask / inpaint / encode / QC |
+  | `api` | `apps/api` HTTP layer: routes, services, repos, middleware |
+  | `worker` | `apps/worker` job pipeline |
+  | `web` | Next.js console + admin UI |
+  | `ops` | Compose, CI, deploy, observability, load tests |
+  | `core` | `crates/core`: config, errors, domain types, state machine |
+  | `storage` | `crates/storage`: storage provider, presign, multipart |
+  | `billing` | `crates/billing`: Stripe/Razorpay adapters |
+  | `mailer` | `crates/mailer`: SMTP, templates, outbox |
+  | `docs` | Kit docs under `docs/` (spec changes, not code) |
+  | `repo` | Repo-wide tooling: workspace, justfile, hygiene, CI config |
+
+  A commit touching several areas takes the scope of its primary area.
+- Check your message before committing: `just lint-commits`
+  (lints HEAD; `just lint-commits "--range main~3..HEAD"` for a range).
+  The linter is `scripts/lint_commits.py` (unit tests in
+  `scripts/test_lint_commits.py`).
 - Every ticket: code + tests land together; tick the checkbox in its phase
   file and update `docs/09-STATE/PROGRESS.md` in the same commit.
 - No secrets in the repo (env vars use the `PF_` prefix; see `.env.example`).
