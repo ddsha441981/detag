@@ -1,0 +1,19 @@
+[package]
+name = "detag-testkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Shared test context for Detag integration tests (P0-092)"
+
+[dependencies]
+detag-core = { path = "../core" }
+tokio.workspace = true
+sqlx.workspace = true
+url.workspace = true
+uuid.workspace = true
+aws-sdk-s3.workspace = true
+testcontainers.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

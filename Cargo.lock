@@ -1194,6 +1194,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "detag-testkit"
+version = "0.1.0"
+dependencies = [
+ "aws-sdk-s3",
+ "detag-core",
+ "sqlx",
+ "testcontainers",
+ "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "detag-worker"
 version = "0.1.0"
 dependencies = [

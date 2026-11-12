@@ -716,11 +716,12 @@
 
 ## E0.10 — Test harness & fixtures (area: testing)
 
-- [ ] **P0-092** — testcontainers fixtures
+- [x] **P0-092** — testcontainers fixtures
   - **Type:** feat · **Area:** testing · **Est:** M · **Deps:** — · **Prio:** P1
   - **Spec:** Shared test ctx: pg (migrated), redis, minio bucketed; spawn_app helper; per-test isolation (schema-per-test or cleanup); parallel-safe.
   - **AC:**
-    - [ ] parallel suite stable
+    - [x] parallel suite stable
+  - **Status:** New `crates/testkit` (`detag-testkit`, workspace member): `TestCtx` — per-test scratch DB (`detag_test_<uuid-v7-hex>`, all migrations applied, dropped by `close()`), per-test redis namespace (`testkit:<hex>:` via `redis_key`), per-test S3 bucket. `TestCtx::new()` builds from env (native services on this VM, compose in CI; bucket best-effort — `s3_ready` false with no MinIO, ctx still builds); `TestCtx::containers()` starts postgres:16 / redis:7 / minio/minio via testcontainers (docker only, callers env-gate on `PF_TEST_CONTAINERS=1`, bucket asserted created). `start_containers` + `ensure_bucket` are the shared helpers; the `spawn_app` helper already exists in `apps/api/tests/common` (`TestApp::spawn`), so no second one was invented. Tests in `crates/testkit/tests/ctx.rs` (5: migrated DB + close drops it, two-ctx isolation, 4-way parallel isolation, redis namespaces, containers leg env-gated). `just verify` green (336 passed, 0 failed — 330 at P0-091 + 6 new). Two honest notes: (1) the api harness still carries its own inline container definitions — deduping it onto testkit's `start_containers`/`ensure_bucket` is a follow-up (its `TestFixtures` shape differs: one shared scratch DB, not per-test DBs); the testkit doc comment that claimed the harness already used the shared pieces was corrected, not left as a false claim. (2) A VM reset at run start had wiped postgres/redis entirely — restored per ASSUMPTION-010 (apt install redis-server + postgresql-16, setsid redis, `pg_ctlcluster 16 main start`, recreated `pf` role/db). `just verify` needed 9 attempts across the run — FLAKY-001 (two streaks of 3) and FLAKY-002 (2×) only, no regressions (see ISSUES.md updates).
 
 - [ ] **P0-093** — Golden media generator
   - **Type:** chore · **Area:** testing · **Est:** M · **Deps:** P0-092 · **Prio:** P1
