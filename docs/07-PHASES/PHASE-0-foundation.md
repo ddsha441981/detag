@@ -409,11 +409,12 @@
     - [x] suite green
   - **Status:** `crates/core/tests/redis_integration.rs` (6 tests, 3x stable): mixed 30-task workload on one pool (rate-limit + cache + pubsub, loader once per key, every event on its own channel), pubsub p95 ≤ 500 ms under 20-task churn, failover of all three primitives + health probe to typed `AppError::CacheUnavailable` (PF-5003, 503, PII-safe body), recovery after failover. New variant + `From` impls in `crates/core/src/error.rs` (exhaustive taxonomy tests now 34 variants; ADR-0018). Deviation logged as ASSUMPTION-009: no testcontainers on this VM (DOCKER-001) — suite runs against native redis per ASSUMPTION-008, same as P0-046..P0-050. Also restored the dev services this run (ASSUMPTION-010): redis-server 7.0.15 + postgresql-16 were gone after a VM reset; reinstalled via apt, redis started manually with dev flags, pg cluster started, `pf` role (CREATEDB) + `pf` db created. `just verify` green (1 retry for FLAKY-001 only at baseline; the P0-051 run went green on attempt 1).
 
-- [ ] **P0-052** — Redis ops notes
+- [x] **P0-052** — Redis ops notes
   - **Type:** docs · **Area:** redis · **Est:** S · **Deps:** P0-051 · **Prio:** P1
   - **Spec:** Key naming table, TTL conventions, memory expectations, degraded-mode behavior per NFR-13; in runbook.
   - **AC:**
-    - [ ] runbook section committed
+    - [x] runbook section committed
+  - **Status:** `## Redis` section added to `docs/06-DELIVERY/03-deploy-runbook.md` (before Observability): key-naming table (7 namespaces, exact `pf:{ns}:{key}` patterns, typed helpers from `crates/core/src/redis/keys.rs`), TTL table (30 s flags / 48 h usage / 72 h result ceiling / per-window buckets / per-caller cache TTL / idempotency `expires_at` / ephemeral pubsub), memory expectations (no persistence by design, 256 MB `allkeys-lru` dev cap, everything re-derivable, eviction-rate signal), degraded mode per NFR-13 — honestly split into implemented (PF-5003 503, read-through cache, flags fail-closed to OFF) vs not-yet (`Retry-After` header lands with job creation; `DetagRedisDown` needs redis_exporter; `/readyz` pending — `redis_health` probe exists), plus operating commands (ping, INFO memory, SCAN per namespace, safe FLUSHDB caveat, restart procedure, Redis-down playbook). Cross-check caught and fixed two wrong helper names (`pubsub_channel`/`job_status_key` → `job_events_channel`/`job_key`). `just verify` green on attempt 3 (attempts 1–2 failed on known FLAKY-001 only).
 
 ---
 

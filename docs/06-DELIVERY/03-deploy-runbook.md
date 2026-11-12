@@ -76,6 +76,124 @@ until v1.0.0 is declared (see the release checklist).
 3. Boot stack with scratch config; login as test user; verify a historical job's artifacts (within TTL) render.
 4. Record time-to-restore in night report; target < 30 min.
 
+## Redis
+
+Redis is a cache, a rate limiter, and a job-event bus — never the
+source of truth. Postgres owns durable state; every Redis entry is
+re-derivable (flags from the flag store, usage counters from the
+usage rows, rate-limit buckets from the next check, cache entries
+from their loader). Losing Redis costs latency and burst control,
+never data. The service is defined in `ops/compose.redis.yml`
+(`redis:7-alpine`, folded into `compose.base.yml` by E0.9, P0-085).
+
+### Key naming
+
+Every key is `pf:{namespace}:{key}` (see `crates/core/src/redis/keys.rs`).
+Callers use the typed helpers (`flags_key`, `usage_key`,
+`rate_limit_key`, `cache_key`, `job_events_channel`,
+`idempotency_key`, `job_key`) — never a hand-built string. A key with
+whitespace or an empty key panics: that is a programming error, not
+a runtime one.
+
+| Namespace | Pattern | Used by |
+| --- | --- | --- |
+| `flags` | `pf:flags:{flag}` | Feature-flag cache (P0-022, E0.8) |
+| `usage` | `pf:usage:{user}:{YYYY-MM-DD}` | Daily usage-counter mirrors (Phase 1) |
+| `ratelimit` | `pf:ratelimit:{scope}:{id}` | Rate-limit buckets (P0-048) |
+| `cache` | `pf:cache:{kind}:{id}` | `get_or_set` cache entries (P0-049) |
+| `pubsub` | `pf:pubsub:job:{job_id}` | Job event channels (P0-050) |
+| `idempotency` | `pf:idempotency:{key}` | Idempotency response cache |
+| `jobs` | `pf:jobs:{job_id}` | Job status/progress cache |
+
+### TTL conventions
+
+| Entry | TTL |
+| --- | --- |
+| Flag cache | `TTL_FLAG_CACHE` — 30 s |
+| Usage-counter mirror | `TTL_USAGE_COUNTER` — 48 h (outlives the day it counts + rollover grace; the durable row lives 400 d in Postgres) |
+| Result/status cache | Capped by `TTL_RESULT_MAX` — 72 h (the Business plan TTL; a shorter plan TTL caps its own entries). Plan result TTLs: Free 6 h / Pro 24 h / Business 72 h (`PF_RESULTS_TTL_FREE/PRO/BUSINESS_H`) |
+| Rate-limit bucket | Exactly its window — no shared constant |
+| Cache entry | Its caller's TTL — no shared constant |
+| Idempotency entry | Until the row's `expires_at` |
+| Pubsub channel | None — channels are ephemeral |
+
+TTLs that are not constants are deliberately absent: a shared
+constant for those would be wrong the first time a caller needed a
+different value.
+
+### Memory expectations
+
+- **No persistence, by design.** `--appendonly no`, `--save ""`,
+  no volume: a restart must never replay stale entries. Cache
+  data is ephemeral — `docker compose down` loses it and nothing
+  breaks.
+- **Cap + eviction (dev):** `--maxmemory 256mb`
+  `--maxmemory-policy allkeys-lru`. When full, the
+  least-recently-used keys go first. That is safe for every
+  namespace: usage counters and the flags cache are re-derived
+  from Postgres, rate-limit buckets are re-created on the next
+  check, singleflight entries are ephemeral, and pubsub channels
+  hold nothing on disk. 256 MB is a dev default (the VM has
+  ~7.7 GB and the cache must never starve the api/worker);
+  production sizing is a deploy-time decision, not a code change.
+- **What to watch:** `detag_cache_hits_total` /
+  `detag_cache_misses_total` by kind (P0-049) on `/metrics`, plus
+  `redis-cli INFO memory` (`used_memory_human`,
+  `evicted_keys`). A climbing eviction rate with a flat hit rate
+  means the cap is too small for the working set — raise
+  `maxmemory` in `ops/compose.redis.yml`, not the TTLs.
+
+### Degraded mode (NFR-13)
+
+NFR-13: *Redis failure degrades gracefully: API returns 503 +
+Retry-After on job creation, reads stay up.* What that means in
+practice, and what is implemented today:
+
+- **Implemented (P0-051):** any Redis failure on a Redis-dependent
+  path surfaces as typed `AppError::CacheUnavailable` — PF-5003,
+  HTTP 503, PII-safe detail ("the cache is temporarily
+  unavailable"). The provider error never reaches the response
+  body. Failover + recovery is covered by
+  `crates/core/tests/redis_integration.rs`.
+- **Implemented (P0-049):** the cache is read-through — a miss
+  loads from the source of truth, so a Redis outage costs a
+  reload, not a wrong answer.
+- **Implemented (P0-022):** the flag resolver fails closed to OFF
+  when the flag store errors, and caches that answer for the TTL.
+- **Not yet:** the `Retry-After` header on job creation — it lands
+  with the job-creation endpoint (the endpoint does not exist
+  yet). The `DetagRedisDown` alert rule is commented out in
+  `ops/prometheus/alerts.yml` because it needs a redis_exporter
+  scrape job (E0.5, P0-044+); `/readyz` does not exist yet either — the
+  `redis_health` probe in core (P0-046) is what it will call.
+  Until then, Redis health is the compose healthcheck plus
+  `redis-cli ping`.
+
+### Operating it
+
+```bash
+# Is it up? (compose healthcheck runs the same command)
+docker compose -f ops/compose.redis.yml ps
+redis-cli ping                                   # PONG
+redis-cli INFO memory | grep -E 'used_memory_human|evicted_keys|maxmemory'
+redis-cli DBSIZE                                 # key count
+redis-cli --scan --pattern 'pf:ratelimit:*' | wc -l   # keys per namespace
+```
+
+- **Restart:** `docker compose -f ops/compose.redis.yml down && docker compose -f ops/compose.redis.yml up -d --wait` — data loss is by design (see above). Dev only, while E0.9 is pending: the native `redis-server` on this VM (ASSUMPTION-008) is started manually and does not survive a VM reset — reinstall/restart per ASSUMPTION-010.
+- **Flush:** `FLUSHDB` is safe (everything is re-derivable) but it
+  also wipes rate-limit buckets, so the next minute admits a
+  burst up to the full per-window limit. Do it in low traffic and
+  say so in the incident log.
+- **Redis down:** `docker compose ps`, then the redis logs. While
+  it is down, Redis-dependent writes answer PF-5003 (503) and
+  reads fall back to Postgres; do not restart the api to "fix"
+  it — the api recovers on its own once Redis answers again
+  (failover + recovery is tested, P0-051). Never point
+  `PF_REDIS_URL` at a shared or public Redis: dev binds loopback
+  only, no password; production needs a password and the
+  `internal` network (see "First deploy" above).
+
 ## Observability
 
 ### Dashboards (Grafana, as code)
