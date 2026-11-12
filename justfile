@@ -194,14 +194,14 @@ schema-docs-check:
 # holds :5432; the live `up --wait` check waits for E0.9's smoke,
 # P0-090). Requires the docker compose plugin.
 compose-db-check:
-    docker compose -f ops/compose.db.yml --env-file .env config --quiet
+    docker compose -f ops/compose.db.yml --env-file .env.example config --quiet
 
 # Validate the Redis dev compose file (P0-046): parses, env
 # interpolates, healthcheck renders. Static only — it does not start
 # containers (the live `up --wait` check waits for E0.9's smoke,
 # P0-090). Requires the docker compose plugin.
 compose-redis-check:
-    docker compose -f ops/compose.redis.yml --env-file .env config --quiet
+    docker compose -f ops/compose.redis.yml --env-file .env.example config --quiet
 
 # Validate the MinIO dev compose file (P0-054): the static policy
 # check first (bucket stays private — runnable anywhere, no docker
@@ -212,7 +212,22 @@ compose-redis-check:
 compose-minio-check:
     python3 scripts/check_minio_policy.py
     python3 scripts/check_minio_lifecycle.py
-    docker compose -f ops/compose.minio.yml --env-file .env config --quiet
+    docker compose -f ops/compose.minio.yml --env-file .env.example config --quiet
+
+# Validate the base compose file (P0-085): renders for no profile, dev
+# and prod, and the service lists match the profile contract (web is
+# dev-only). Static only — it does not start containers (the live `up`
+# waits for CI/E0.9's smoke, P0-090). Requires the docker compose plugin.
+# NOTE: the compose checks use --env-file .env.example (P0-085), not
+# .env: `--env-file` fails when the file is missing, and a fresh
+# checkout / CI has no .env — the example's dev defaults are what the
+# checks need. `just dev` (the real dev flow) still uses the dev .env.
+compose-base-check:
+    docker compose -f ops/compose.base.yml --env-file .env.example config --quiet
+    docker compose -f ops/compose.base.yml --profile dev --env-file .env.example config --quiet
+    docker compose -f ops/compose.base.yml --profile prod --env-file .env.example config --quiet
+    docker compose -f ops/compose.base.yml --profile dev --env-file .env.example config --services | grep -q '^web$'
+    ! docker compose -f ops/compose.base.yml --profile prod --env-file .env.example config --services | grep -q '^web$'
 
 # Image size gate (P0-083, NFR-63; P0-084 worker): build the api and
 # worker images and fail if either is over its ceiling (the check reads

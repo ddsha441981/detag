@@ -8,6 +8,7 @@
 
 | Name | Default (dev) | Used by |
 | --- | --- | --- |
+| `PF_API_HOST` | `127.0.0.1` | api |
 | `PF_API_PORT` | `8080` | api |
 | `PF_DATABASE_URL` | `postgres://pf:pf@localhost:5432/pf` | api, worker |
 | `PF_ENGINE_GPU` | `0` | worker/engine |
@@ -19,6 +20,7 @@
 | `PF_JWT_SECRET` | `dev-fixed` | api |
 | `PF_LOG_LEVEL` | `info` | all |
 | `PF_MAIL_FROM` | `noreply@detag.local` | mailer |
+| `PF_METRICS_HOST` | `127.0.0.1` | api, worker |
 | `PF_METRICS_PORT` | `9090` | api |
 | `PF_OTEL_ENDPOINT` | (empty) | all |
 | `PF_POSTGRES_DB` | `pf` | postgres (compose) |

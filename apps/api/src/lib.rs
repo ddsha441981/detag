@@ -23,8 +23,8 @@
 //! # Listeners (main.rs)
 //!
 //! Two listeners, one process:
-//! - public: `127.0.0.1:PF_API_PORT` (default 8080) — the api.
-//! - metrics: `127.0.0.1:PF_METRICS_PORT` (default 9090) — the
+//! - public: `PF_API_HOST:PF_API_PORT` (default 127.0.0.1:8080) — the api.
+//! - metrics: `PF_METRICS_HOST:PF_METRICS_PORT` (default 127.0.0.1:9090) — the
 //!   internal `/metrics` server, never on the public port
 //!   (ASSUMPTION-003). One signal listener stops both; both
 //!   drain in-flight requests on SIGTERM/SIGINT (P0-023).

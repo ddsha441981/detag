@@ -28,6 +28,7 @@ use figment::{
     Figment,
 };
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 use std::path::Path;
 use thiserror::Error;
 use url::Url;
@@ -87,11 +88,21 @@ pub struct Settings {
     pub jwt_secret: String,
     /// Env: PF_PUBLIC_BASE_URL
     pub public_base_url: String,
-    /// Env: PF_API_PORT — TCP port the api binds on 127.0.0.1.
+    /// Env: PF_API_PORT — TCP port the api binds on PF_API_HOST.
     pub api_port: u16,
+    /// Env: PF_API_HOST — IP the api binds on (P0-085). Default
+    /// 127.0.0.1: the api sits behind caddy / on the host's loopback.
+    /// Compose sets 0.0.0.0 — inside a container 127.0.0.1 is the
+    /// container's own loopback, unreachable from other containers
+    /// or published ports; the container network is the boundary.
+    pub api_host: IpAddr,
     /// Env: PF_METRICS_PORT — TCP port the internal /metrics server
-    /// binds on 127.0.0.1 (never on the public api port).
+    /// binds on PF_METRICS_HOST (never on the public api port).
     pub metrics_port: u16,
+    /// Env: PF_METRICS_HOST — IP the internal /metrics servers bind
+    /// on (P0-085): the api's and the worker's. Default 127.0.0.1;
+    /// compose sets 0.0.0.0 for the same reason as PF_API_HOST.
+    pub metrics_host: IpAddr,
     /// Env: PF_STRIPE_SECRET_KEY
     pub stripe_secret_key: String,
     /// Env: PF_STRIPE_WEBHOOK_SECRET
@@ -213,7 +224,9 @@ impl Default for Settings {
             jwt_secret: "dev-fixed".to_string(),
             public_base_url: "http://localhost:8080".to_string(),
             api_port: 8080,
+            api_host: IpAddr::from([127, 0, 0, 1]),
             metrics_port: 9090,
+            metrics_host: IpAddr::from([127, 0, 0, 1]),
             stripe_secret_key: "sk_test_placeholder".to_string(),
             stripe_webhook_secret: "whsec_placeholder".to_string(),
             razorpay_key: "rzp_test_placeholder".to_string(),
@@ -260,7 +273,9 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("jwt_secret", "PF_JWT_SECRET"),
     ("public_base_url", "PF_PUBLIC_BASE_URL"),
     ("api_port", "PF_API_PORT"),
+    ("api_host", "PF_API_HOST"),
     ("metrics_port", "PF_METRICS_PORT"),
+    ("metrics_host", "PF_METRICS_HOST"),
     ("stripe_secret_key", "PF_STRIPE_SECRET_KEY"),
     ("stripe_webhook_secret", "PF_STRIPE_WEBHOOK_SECRET"),
     ("razorpay_key", "PF_RAZORPAY_KEY"),
@@ -357,7 +372,9 @@ impl Settings {
             jwt_secret: field!(jwt_secret, String),
             public_base_url: field!(public_base_url, String),
             api_port: field!(api_port, u16),
+            api_host: field!(api_host, IpAddr),
             metrics_port: field!(metrics_port, u16),
+            metrics_host: field!(metrics_host, IpAddr),
             stripe_secret_key: field!(stripe_secret_key, String),
             stripe_webhook_secret: field!(stripe_webhook_secret, String),
             razorpay_key: field!(razorpay_key, String),
@@ -695,6 +712,7 @@ mod tests {
     /// invalid value behind breaks the next test's defaults).
     const ALL_VARS: &[&str] = &[
         "PF_API_PORT",
+        "PF_API_HOST",
         "PF_DATABASE_URL",
         "PF_REDIS_URL",
         "PF_S3_ENDPOINT",
@@ -705,6 +723,7 @@ mod tests {
         "PF_JWT_SECRET",
         "PF_PUBLIC_BASE_URL",
         "PF_METRICS_PORT",
+        "PF_METRICS_HOST",
         "PF_STRIPE_SECRET_KEY",
         "PF_STRIPE_WEBHOOK_SECRET",
         "PF_RAZORPAY_KEY",
@@ -781,7 +800,9 @@ mod tests {
         assert_eq!(s.jwt_secret, "dev-fixed");
         assert_eq!(s.public_base_url, "http://localhost:8080");
         assert_eq!(s.api_port, 8080);
+        assert_eq!(s.api_host, IpAddr::from([127, 0, 0, 1]));
         assert_eq!(s.metrics_port, 9090);
+        assert_eq!(s.metrics_host, IpAddr::from([127, 0, 0, 1]));
         assert_eq!(s.stripe_secret_key, "sk_test_placeholder");
         assert_eq!(s.stripe_webhook_secret, "whsec_placeholder");
         assert_eq!(s.razorpay_key, "rzp_test_placeholder");
@@ -813,10 +834,14 @@ mod tests {
         env::set_var("PF_DATABASE_URL", "postgres://u:p@db:5432/x");
         env::set_var("PF_SMTP_PORT", "2525");
         env::set_var("PF_FEATURE_RAZORPAY", "true");
+        env::set_var("PF_API_HOST", "0.0.0.0");
+        env::set_var("PF_METRICS_HOST", "0.0.0.0");
         let settings = Settings::load_from(None).expect("env load must work");
         assert_eq!(settings.database_url, "postgres://u:p@db:5432/x");
         assert_eq!(settings.smtp_port, 2525);
         assert!(settings.feature_razorpay);
+        assert_eq!(settings.api_host, IpAddr::from([0, 0, 0, 0]));
+        assert_eq!(settings.metrics_host, IpAddr::from([0, 0, 0, 0]));
         // Untouched vars keep their defaults.
         assert_eq!(settings.redis_url, "redis://localhost:6379");
     }
@@ -841,6 +866,18 @@ mod tests {
         let message = err.to_string();
         assert!(
             message.contains("PF_SMTP_PORT"),
+            "error must name the var, got: {message}"
+        );
+    }
+
+    #[test]
+    fn invalid_host_fails_with_var_name() {
+        let _env = clean_env();
+        env::set_var("PF_API_HOST", "not-an-ip");
+        let err = Settings::load_from(None).expect_err("bad host must fail");
+        let message = err.to_string();
+        assert!(
+            message.contains("PF_API_HOST"),
             "error must name the var, got: {message}"
         );
     }

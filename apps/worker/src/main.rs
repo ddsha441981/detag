@@ -89,10 +89,11 @@ async fn main() {
             eprintln!("detag-worker: {err}");
             std::process::exit(1);
         });
-    // Internal /metrics server (P0-080): its own port on loopback,
-    // never on a public port. A taken port is a boot error — the
-    // gauges are part of the worker's contract, not a nice-to-have.
-    let metrics_addr = SocketAddr::from(([127, 0, 0, 1], settings.worker_metrics_port));
+    // Internal /metrics server (P0-080): its own port on
+    // PF_METRICS_HOST (loopback by default, never on a public port).
+    // A taken port is a boot error — the gauges are part of the
+    // worker's contract, not a nice-to-have.
+    let metrics_addr = SocketAddr::from((settings.metrics_host, settings.worker_metrics_port));
     let metrics_listener = tokio::net::TcpListener::bind(metrics_addr)
         .await
         .unwrap_or_else(|err| {

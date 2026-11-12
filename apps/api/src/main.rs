@@ -33,14 +33,15 @@ async fn main() {
     });
     let pool = state.pool.clone();
     let app = build_router(state, metrics.clone());
-    let addr = SocketAddr::from(([127, 0, 0, 1], settings.api_port));
+    let addr = SocketAddr::from((settings.api_host, settings.api_port));
     tracing::info!(addr = %addr, "listening");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
 
     // Internal /metrics server (P0-026, FR-X-02): its own port on
-    // loopback, never on the public api port. Compose network isolation
-    // (internal network only, port not published) lands with E0.9.
-    let metrics_addr = SocketAddr::from(([127, 0, 0, 1], settings.metrics_port));
+    // PF_METRICS_HOST, never on the public api port. In compose the
+    // metrics port is reachable only on the internal network (E0.9);
+    // natively it stays on loopback.
+    let metrics_addr = SocketAddr::from((settings.metrics_host, settings.metrics_port));
     tracing::info!(addr = %metrics_addr, "metrics listening");
     let metrics_listener = tokio::net::TcpListener::bind(metrics_addr).await.unwrap();
 

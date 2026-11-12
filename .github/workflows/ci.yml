@@ -104,6 +104,8 @@ jobs:
         run: just compose-db-check
       - name: compose-redis-check (Redis compose file validates)
         run: just compose-redis-check
+      - name: compose-base-check (base renders for dev/prod, web is dev-only)
+        run: just compose-base-check
       - name: migrate (clean migrate on the empty CI database, twice for idempotency)
         run: |
           just migrate

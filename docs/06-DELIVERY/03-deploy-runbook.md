@@ -43,6 +43,27 @@ builds this image against a 200 MB uncompressed ceiling — a Phase-0
 ops guardrail, not an NFR (NFR-63 caps API images only; the worker
 ceiling comes from the parts estimate, ~146 MB).
 
+### Compose stack (P0-085)
+
+`ops/compose.base.yml` is the shared stack: `edge` (caddy + web +
+api) and `internal` (api + worker + postgres + redis + minio, no
+route out) networks; `pgdata`, `miniadata` and `models` volumes; the
+api, worker, web placeholder (dev-only profile), postgres, redis,
+minio and the one-shot minio bootstrap. The dev/prod overrides
+(`compose.dev.yml` P0-086, `compose.prod.yml` P0-087) layer on top:
+`docker compose -f ops/compose.base.yml -f ops/compose.dev.yml
+--env-file .env up -d --wait`. Two things P0-085 had to fix for
+compose to work at all: the api and the metrics servers bind
+`PF_API_HOST` / `PF_METRICS_HOST` (default 127.0.0.1; compose sets
+0.0.0.0 — inside a container 127.0.0.1 is the container's own
+loopback, unreachable from other containers or published ports),
+and inter-service URLs use service DNS names (`postgres`, `redis`,
+`minio`), never localhost. Validate with `just compose-base-check`
+(renders for no profile, dev and prod; asserts web is dev-only).
+The per-service fragments (`compose.{db,redis,minio}.yml`) stay as
+the VM-local host-networking path (ADR-0014). Live `up` waits for
+CI/E0.9's smoke (P0-090, DOCKER-001).
+
 ## Environment variables (PF_*)
 
 | Var | Used by | Default (dev) | Notes |
@@ -53,8 +74,10 @@ ceiling comes from the parts estimate, ~146 MB).
 | `PF_S3_ENDPOINT`, `PF_S3_BUCKET`, `PF_S3_ACCESS_KEY`, `PF_S3_SECRET_KEY`, `PF_S3_REGION` | storage | MinIO localhost:9000 | private bucket required |
 | `PF_JWT_SECRET` | api | dev-fixed | 64B in prod; rotation = dual-verify window |
 | `PF_PUBLIC_BASE_URL` | api | http://localhost:8080 | used in signed URLs |
-| `PF_API_PORT` | api | 8080 | port the api binds on 127.0.0.1 |
-| `PF_METRICS_PORT` | api | 9090 | port the internal /metrics server binds on 127.0.0.1 |
+| `PF_API_PORT` | api | 8080 | port the api binds on PF_API_HOST |
+| `PF_API_HOST` | api | 127.0.0.1 | IP the api binds on (P0-085): loopback natively; compose sets 0.0.0.0 — inside a container 127.0.0.1 is the container's own loopback, unreachable from other containers or published ports |
+| `PF_METRICS_HOST` | api, worker | 127.0.0.1 | IP the internal /metrics servers bind on (P0-085): same rule as PF_API_HOST |
+| `PF_METRICS_PORT` | api | 9090 | port the internal /metrics server binds on PF_METRICS_HOST |
 | `PF_ENVIRONMENT` | all | dev | dev \| stage \| prod; gates the Swagger UI (`/docs`, P0-067) — prod serves no `/docs` |
 | `PF_WORKER_CONCURRENCY` | worker | 4 | apalis workers per queue (pipeline, cleanup, email, reconciliation — P0-075); must be >= 1 |
 | `PF_WORKER_METRICS_PORT` | worker | 9092 | port the worker's internal /metrics server binds on 127.0.0.1 (P0-080) |

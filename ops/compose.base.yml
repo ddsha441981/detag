@@ -1,0 +1,281 @@
+# compose.base.yml — the shared Detag stack (P0-085, E0.9).
+#
+# Common env, networks, volumes, and the six services; the dev/prod
+# overrides (compose.dev.yml P0-086, compose.prod.yml P0-087) layer
+# on top of this file:
+#
+#   docker compose -f ops/compose.base.yml -f ops/compose.dev.yml --env-file .env up -d --wait
+#   docker compose -f ops/compose.base.yml -f ops/compose.prod.yml --env-file .env up -d --wait
+#
+# Networks (the runbook's topology): `edge` carries caddy + web +
+# api; `internal` carries api + worker + postgres + redis + minio and
+# has no route out. The api sits on both; the worker and the data
+# services sit on `internal` only. This is the canonical bridge
+# topology for CI/deploy — it differs from the per-service fragments
+# (ops/compose.{db,redis,minio}.yml), which use `network_mode: host`
+# per ADR-0014 because this VM has no bridge networking. The fragments
+# stay as the VM-local dev path until docker works here.
+#
+# Profiles: `web` is `dev`-only (the console is a placeholder until
+# Phase 4; a stub page has no place in prod). Everything else runs in
+# both profiles:
+#   docker compose -f ops/compose.base.yml --profile dev config --services   # 7 services
+#   docker compose -f ops/compose.base.yml --profile prod config --services  # 6 services
+#
+# Env: every var is explicit `environment:` with a `${VAR:-default}`
+# matching `.env.example` — no `env_file:`, so the file validates with
+# no `.env` present. Inter-service URLs use service DNS names
+# (postgres/redis/minio), never localhost: inside a container
+# localhost is the container itself. The full wiring audit + the
+# no-literal-secrets grep gate land in P0-089.
+#
+# Live verification is deferred to CI (DOCKER-001: containers cannot
+# start on this VM). What IS verified here: `docker compose config`
+# renders for both profiles (the compose plugin was restored on this
+# VM in P0-085) and the service lists match the profile contract.
+name: detag
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: detag-postgres
+    networks:
+      - internal
+    # Slow-query log (P0-044, NFR-12 bar: clean < 50 ms): log every
+    # statement slower than 50 ms. (Same as ops/compose.db.yml.)
+    command: ["postgres", "-c", "log_min_duration_statement=50ms"]
+    environment:
+      POSTGRES_USER: ${PF_POSTGRES_USER:-pf}
+      POSTGRES_PASSWORD: ${PF_POSTGRES_PASSWORD:-pf}
+      POSTGRES_DB: ${PF_POSTGRES_DB:-pf}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER:-pf} -d $${POSTGRES_DB:-pf}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: detag-redis
+    networks:
+      - internal
+    # Cache role (P0-046): NO persistence — `--appendonly no` and
+    # `--save ""`: a cache can always be rebuilt, and a restart must
+    # never replay stale entries. There is deliberately no volume.
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "no",
+        "--save",
+        "",
+        "--maxmemory",
+        "256mb",
+        "--maxmemory-policy",
+        "allkeys-lru",
+      ]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  minio:
+    # :latest on purpose (P0-054): MinIO tags are dated RELEASE tags
+    # and none could be verified — the Hub API returns "object not
+    # found" for the minio namespace from this VM. Pin both images to
+    # a dated RELEASE tag once CI can pull (see the ticket status in
+    # PHASE-0-foundation.md).
+    image: minio/minio:latest
+    container_name: detag-minio
+    networks:
+      - internal
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${PF_S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${PF_S3_SECRET_KEY:-minioadmin}
+    volumes:
+      - miniadata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # One-shot bootstrap: create the bucket and lock it private.
+  # Exits 0 on success; `restart: "no"` so a failure is visible
+  # instead of looping forever. Re-running `up` re-runs it, and
+  # `mb --ignore-existing` makes that a no-op for an existing bucket.
+  bootstrap:
+    image: minio/mc:latest
+    container_name: detag-minio-bootstrap
+    networks:
+      - internal
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      # The minio service DNS name, not localhost: inside this
+      # container localhost is the bootstrap container itself.
+      PF_S3_ENDPOINT: ${PF_S3_ENDPOINT:-http://minio:9000}
+      PF_S3_BUCKET: ${PF_S3_BUCKET:-detag-dev}
+      PF_S3_ACCESS_KEY: ${PF_S3_ACCESS_KEY:-minioadmin}
+      PF_S3_SECRET_KEY: ${PF_S3_SECRET_KEY:-minioadmin}
+    volumes:
+      # The lifecycle config (P0-060): applied with `mc ilm import`
+      # below. Path is relative to this compose file (ops/).
+      - ./minio/lifecycle.json:/lifecycle.json:ro
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        set -eu
+        # Wait for MinIO to answer (bounded: fail loudly after ~60 s).
+        i=0
+        until mc alias set detag "$${PF_S3_ENDPOINT}" "$${PF_S3_ACCESS_KEY}" "$${PF_S3_SECRET_KEY}" >/dev/null 2>&1; do
+          i=$$((i + 1))
+          if [ "$$i" -ge 30 ]; then echo "bootstrap: minio did not answer in 60s" >&2; exit 1; fi
+          sleep 2
+        done
+        mc mb --ignore-existing "detag/$${PF_S3_BUCKET}"
+        # Private by default, made explicit: no anonymous access.
+        mc anonymous set none "detag/$${PF_S3_BUCKET}"
+        # Lifecycle ceiling (P0-060): nothing in the bucket lives
+        # past 72 h (the Business result TTL, FR-J-09). The per-plan
+        # TTLs (6 h Free / 24 h Pro) cannot be expressed in ILM —
+        # lifecycle granularity is days — so the detag-gc job enforces
+        # them from artifacts.expires_at; this rule is the backstop.
+        mc ilm import "detag/$${PF_S3_BUCKET}" < /lifecycle.json
+
+  api:
+    build:
+      # Context is the repo root: relative paths resolve against this
+      # compose file's directory (ops/), so `..` is the root.
+      context: ..
+      dockerfile: Dockerfile.api
+    image: detag-api:latest
+    container_name: detag-api
+    networks:
+      - edge
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    # The api port is published; the metrics port is NOT — Prometheus
+    # scrapes it over the internal network (P0-088 wires that up).
+    ports:
+      - "${PF_API_PORT:-8080}:8080"
+    environment:
+      # Bind hosts (P0-085): 0.0.0.0 inside the container — 127.0.0.1
+      # here would be the container's own loopback, unreachable from
+      # other containers or published ports.
+      PF_API_HOST: 0.0.0.0
+      PF_METRICS_HOST: 0.0.0.0
+      PF_API_PORT: ${PF_API_PORT:-8080}
+      PF_METRICS_PORT: ${PF_METRICS_PORT:-9090}
+      # Built from the same POSTGRES_* vars as the postgres service,
+      # so the URL always matches the database. (A password with URL
+      # special characters needs URL-encoding — dev default `pf` is
+      # safe; P0-089 audits this.)
+      PF_DATABASE_URL: postgres://${PF_POSTGRES_USER:-pf}:${PF_POSTGRES_PASSWORD:-pf}@postgres:5432/${PF_POSTGRES_DB:-pf}
+      PF_REDIS_URL: redis://redis:6379
+      PF_S3_ENDPOINT: http://minio:9000
+      PF_S3_BUCKET: ${PF_S3_BUCKET:-detag-dev}
+      PF_S3_ACCESS_KEY: ${PF_S3_ACCESS_KEY:-minioadmin}
+      PF_S3_SECRET_KEY: ${PF_S3_SECRET_KEY:-minioadmin}
+      PF_S3_REGION: ${PF_S3_REGION:-us-east-1}
+      PF_JWT_SECRET: ${PF_JWT_SECRET:-dev-fixed}
+      PF_PUBLIC_BASE_URL: ${PF_PUBLIC_BASE_URL:-http://localhost:8080}
+      PF_ENVIRONMENT: ${PF_ENVIRONMENT:-dev}
+      PF_LOG_LEVEL: ${PF_LOG_LEVEL:-info}
+      PF_OTEL_ENDPOINT: ${PF_OTEL_ENDPOINT:-}
+    # Healthcheck comes from the image (Dockerfile.api HEALTHCHECK on
+    # /healthz); compose uses it automatically. P0-088 audits that
+    # every service has one.
+
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile.worker
+    image: detag-worker:latest
+    container_name: detag-worker
+    networks:
+      - internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      PF_METRICS_HOST: 0.0.0.0
+      PF_WORKER_METRICS_PORT: ${PF_WORKER_METRICS_PORT:-9092}
+      PF_DATABASE_URL: postgres://${PF_POSTGRES_USER:-pf}:${PF_POSTGRES_PASSWORD:-pf}@postgres:5432/${PF_POSTGRES_DB:-pf}
+      PF_REDIS_URL: redis://redis:6379
+      PF_S3_ENDPOINT: http://minio:9000
+      PF_S3_BUCKET: ${PF_S3_BUCKET:-detag-dev}
+      PF_S3_ACCESS_KEY: ${PF_S3_ACCESS_KEY:-minioadmin}
+      PF_S3_SECRET_KEY: ${PF_S3_SECRET_KEY:-minioadmin}
+      PF_S3_REGION: ${PF_S3_REGION:-us-east-1}
+      PF_WORKER_CONCURRENCY: ${PF_WORKER_CONCURRENCY:-4}
+      PF_WORKER_QUEUE_NAMESPACE: ${PF_WORKER_QUEUE_NAMESPACE:-pf:queue}
+      PF_QUEUE_VISIBILITY_TIMEOUT_SECS: ${PF_QUEUE_VISIBILITY_TIMEOUT_SECS:-300}
+      PF_QUEUE_KEEP_ALIVE_SECS: ${PF_QUEUE_KEEP_ALIVE_SECS:-30}
+      PF_WORKER_HEARTBEAT_INTERVAL_SECS: ${PF_WORKER_HEARTBEAT_INTERVAL_SECS:-15}
+      PF_WORKER_DRAIN_TIMEOUT_SECS: ${PF_WORKER_DRAIN_TIMEOUT_SECS:-30}
+      PF_ENGINE_MODELS_DIR: /models
+      PF_ENGINE_GPU: ${PF_ENGINE_GPU:-0}
+      PF_ENGINE_TILES_MAX: ${PF_ENGINE_TILES_MAX:-1024}
+      PF_ENVIRONMENT: ${PF_ENVIRONMENT:-dev}
+      PF_LOG_LEVEL: ${PF_LOG_LEVEL:-info}
+      PF_OTEL_ENDPOINT: ${PF_OTEL_ENDPOINT:-}
+    volumes:
+      - models:/models
+    # Healthcheck comes from the image (Dockerfile.worker HEALTHCHECK
+    # on /metrics :9092); compose uses it automatically.
+
+  # Console placeholder (dev only — P0-085): the Next.js console
+  # lands in Phase 4. Until then this serves a stub page on the dev
+  # console port (3000) so the stack's shape is complete and the
+  # edge network has something to route to. Prod never serves it.
+  web:
+    profiles:
+      - dev
+    image: nginx:1.27-alpine
+    container_name: detag-web
+    networks:
+      - edge
+    ports:
+      - "3000:80"
+    volumes:
+      - ./web-placeholder/index.html:/usr/share/nginx/html/index.html:ro
+    # Healthcheck lands with P0-088 (every service has one).
+
+networks:
+  edge:
+    name: detag_edge
+  internal:
+    name: detag_internal
+    internal: true
+
+volumes:
+  pgdata:
+    name: detag_pgdata
+  miniadata:
+    name: detag_miniodata
+  models:
+    name: detag_models
