@@ -2,6 +2,8 @@
 
 Executed as tickets in Phase 1 (authz), Phase 2/3 (upload abuse), Phase 5 (full sweep). Each item = a named test that lives in CI, not a one-off manual check.
 
+Threat model: `docs/threat-model.md` — the living threat model this plan tests against. If a test here covers a threat, the threat's ID (T1–T16) is the cross-reference.
+
 ## Authorization matrix sweep (IDOR)
 
 For every `/v1` endpoint × role {anonymous, user-A, user-B, support, admin, api-key-scoped}: assert allowed matrix. Auto-generated table test in `apps/api/tests/authz_matrix.rs`; adding an endpoint without a matrix row fails the test (registry pattern: routes self-register their matrix entry).

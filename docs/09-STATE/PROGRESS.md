@@ -5,7 +5,7 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-106
+- **Current ticket:** P0-107
 - **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007). P0-083 size gate likewise deferred to CI (DOCKER-001, no docker daemon here); Dockerfile.api + gate implemented, AC unticked until CI runs green. P0-088 AC ("smoke enforces health") and P0-090 AC ("smoke green in CI") likewise unticked until the smoke job goes green in CI — `just smoke` + the CI job are implemented, but the workflow files can't reach GitHub yet (CI-WORKFLOWS-001). Remote CI runs the STALE workflow — local checks added since ~09:20 IST never ran remotely.
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
@@ -13,7 +13,7 @@
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 102 / 108 | — |
+| 0 | Foundation & Platform Baseline | 103 / 108 | — |
 | 1 | Identity & Billing | 0 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
@@ -34,10 +34,9 @@
 
 ## Next-up queue (top 5)
 
-1. P0-106 — Threat model stub
-2. P0-107 — Security smoke tests
-3. P0-108 — Security baseline summary
-4. Phase 1 — P1-001 (first ticket; read PHASE-1-identity-billing.md)
+1. P0-107 — Security smoke tests
+2. P0-108 — Security baseline summary
+3. Phase 1 — P1-001 (first ticket; read PHASE-1-identity-billing.md)
 
 ## Bench history (append-only)
 
