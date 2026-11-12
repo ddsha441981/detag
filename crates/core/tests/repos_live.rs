@@ -17,7 +17,7 @@
 use detag_core::db::{connect, DbPool, PoolConfig};
 use detag_core::migrate::migrate_up;
 use detag_core::repos::error::RepoError;
-use detag_core::repos::{jobs, plans, users};
+use detag_core::repos::{jobs, plans, uploads, users};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -50,6 +50,8 @@ fn drop_db_sql(db: &str) -> &'static str {
         "detag_p041_jobs_err" => "DROP DATABASE IF EXISTS detag_p041_jobs_err",
         "detag_p041_plans" => "DROP DATABASE IF EXISTS detag_p041_plans",
         "detag_p041_pool" => "DROP DATABASE IF EXISTS detag_p041_pool",
+        "detag_p057_uploads" => "DROP DATABASE IF EXISTS detag_p057_uploads",
+        "detag_p057_uploads_guarded" => "DROP DATABASE IF EXISTS detag_p057_uploads_guarded",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -62,6 +64,8 @@ fn create_db_sql(db: &str) -> &'static str {
         "detag_p041_jobs_err" => "CREATE DATABASE detag_p041_jobs_err",
         "detag_p041_plans" => "CREATE DATABASE detag_p041_plans",
         "detag_p041_pool" => "CREATE DATABASE detag_p041_pool",
+        "detag_p057_uploads" => "CREATE DATABASE detag_p057_uploads",
+        "detag_p057_uploads_guarded" => "CREATE DATABASE detag_p057_uploads_guarded",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -323,6 +327,168 @@ async fn plans_roundtrip_and_jsonb() {
         .await
         .expect("by_code")
         .is_none());
+
+    teardown(pool, db).await;
+}
+
+#[tokio::test]
+async fn uploads_roundtrip_and_constraints() {
+    let db = "detag_p057_uploads";
+    let pool = setup(db).await;
+
+    let user = users::create(&pool, "uploads@example.com", "h")
+        .await
+        .expect("create user");
+    let created = uploads::create(
+        &pool,
+        &uploads::NewUpload {
+            user_id: user.id,
+            kind: "image",
+            filename: "input.png",
+            bytes: 300,
+            sha256: "abc123",
+            mime: "image/png",
+            storage_key: "dev/2026-11/019aa1b2-c3d4-7e5f-8000-000000000001/input.png",
+            parts: 2,
+        },
+    )
+    .await
+    .expect("create upload");
+    // Birth state is always pending_parts; the rest defaults.
+    assert_eq!(created.status, "pending_parts");
+    assert_eq!(created.parts, 2);
+    assert_eq!(created.bytes, 300);
+    assert_eq!(created.metadata, serde_json::json!({}));
+    assert!(created.phash.is_none());
+    assert!(created.width.is_none());
+
+    let by_id = uploads::by_id(&pool, created.id)
+        .await
+        .expect("by_id")
+        .expect("upload must exist");
+    assert_eq!(by_id, created, "roundtrip must preserve every field");
+    assert!(uploads::by_id(&pool, Uuid::nil())
+        .await
+        .expect("by_id")
+        .is_none());
+
+    // Bad kind -> CheckViolation.
+    let base = uploads::NewUpload {
+        user_id: user.id,
+        kind: "image",
+        filename: "input.png",
+        bytes: 300,
+        sha256: "abc123",
+        mime: "image/png",
+        storage_key: "dev/2026-11/x/input.png",
+        parts: 1,
+    };
+    let err = uploads::create(
+        &pool,
+        &uploads::NewUpload {
+            kind: "audio",
+            ..base.clone()
+        },
+    )
+    .await
+    .expect_err("bad kind must fail");
+    match err {
+        RepoError::CheckViolation { constraint } => {
+            assert_eq!(constraint.as_deref(), Some("uploads_kind_check"));
+        }
+        other => panic!("expected CheckViolation, got {other:?}"),
+    }
+
+    // Unknown user -> ForeignKeyViolation.
+    let err = uploads::create(
+        &pool,
+        &uploads::NewUpload {
+            user_id: Uuid::nil(),
+            ..base.clone()
+        },
+    )
+    .await
+    .expect_err("unknown user must fail");
+    match err {
+        RepoError::ForeignKeyViolation { constraint } => {
+            assert_eq!(constraint.as_deref(), Some("uploads_user_id_fkey"));
+        }
+        other => panic!("expected ForeignKeyViolation, got {other:?}"),
+    }
+
+    teardown(pool, db).await;
+}
+
+#[tokio::test]
+async fn uploads_transitions_are_guarded() {
+    let db = "detag_p057_uploads_guarded";
+    let pool = setup(db).await;
+
+    let user = users::create(&pool, "guarded@example.com", "h")
+        .await
+        .expect("create user");
+    fn mk(user_id: Uuid, storage_key: &str) -> uploads::NewUpload<'_> {
+        uploads::NewUpload {
+            user_id,
+            kind: "image",
+            filename: "input.png",
+            bytes: 300,
+            sha256: "abc123",
+            mime: "image/png",
+            storage_key,
+            parts: 1,
+        }
+    }
+
+    let first = uploads::create(&pool, &mk(user.id, "dev/2026-11/a/input.png"))
+        .await
+        .expect("create upload");
+    // pending_parts -> ready: the guard matches.
+    let ready = uploads::set_status_guarded(&pool, first.id, "pending_parts", "ready")
+        .await
+        .expect("guarded transition")
+        .expect("guard must match a pending upload");
+    assert_eq!(ready.status, "ready");
+    assert_eq!(ready.id, first.id);
+    // A second complete is a no-op: the row is no longer pending.
+    assert!(
+        uploads::set_status_guarded(&pool, first.id, "pending_parts", "ready")
+            .await
+            .expect("second transition")
+            .is_none(),
+        "completing a ready upload must match nothing"
+    );
+    // Abort from ready is a no-op too.
+    assert!(
+        uploads::set_status_guarded(&pool, first.id, "pending_parts", "aborted")
+            .await
+            .expect("abort from ready")
+            .is_none()
+    );
+    // Unknown id matches nothing.
+    assert!(
+        uploads::set_status_guarded(&pool, Uuid::nil(), "pending_parts", "ready")
+            .await
+            .expect("unknown id")
+            .is_none()
+    );
+
+    // Abort path: pending_parts -> aborted, then terminal.
+    let second = uploads::create(&pool, &mk(user.id, "dev/2026-11/b/input.png"))
+        .await
+        .expect("create second upload");
+    let aborted = uploads::set_status_guarded(&pool, second.id, "pending_parts", "aborted")
+        .await
+        .expect("guarded abort")
+        .expect("guard must match a pending upload");
+    assert_eq!(aborted.status, "aborted");
+    assert!(
+        uploads::set_status_guarded(&pool, second.id, "pending_parts", "ready")
+            .await
+            .expect("ready from aborted")
+            .is_none(),
+        "completing an aborted upload must match nothing"
+    );
 
     teardown(pool, db).await;
 }

@@ -1,0 +1,222 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE uploads SET status = $3, updated_at = now()\n         WHERE id = $1 AND status = $2\n         RETURNING id, user_id, kind, filename, bytes, sha256, phash, mime, width, height,\n             duration_s, metadata, status, storage_key, parts, created_at, updated_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "uploads",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "uploads",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "kind",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "uploads",
+            "name": "kind"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "filename",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "uploads",
+            "name": "filename"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "bytes",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "uploads",
+            "name": "bytes"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "sha256",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "uploads",
+            "name": "sha256"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "phash",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "uploads",
+            "name": "phash"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "mime",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "uploads",
+            "name": "mime"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "width",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "uploads",
+            "name": "width"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "height",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "uploads",
+            "name": "height"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "duration_s",
+        "type_info": "Float4",
+        "origin": {
+          "Table": {
+            "table": "uploads",
+            "name": "duration_s"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "metadata",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "uploads",
+            "name": "metadata"
+          }
+        }
+      },
+      {
+        "ordinal": 12,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "uploads",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 13,
+        "name": "storage_key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "uploads",
+            "name": "storage_key"
+          }
+        }
+      },
+      {
+        "ordinal": 14,
+        "name": "parts",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "uploads",
+            "name": "parts"
+          }
+        }
+      },
+      {
+        "ordinal": 15,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "uploads",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 16,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "uploads",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "b0d5ad2171c044fe5da9c6e4b08bcd6528274091f950e0350949733abb5413e1"
+}

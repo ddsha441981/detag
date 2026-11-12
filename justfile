@@ -98,11 +98,16 @@ migrate-revert:
 
 # Regenerate checked-in sqlx offline query metadata (P0-037).
 # Needs sqlx-cli (`cargo install sqlx-cli --version 0.9.0 --locked
-# --no-default-features --features postgres,rustls`) and a live DB
-# at PF_DATABASE_URL. With no query! macros yet this is a no-op
-# ("no queries found") — it becomes real when the repo layer lands.
+# --no-default-features --features postgres,rustls`) and a live,
+# MIGRATED DB at PF_DATABASE_URL (run `just migrate` first — the
+# macros expand against its schema). `SQLX_OFFLINE=false` is
+# required: the justfile exports SQLX_OFFLINE=true for normal
+# builds, and prepare's internal check must run online (P0-057:
+# without it prepare wipes .sqlx/ and then fails to regenerate).
+# With no query! macros yet this is a no-op ("no queries found") —
+# it becomes real when the repo layer lands.
 sqlx-prepare:
-    DATABASE_URL="${PF_DATABASE_URL:-postgres://pf:pf@localhost:5432/pf}" cargo sqlx prepare --workspace
+    SQLX_OFFLINE=false DATABASE_URL="${PF_DATABASE_URL:-postgres://pf:pf@localhost:5432/pf}" cargo sqlx prepare --workspace
 
 # Fail if the checked-in .sqlx/ metadata is stale (P0-037; CI runs
 # this after `just migrate`). Passes vacuously until query! macros

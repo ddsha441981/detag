@@ -25,6 +25,7 @@
 pub mod error;
 pub mod jobs;
 pub mod plans;
+pub mod uploads;
 pub mod users;
 
 pub use error::RepoError;
