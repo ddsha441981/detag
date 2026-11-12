@@ -315,11 +315,12 @@
     - [x] seed rows correct
   - **Status:** `migrations/20261112065140_billing.{up,down}.sql` — plans (code UNIQUE, amount in paise: Free 0 / Pro 49900 / Business 199900, stripe_price_id NULL until live prices exist), subscriptions (provider stripe|razorpay, status CHECK, plan_id RESTRICT), usage_counters PK (user_id, day). Seed rows verified against FR-P-01 in the live test `crates/core/tests/migration_003_billing.rs` (all 7 entitlement fields per plan, features flags, seed re-run is a no-op, provider/status CHECKs, plan RESTRICT, counter PK + non-negative, revert/re-apply reseeds). Dev DB migrated; plans read back: free 0/10/standard, pro 49900/500/standard, business 199900/5000/priority.
 
-- [ ] **P0-040** — Migration 004 audit+flags+misc
+- [x] **P0-040** — Migration 004 audit+flags+misc
   - **Type:** feat · **Area:** db · **Est:** M · **Deps:** P0-039 · **Prio:** P1
   - **Spec:** audit_logs (append-only grants), feature_flags, idempotency_keys, email_outbox, attestations, abuse_reports, webhook_endpoints/deliveries.
   - **AC:**
-    - [ ] migration applies
+    - [x] migration applies
+  - **Status:** `migrations/20261112065339_audit_flags_misc.{up,down}.sql` — audit_logs, idempotency_keys, email_outbox, attestations, abuse_reports, webhook_endpoints/deliveries, api_keys + the deferred jobs.attestation_id FK (ON DELETE SET NULL). feature_flags NOT recreated (migration 0001 already created it). api_keys has no ticket of its own in Phase 0/1, so it lands here under "misc" (flagged call — the data-model doc specifies it and Phase 1's API-key work needs it). Append-only is enforced by a trigger (forbid_append_only_mutation) on audit_logs, job_events (deferred from P0-038) and attestations (immutable per doc) — NOT by GRANTs: the dev DB has a single owner role (pf) that bypasses ACLs, so a REVOKE would be a no-op; true role separation is a production-deployment concern. Live test `crates/core/tests/migration_004_audit_flags_misc.rs` covers tables, doc indexes, all three triggers, the FK, status CHECK, idempotency PK, revert/re-apply. The test caught a real bug: the first down migration left dangling jobs.attestation_id values, so re-apply's FK validation failed — fixed by NULLing them in the down migration before dropping attestations. Dev DB migrated: 20 tables, versions [1, 20261112064220, 20261112064924, 20261112065140, 20261112065339].
     - [ ] audit grants restrict UPDATE/DELETE
 
 - [ ] **P0-041** — Repo layer tests
