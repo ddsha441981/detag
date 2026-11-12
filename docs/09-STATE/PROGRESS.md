@@ -5,14 +5,14 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-021
+- **Current ticket:** P0-022
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
 ## Phase status
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 20 / 108 | — |
+| 0 | Foundation & Platform Baseline | 21 / 108 | — |
 | 1 | Identity & Billing | 0 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
@@ -33,11 +33,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-021 — Static feature flags
-2. P0-022 — DB-backed flags + cache
-3. P0-023 — Graceful shutdown
-4. P0-024 — Config reference doc
-5. P0-025 — Tracing bootstrap
+1. P0-022 — DB-backed flags + cache
+2. P0-023 — Graceful shutdown
+3. P0-024 — Config reference doc
+4. P0-025 — Tracing bootstrap
+5. P0-026 — Metrics endpoint
 
 ## Bench history (append-only)
 

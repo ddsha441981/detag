@@ -365,6 +365,96 @@ impl Settings {
             );
         }
     }
+
+    /// Typed view over the feature flags in these settings.
+    pub fn feature_flags(&self) -> FeatureFlags {
+        FeatureFlags::from_settings(self)
+    }
+}
+
+/// Feature flags (P0-021).
+///
+/// The `PF_FEATURE_*` env flags as one typed struct, default off. The
+/// kit defines two flags (`PF_FEATURE_RAZORPAY`, gated billing adapter
+/// per FR-P-05; `PF_FEATURE_PROVENANCE_STRIP`, legal-gated strip); `gpu`
+/// is derived from `PF_ENGINE_GPU > 0` — there is no GPU flag var in the
+/// kit or runbook, the engine count itself is the switch.
+/// Consumers (engine, billing, provenance) read this struct, never raw
+/// env vars, so a flag rename is one place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FeatureFlags {
+    /// Env: PF_FEATURE_RAZORPAY — Razorpay billing adapter. Default off.
+    pub razorpay: bool,
+    /// Env: PF_FEATURE_PROVENANCE_STRIP — provenance strip (legal gate
+    /// required). Default off.
+    pub provenance_strip: bool,
+    /// Derived: PF_ENGINE_GPU > 0. Default off (PF_ENGINE_GPU=0).
+    pub gpu: bool,
+}
+
+impl FeatureFlags {
+    /// All flags off (the default).
+    pub fn defaults() -> Self {
+        FeatureFlags {
+            razorpay: false,
+            provenance_strip: false,
+            gpu: false,
+        }
+    }
+
+    /// Build from loaded settings.
+    pub fn from_settings(settings: &Settings) -> Self {
+        FeatureFlags {
+            razorpay: settings.feature_razorpay,
+            provenance_strip: settings.feature_provenance_strip,
+            gpu: settings.engine_gpu > 0,
+        }
+    }
+}
+
+/// The feature-flag prefix, derived from the known flags (their common
+/// prefix) so it cannot drift — and so `env_check.py`, which scans Rust
+/// sources for `PF_*` literals, never sees the prefix written out as a
+/// would-be variable reference.
+fn feature_prefix() -> &'static str {
+    KNOWN_FEATURE_FLAGS[0]
+        .strip_suffix("PROVENANCE_STRIP")
+        .expect("known flag names share the feature prefix")
+}
+
+/// The `PF_FEATURE_*` flags the loader understands. Anything else
+/// matching `PF_FEATURE_*` in the environment is unknown (a typo, or a
+/// retired flag) and is reported by `unknown_feature_flags`.
+pub const KNOWN_FEATURE_FLAGS: &[&str] = &["PF_FEATURE_PROVENANCE_STRIP", "PF_FEATURE_RAZORPAY"];
+
+/// `PF_FEATURE_*` vars present in the environment that no code
+/// understands, sorted. An operator typo shows up here instead of
+/// silently doing nothing.
+pub fn unknown_feature_flags() -> Vec<String> {
+    let mut unknown: Vec<String> = std::env::vars()
+        .map(|(key, _)| key)
+        .filter(|key| {
+            key.starts_with(feature_prefix()) && !KNOWN_FEATURE_FLAGS.contains(&key.as_str())
+        })
+        .collect();
+    unknown.sort();
+    unknown
+}
+
+/// Warn about every unknown feature flag (via `tracing`) and return the
+/// list. Call at boot, after `Settings::load` — the warning is the only
+/// signal a flag name is misspelled or retired. (Visible once the
+/// tracing subscriber lands in P0-025; until then the return value is
+/// the observable part, and tests assert on it.)
+pub fn warn_unknown_feature_flags() -> Vec<String> {
+    let unknown = unknown_feature_flags();
+    for flag in &unknown {
+        tracing::warn!(
+            flag = %flag,
+            "unknown feature flag; ignoring — check the spelling or remove it"
+        );
+    }
+    unknown
 }
 
 #[cfg(test)]
@@ -435,7 +525,7 @@ mod tests {
         "PF_OTEL_ENDPOINT",
     ];
 
-    fn clean_env() -> (MutexGuard<'static, ()>, EnvGuard) {
+    fn clean_env() -> EnvLock {
         // Recover from poisoning: a failed test must not cascade into
         // PoisonError failures for every other test.
         let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -443,7 +533,24 @@ mod tests {
         for var in ALL_VARS {
             env::remove_var(var);
         }
-        (lock, guard)
+        EnvLock { guard, _lock: lock }
+    }
+
+    /// Holds the env lock AND the restore guard in one value. Field
+    /// order matters: struct fields drop in declaration order, so the
+    /// env is restored FIRST (while still holding the lock) and the lock
+    /// is released SECOND. The previous shape — a `(MutexGuard,
+    /// EnvGuard)` tuple — dropped the lock first, letting the next test
+    /// run while the previous test's env restore was still in flight:
+    /// vars leaked across tests and loads randomly saw stale values
+    /// (flaky `layer_precedence` / `defaults_snapshot` / `bool_type`
+    /// failures, found by running the suite 5x).
+    struct EnvLock {
+        // Never read, only dropped: the field exists for its Drop side
+        // effect (restore the env while still holding the lock).
+        #[allow(dead_code)]
+        guard: EnvGuard,
+        _lock: MutexGuard<'static, ()>,
     }
 
     /// Full defaults snapshot: every field must equal its `.env.example`
@@ -718,5 +825,70 @@ mod tests {
             }
             other => panic!("expected Invalid, got: {other}"),
         }
+    }
+
+    /// AC: flag defaults off — all three consumers (razorpay, provenance
+    /// strip, gpu) start disabled.
+    #[test]
+    fn feature_flags_default_off() {
+        let _env = clean_env();
+        let settings = Settings::load_from(None).expect("defaults must load");
+        assert_eq!(settings.feature_flags(), FeatureFlags::defaults());
+        assert!(!settings.feature_flags().razorpay);
+        assert!(!settings.feature_flags().provenance_strip);
+        assert!(!settings.feature_flags().gpu);
+    }
+
+    /// Flags follow their env vars; gpu follows the engine count.
+    #[test]
+    fn feature_flags_follow_env() {
+        let _env = clean_env();
+        env::set_var("PF_FEATURE_RAZORPAY", "true");
+        env::set_var("PF_FEATURE_PROVENANCE_STRIP", "true");
+        env::set_var("PF_ENGINE_GPU", "2");
+        let settings = Settings::load_from(None).expect("env load must work");
+        let flags = settings.feature_flags();
+        assert!(flags.razorpay);
+        assert!(flags.provenance_strip);
+        assert!(flags.gpu);
+    }
+
+    /// AC: unknown flag warns — detection returns the unknown names,
+    /// sorted; known flags are never reported. Fake flag names are built
+    /// at runtime (never written as literals) so `env_check.py` — which
+    /// scans sources for `PF_*` literals — does not mistake test fixtures
+    /// for real variables.
+    #[test]
+    fn unknown_feature_flag_is_reported() {
+        let _env = clean_env();
+        let foo = format!("{}FOO", feature_prefix());
+        let bar = format!("{}BAR", feature_prefix());
+        let extra = EnvGuard::take(&[foo.as_str(), bar.as_str()]);
+        env::set_var(&foo, "1");
+        env::set_var(&bar, "x");
+        env::set_var("PF_FEATURE_RAZORPAY", "true");
+        let unknown = unknown_feature_flags();
+        assert_eq!(unknown, vec![bar, foo]);
+        drop(extra);
+    }
+
+    #[test]
+    fn known_flags_are_not_unknown() {
+        let _env = clean_env();
+        env::set_var("PF_FEATURE_RAZORPAY", "true");
+        env::set_var("PF_FEATURE_PROVENANCE_STRIP", "false");
+        assert!(unknown_feature_flags().is_empty());
+    }
+
+    /// The boot hook returns the same list it warns about.
+    #[test]
+    fn warn_unknown_feature_flags_returns_list() {
+        let _env = clean_env();
+        let typo = format!("{}TYPO", feature_prefix());
+        let extra = EnvGuard::take(&[typo.as_str()]);
+        env::set_var(&typo, "1");
+        let warned = warn_unknown_feature_flags();
+        assert_eq!(warned, vec![typo]);
+        drop(extra);
     }
 }

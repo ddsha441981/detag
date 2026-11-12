@@ -176,12 +176,12 @@
   - **AC:**
     - [x] two invalid vars produce one report listing both
 
-- [ ] **P0-021** — Static feature flags
+- [x] **P0-021** — Static feature flags
   - **Type:** feat · **Area:** core/config · **Est:** S · **Deps:** P0-020 · **Prio:** P1
   - **Spec:** PF_FEATURE_* env flags into typed struct; unknown flag warns; used by gpu + razorpay + provenance_strip (default off).
   - **AC:**
-    - [ ] flag defaults off
-    - [ ] unknown flag warns
+    - [x] flag defaults off
+    - [x] unknown flag warns
 
 - [ ] **P0-022** — DB-backed flags + cache
   - **Type:** feat · **Area:** core/config · **Est:** M · **Deps:** P0-021 · **Prio:** P1

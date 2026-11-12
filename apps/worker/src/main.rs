@@ -1,7 +1,7 @@
 //! detag-worker — Apalis worker host (bootstrap stub, P0-002).
 //! Queue wiring lands in E0.8 (P0-075..P0-082).
 
-use detag_core::config::Settings;
+use detag_core::config::{warn_unknown_feature_flags, Settings};
 
 #[tokio::main]
 async fn main() {
@@ -10,6 +10,8 @@ async fn main() {
         eprintln!("detag-worker: invalid configuration:\n{err}");
         std::process::exit(1);
     });
+    // Unknown PF_FEATURE_* flags warn (a typo must not silently do nothing).
+    warn_unknown_feature_flags();
     println!("detag-worker started (queues: pipeline, cleanup, email, reconciliation)");
     tokio::signal::ctrl_c().await.unwrap();
     println!("detag-worker shutting down");
