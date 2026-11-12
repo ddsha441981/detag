@@ -11,6 +11,8 @@
 //!   (P0-048), atomic Lua scripts over the pool.
 //! - [`cache`] — `get_or_set` with TTL + singleflight +
 //!   invalidation (P0-049), with hit/miss metrics.
+//! - [`pubsub`] — SSE pubsub: one Redis channel per job id
+//!   (P0-050), publisher + bounded subscriber stream.
 //!
 //! Only the `redis://` scheme is probed (plain TCP). A `rediss://`
 //! URL reports down with an explicit detail — TLS needs the client,
@@ -18,6 +20,7 @@
 
 pub mod cache;
 pub mod keys;
+pub mod pubsub;
 pub mod ratelimit;
 
 use crate::db::ComponentHealth;

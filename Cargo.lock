@@ -394,6 +394,7 @@ dependencies = [
  "chrono",
  "deadpool-redis",
  "figment",
+ "futures-core",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
