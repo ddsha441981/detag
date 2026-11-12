@@ -9,5 +9,6 @@ pub mod dlq;
 pub mod envelope;
 pub mod queue_hooks;
 pub mod registry;
+pub mod requeue;
 pub mod retry;
 pub mod workers;

@@ -25,6 +25,8 @@
 | `PF_POSTGRES_PASSWORD` | `pf` | postgres (compose) |
 | `PF_POSTGRES_USER` | `pf` | postgres (compose) |
 | `PF_PUBLIC_BASE_URL` | `http://localhost:8080` | api |
+| `PF_QUEUE_KEEP_ALIVE_SECS` | `30` | worker |
+| `PF_QUEUE_VISIBILITY_TIMEOUT_SECS` | `300` | worker |
 | `PF_RAZORPAY_KEY` | `rzp_test_placeholder` | billing |
 | `PF_RAZORPAY_SECRET` | `placeholder` | billing |
 | `PF_REDIS_URL` | `redis://localhost:6379` | api, worker |
@@ -45,3 +47,4 @@
 | `PF_TEST_LIVE_MINIO` | (empty) | tests |
 | `PF_UPLOAD_PART_URL_TTL_SECS` | `600` | storage |
 | `PF_WEB_ORIGIN` | (empty) | api |
+| `PF_WORKER_CONCURRENCY` | `4` | worker |

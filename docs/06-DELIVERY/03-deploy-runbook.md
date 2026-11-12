@@ -25,6 +25,8 @@
 | `PF_METRICS_PORT` | api | 9090 | port the internal /metrics server binds on 127.0.0.1 |
 | `PF_ENVIRONMENT` | all | dev | dev \| stage \| prod; gates the Swagger UI (`/docs`, P0-067) — prod serves no `/docs` |
 | `PF_WORKER_CONCURRENCY` | worker | 4 | apalis workers per queue (pipeline, cleanup, email, reconciliation — P0-075); must be >= 1 |
+| `PF_QUEUE_VISIBILITY_TIMEOUT_SECS` | worker | 300 | visibility timeout (NFR-21, P0-079): a dead worker's in-flight jobs are re-queued after this long without a keep-alive; must be > keep-alive |
+| `PF_QUEUE_KEEP_ALIVE_SECS` | worker | 30 | worker heartbeat interval (P0-079): a live worker re-registers its consumer this often, so a long job on a live worker is never re-queued; must be >= 1 and < visibility |
 | `PF_STRIPE_SECRET_KEY`, `PF_STRIPE_WEBHOOK_SECRET` | billing | test keys | live keys = owner action |
 | `PF_RAZORPAY_KEY`, `PF_RAZORPAY_SECRET`, `PF_FEATURE_RAZORPAY` | billing | off | |
 | `PF_SMTP_HOST`, `PF_SMTP_PORT`, `PF_SMTP_USER`, `PF_SMTP_PASS`, `PF_MAIL_FROM` | mailer | MailHog | |
@@ -72,7 +74,7 @@ until v1.0.0 is declared (see the release checklist).
 
 1. `docker compose` previous image tags (keep last 3 tagged images).
 2. Migrations: additive ones are compatible with previous app version — rolling back the image is enough. Contract migrations are never released in the same window as features.
-3. If queue stuck: `just queue:requeue-stuck` (visibility-timeout sweep).
+3. If queue stuck: `just queue::requeue-stuck` (visibility-timeout sweep — see "Visibility timeout (NFR-21)" below; the ticket spells it with a single colon, just only accepts the double-colon form).
 
 ## Restore drill (NFR-22, rehearsed once in Phase 5)
 
@@ -199,6 +201,43 @@ redis-cli --scan --pattern 'pf:ratelimit:*' | wc -l   # keys per namespace
   `PF_REDIS_URL` at a shared or public Redis: dev binds loopback
   only, no password; production needs a password and the
   `internal` network (see "First deploy" above).
+
+### Visibility timeout (NFR-21, P0-079)
+
+Kill -9 of a worker mid-job SHALL NOT lose the job: it
+re-enters the queue via the visibility timeout. How it works
+(apalis-redis 0.6): when a worker fetches a job, the job moves
+from the queue's `active` list to that worker's in-flight set
+(`pf:queue:{queue}:inflight:{worker}`), and the worker
+registers itself as a consumer (`pf:queue:{queue}:consumers`,
+score = last keep-alive timestamp). Every live worker runs an
+orphan sweep every poll interval (100 ms): any consumer whose
+last keep-alive is older than the visibility timeout has its
+in-flight jobs moved back to the active list.
+
+- `PF_QUEUE_KEEP_ALIVE_SECS` (default 30): the heartbeat. A
+  live worker re-registers this often — so a job that runs
+  longer than the visibility timeout on a LIVE worker is never
+  re-queued. Only a dead worker's jobs become orphaned.
+- `PF_QUEUE_VISIBILITY_TIMEOUT_SECS` (default 300): how long
+  after a worker's last keep-alive its jobs count as orphaned.
+  A kill -9 mid-job returns the job to the queue at most this
+  long after the worker died. Must be greater than the
+  keep-alive (boot fails otherwise — a worker merely slow to
+  heartbeat must not have its jobs stolen mid-run). Raising it
+  delays recovery after a crash; lowering it risks re-running
+  a job whose worker is alive but slow — 300 s is the right
+  default until jobs run longer than 5 minutes (Phase 3 video
+  work revisits it).
+- If EVERY worker is dead at once, no heartbeat runs and no
+  sweep happens — restart a worker, or re-queue immediately
+  without one: `just queue::requeue-stuck` (same sweep, run on
+  demand; `--queue <name>` for one queue, `--older-than-secs N`
+  to override the timeout, `--limit N` per queue, default 100 —
+  re-run to drain a larger backlog). It never touches a live
+  worker's jobs. The kill-mid-job drill that proves this end
+  to end lands in Phase 3; the sweep itself is covered by the
+  `requeue_stuck` integration test.
 
 ## Storage operations
 

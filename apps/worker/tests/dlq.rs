@@ -34,6 +34,8 @@ fn test_config() -> (WorkerConfig, String) {
             concurrency: 1,
             namespace_prefix: format!("pf:test-dlq-queue-{}", Uuid::now_v7()),
             dlq_prefix: dlq_prefix.clone(),
+            visibility_timeout: Duration::from_secs(300),
+            keep_alive: Duration::from_secs(30),
         },
         dlq_prefix,
     )

@@ -25,11 +25,23 @@
 //! extends this flow — nothing enqueues jobs in Phase 0, so it
 //! never runs in production today.
 //!
-//! Storage defaults in force (apalis-redis `Config::default`):
-//! 100 ms poll, 10-job buffer, 5 max retries, 30 s keep-alive,
-//! 30 s scheduled-enqueue sweep, 300 s orphan requeue. The
-//! retry count is the storage default — P0-077 sets the
-//! per-queue policy.
+//! Storage defaults in force (apalis-redis `Config::default`,
+//! now made explicit in P0-079 — see [`apalis_config`]):
+//! 100 ms poll, 10-job buffer, 5 max retries, 30 s scheduled-
+//! enqueue sweep. The retry count is the storage default —
+//! P0-077 sets the per-queue policy. The two timeouts that
+//! decide NFR-21 (kill -9 loses no job) are
+//! `PF_QUEUE_KEEP_ALIVE_SECS` (default 30) and
+//! `PF_QUEUE_VISIBILITY_TIMEOUT_SECS` (default 300): a live
+//! worker re-registers its consumer every keep-alive, so a job
+//! running longer than the visibility timeout on a LIVE worker
+//! is never re-queued; a dead worker's keep-alives stop, and
+//! the orphan sweep — which every live worker runs every poll
+//! interval — moves its in-flight jobs back to the active list
+//! once their consumer is older than the visibility timeout.
+//! If every worker is dead, nothing sweeps until one restarts:
+//! that is what `just queue:requeue-stuck` (P0-079) is for —
+//! the same sweep, run on demand by an operator.
 
 use crate::dlq::{DeadLetterSink, RedisDeadLetterSink, DLQ_PREFIX};
 use crate::envelope::JobEnvelope;
@@ -42,6 +54,7 @@ use detag_core::config::Settings;
 use detag_core::db::DbPool;
 use detag_core::redis::{create_pool, RedisPoolConfig};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Redis key prefix for the apalis queues
 /// (`pf:queue:{queue}:{suffix}`).
@@ -62,6 +75,12 @@ pub struct WorkerConfig {
     pub namespace_prefix: String,
     /// Key prefix for the dead-letter sets (`pf:dlq` in prod).
     pub dlq_prefix: String,
+    /// Visibility timeout (PF_QUEUE_VISIBILITY_TIMEOUT_SECS):
+    /// a dead worker's in-flight jobs are re-queued after this
+    /// long without a keep-alive (NFR-21, P0-079).
+    pub visibility_timeout: Duration,
+    /// Worker heartbeat interval (PF_QUEUE_KEEP_ALIVE_SECS).
+    pub keep_alive: Duration,
 }
 
 impl WorkerConfig {
@@ -72,6 +91,8 @@ impl WorkerConfig {
             concurrency: settings.worker_concurrency,
             namespace_prefix: QUEUE_NAMESPACE_PREFIX.to_string(),
             dlq_prefix: DLQ_PREFIX.to_string(),
+            visibility_timeout: Duration::from_secs(settings.queue_visibility_timeout_secs),
+            keep_alive: Duration::from_secs(settings.queue_keep_alive_secs),
         }
     }
 
@@ -80,6 +101,18 @@ impl WorkerConfig {
     pub fn queue_namespace(&self, queue: &str) -> String {
         format!("{}:{queue}", self.namespace_prefix)
     }
+}
+
+/// The apalis storage config for one queue: the namespace from
+/// [`WorkerConfig::queue_namespace`] plus the P0-079 timeouts
+/// (keep-alive + visibility) from the config — never the
+/// apalis defaults left implicit. Kept separate from
+/// [`build_monitor`] so the values are unit-testable.
+pub fn apalis_config(config: &WorkerConfig, queue: &str) -> RedisConfig {
+    RedisConfig::default()
+        .set_namespace(&config.queue_namespace(queue))
+        .set_keep_alive(config.keep_alive)
+        .set_reenqueue_orphaned_after(config.visibility_timeout)
 }
 
 /// Per-worker context, injected into every handler call: which
@@ -140,10 +173,7 @@ pub async fn build_monitor(
     ));
     let mut monitor = Monitor::new();
     for queue in QUEUES {
-        let storage = RedisStorage::new_with_config(
-            conn.clone(),
-            RedisConfig::default().set_namespace(&config.queue_namespace(queue)),
-        );
+        let storage = RedisStorage::new_with_config(conn.clone(), apalis_config(config, queue));
         for replica in 0..config.concurrency {
             let ctx = WorkerContext {
                 queue,
@@ -232,4 +262,28 @@ async fn handle_envelope(job: JobEnvelope, ctx: Data<WorkerContext>) -> Result<(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// P0-079: the storage config carries the configured
+    /// keep-alive and visibility timeout — never the apalis
+    /// defaults left implicit.
+    #[test]
+    fn apalis_config_carries_the_configured_timeouts() {
+        let config = WorkerConfig {
+            redis_url: "redis://localhost:6379".to_string(),
+            concurrency: 1,
+            namespace_prefix: "pf:test-queue".to_string(),
+            dlq_prefix: "pf:test-dlq".to_string(),
+            visibility_timeout: Duration::from_secs(600),
+            keep_alive: Duration::from_secs(15),
+        };
+        let apalis = apalis_config(&config, "pipeline");
+        assert_eq!(apalis.get_namespace(), "pf:test-queue:pipeline");
+        assert_eq!(*apalis.get_keep_alive(), Duration::from_secs(15));
+        assert_eq!(apalis.reenqueue_orphaned_after(), Duration::from_secs(600));
+    }
 }

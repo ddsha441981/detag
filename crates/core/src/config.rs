@@ -156,6 +156,22 @@ pub struct Settings {
     /// of the four queues (pipeline, cleanup, email, reconciliation)
     /// runs this many workers (P0-075). Default 4. Must be >= 1.
     pub worker_concurrency: usize,
+    /// Env: PF_QUEUE_VISIBILITY_TIMEOUT_SECS — visibility timeout
+    /// (NFR-21, P0-079): how long after a worker's last keep-alive
+    /// its in-flight jobs count as orphaned and are re-queued by
+    /// the orphan sweep. A kill -9 mid-job loses nothing — the job
+    /// returns to the queue at most this long after the worker
+    /// died. Default 300 (5 min, the apalis default, now explicit).
+    /// Must be > PF_QUEUE_KEEP_ALIVE_SECS and >= 1.
+    pub queue_visibility_timeout_secs: u64,
+    /// Env: PF_QUEUE_KEEP_ALIVE_SECS — worker heartbeat interval
+    /// (P0-079): a live worker re-registers its consumer this
+    /// often, so a job that runs longer than the visibility
+    /// timeout on a LIVE worker is never re-queued — only a dead
+    /// worker's jobs become orphaned. Default 30 (the apalis
+    /// default, now explicit). Must be >= 1 and <
+    /// PF_QUEUE_VISIBILITY_TIMEOUT_SECS.
+    pub queue_keep_alive_secs: u64,
 }
 
 impl Default for Settings {
@@ -196,6 +212,8 @@ impl Default for Settings {
             web_origin: String::new(),
             environment: "dev".to_string(),
             worker_concurrency: 4,
+            queue_visibility_timeout_secs: 300,
+            queue_keep_alive_secs: 30,
         }
     }
 }
@@ -237,6 +255,11 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("web_origin", "PF_WEB_ORIGIN"),
     ("environment", "PF_ENVIRONMENT"),
     ("worker_concurrency", "PF_WORKER_CONCURRENCY"),
+    (
+        "queue_visibility_timeout_secs",
+        "PF_QUEUE_VISIBILITY_TIMEOUT_SECS",
+    ),
+    ("queue_keep_alive_secs", "PF_QUEUE_KEEP_ALIVE_SECS"),
 ];
 
 impl Settings {
@@ -322,6 +345,8 @@ impl Settings {
             web_origin: field!(web_origin, String),
             environment: field!(environment, String),
             worker_concurrency: field!(worker_concurrency, usize),
+            queue_visibility_timeout_secs: field!(queue_visibility_timeout_secs, u64),
+            queue_keep_alive_secs: field!(queue_keep_alive_secs, u64),
         };
         settings.validate(&mut problems);
         if problems.is_empty() {
@@ -409,6 +434,28 @@ impl Settings {
         }
         if self.worker_concurrency == 0 {
             invalid("PF_WORKER_CONCURRENCY", "must be >= 1".to_string());
+        }
+        if self.queue_keep_alive_secs == 0 {
+            invalid(
+                "PF_QUEUE_KEEP_ALIVE_SECS",
+                "must be >= 1 (seconds)".to_string(),
+            );
+        }
+        if self.queue_visibility_timeout_secs == 0 {
+            invalid(
+                "PF_QUEUE_VISIBILITY_TIMEOUT_SECS",
+                "must be >= 1 (seconds)".to_string(),
+            );
+        } else if self.queue_visibility_timeout_secs <= self.queue_keep_alive_secs {
+            // A dead worker's jobs must not be re-queued while a
+            // live worker's heartbeat is still due — with
+            // visibility <= keep-alive, a worker that is merely
+            // slow to heartbeat (GC pause, scheduling delay) would
+            // have its in-flight jobs stolen mid-run.
+            invalid(
+                "PF_QUEUE_VISIBILITY_TIMEOUT_SECS",
+                "must be greater than PF_QUEUE_KEEP_ALIVE_SECS".to_string(),
+            );
         }
         for (var, value) in [
             ("PF_RESULTS_TTL_FREE_H", self.results_ttl_free_h),
@@ -781,6 +828,46 @@ mod tests {
         env::set_var("PF_WORKER_CONCURRENCY", "2");
         let settings = Settings::load_from(None).expect("2 must load");
         assert_eq!(settings.worker_concurrency, 2);
+    }
+
+    /// P0-079: visibility timeout defaults to 300 s and keep-alive
+    /// to 30 s (the apalis defaults, now explicit); 0 fails naming
+    /// the var; visibility <= keep-alive fails naming the
+    /// visibility var — a dead worker's jobs must not be
+    /// re-queued while a live worker's heartbeat is still due.
+    #[test]
+    fn queue_visibility_defaults_and_bounds() {
+        let _env = clean_env();
+        let settings = Settings::load_from(None).expect("defaults must load");
+        assert_eq!(
+            settings.queue_visibility_timeout_secs, 300,
+            "default is 300 s"
+        );
+        assert_eq!(settings.queue_keep_alive_secs, 30, "default is 30 s");
+        env::set_var("PF_QUEUE_VISIBILITY_TIMEOUT_SECS", "0");
+        let err = Settings::load_from(None).expect_err("0 s visibility must fail");
+        assert!(
+            err.to_string().contains("PF_QUEUE_VISIBILITY_TIMEOUT_SECS"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_QUEUE_VISIBILITY_TIMEOUT_SECS", "30");
+        env::set_var("PF_QUEUE_KEEP_ALIVE_SECS", "30");
+        let err = Settings::load_from(None).expect_err("visibility == keep-alive must fail");
+        assert!(
+            err.to_string().contains("PF_QUEUE_VISIBILITY_TIMEOUT_SECS"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_QUEUE_VISIBILITY_TIMEOUT_SECS", "10");
+        let err = Settings::load_from(None).expect_err("visibility < keep-alive must fail");
+        assert!(
+            err.to_string().contains("PF_QUEUE_VISIBILITY_TIMEOUT_SECS"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_QUEUE_VISIBILITY_TIMEOUT_SECS", "600");
+        env::set_var("PF_QUEUE_KEEP_ALIVE_SECS", "15");
+        let settings = Settings::load_from(None).expect("600 > 15 must load");
+        assert_eq!(settings.queue_visibility_timeout_secs, 600);
+        assert_eq!(settings.queue_keep_alive_secs, 15);
     }
 
     /// P0-067: the Swagger UI gate — docs in dev and stage, never

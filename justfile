@@ -7,6 +7,9 @@ set dotenv-load := false
 # Database tasks live in db.just (`just db::reset`, `just db reset`).
 mod db
 
+# Queue tasks live in queue.just (`just queue::requeue-stuck`).
+mod queue
+
 # sqlx `query!` macros compile offline from the checked-in `.sqlx/`
 # data (P0-041); a live DB is only needed when regenerating it
 # (`just sqlx-prepare`). Without this, every cargo build/test would
