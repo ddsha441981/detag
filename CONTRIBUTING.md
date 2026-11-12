@@ -23,6 +23,19 @@ build plan lives in `docs/` (the PureFrame agent kit): start at
   above it explaining why the lint cannot be satisfied.
 - MSRV is honoured: do not use features newer than the pinned toolchain.
 
+## Secrets policy
+
+- All secrets are env vars with the `PF_` prefix (see `.env.example`,
+  P0-011 — placeholders only, never real values). Never commit `.env`
+  (it is gitignored); never paste a real key into code, docs, or logs.
+- Two gates enforce this: CI runs `gitleaks detect` on every push/PR
+  (`.github/workflows/ci.yml`), and the pre-commit hook runs
+  `gitleaks protect --staged`. Install the hook once per checkout:
+  `./scripts/install-hooks.sh`. Local full scan: `just secrets`.
+- If a real secret ever lands in history: rotate the credential
+  immediately, file an S1 issue, and purge it from history only with
+  owner approval (history rewrite is destructive).
+
 ## Commits
 
 - Conventional commits, one ticket per commit:
@@ -58,7 +71,7 @@ build plan lives in `docs/` (the PureFrame agent kit): start at
   `scripts/test_lint_commits.py`).
 - Every ticket: code + tests land together; tick the checkbox in its phase
   file and update `docs/09-STATE/PROGRESS.md` in the same commit.
-- No secrets in the repo (env vars use the `PF_` prefix; see `.env.example`).
+- No secrets in the repo — see "Secrets policy" above.
   No PII in logs (never emails, tokens, raw IPs, or file bytes).
 
 ## Definition of Done

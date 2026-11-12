@@ -89,12 +89,12 @@
     - [x] cargo deny check green
     - [x] CI wired
 
-- [ ] **P0-008** — gitleaks secret scanning
+- [x] **P0-008** — gitleaks secret scanning
   - **Type:** chore · **Area:** repo · **Est:** S · **Deps:** P0-007 · **Prio:** P1
   - **Spec:** gitleaks config + CI job + pre-commit hook; secret policy documented (PF_ env only, .env.example with dev defaults).
   - **AC:**
-    - [ ] scan green
-    - [ ] policy documented
+    - [x] scan green
+    - [x] policy documented
 
 - [ ] **P0-009** — Issue/PR templates
   - **Type:** docs · **Area:** repo · **Est:** S · **Deps:** P0-008 · **Prio:** P1

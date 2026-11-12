@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Pre-commit hook: block staged secrets (P0-008, NFR-52).
+# Installed via scripts/install-hooks.sh (sets core.hooksPath to .githooks).
+# Scans only staged changes; run `just secrets` for a full-repo scan.
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+# Git hooks run with a minimal PATH; the toolchain lives in ~/.local/bin
+# (just, gitleaks) and ~/.cargo/bin (cargo) — add them explicitly.
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+    echo "pre-commit: gitleaks is not installed; cannot scan staged changes." >&2
+    echo "pre-commit: install it (see CONTRIBUTING.md, 'Toolchain') and retry the commit." >&2
+    exit 1
+fi
+
+gitleaks protect --staged --config .gitleaks.toml --verbose

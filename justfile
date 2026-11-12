@@ -29,6 +29,10 @@ test-lint-commits:
 deny:
     cargo deny check
 
+# Secret scan of the whole repo (P0-008); pre-commit scans staged changes.
+secrets:
+    gitleaks detect --source . --config .gitleaks.toml --verbose
+
 # Run the full unit + integration test suite.
 test:
     cargo test --workspace

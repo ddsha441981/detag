@@ -1,0 +1,31 @@
+# gitleaks configuration (P0-008, NFR-52). gitleaks 8.30.1.
+#
+# Secret policy (see CONTRIBUTING.md, "Secrets policy"):
+# - All secrets live in env vars with the PF_ prefix; never commit .env.
+# - .env.example (lands in P0-011) holds placeholders only, never real values.
+# - CI runs `gitleaks detect` on every push/PR; the pre-commit hook
+#   (.githooks/pre-commit) runs `gitleaks protect --staged`.
+# - If a real secret ever lands in history: rotate the credential
+#   immediately, file an S1 issue, and purge history only with owner approval.
+#
+# The default rule set is extended below; the allowlist covers only
+# deliberately fake values. Do not add real-looking values here.
+
+title = "Detag gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Paths that hold only placeholder / synthetic values by policy"
+paths = [
+    '''\.env\.example$''',
+    '''^fixtures/''',
+]
+# Placeholder words that mark a value as fake. Keep this list short:
+# each stopword weakens detection wherever it appears.
+stopwords = [
+    "placeholder",
+    "changeme",
+    "example-key",
+]
