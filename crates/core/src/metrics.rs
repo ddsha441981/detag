@@ -6,7 +6,8 @@
 //! …) plus the custom `detag_build_info` gauge (`version` label).
 //! Custom application metrics register into the same registry:
 //! HTTP request metrics ([`HttpMetrics`], P0-028), job/queue
-//! metrics ([`QueueMetrics`], P0-029).
+//! metrics ([`QueueMetrics`], P0-029), cache hit/miss metrics
+//! ([`CacheMetrics`], P0-049).
 //!
 //! The `/metrics` route itself lives in the api crate
 //! (`apps/api/src/metrics.rs`): it serves [`Metrics::gather`] on a
@@ -27,6 +28,7 @@ pub struct Metrics {
     registry: Registry,
     http: HttpMetrics,
     queue: QueueMetrics,
+    cache: CacheMetrics,
 }
 
 impl Metrics {
@@ -52,10 +54,12 @@ impl Metrics {
             .expect("detag_build_info registers into a fresh registry");
         let http = HttpMetrics::new(&registry);
         let queue = QueueMetrics::new(&registry);
+        let cache = CacheMetrics::new(&registry);
         Metrics {
             registry,
             http,
             queue,
+            cache,
         }
     }
 
@@ -74,6 +78,11 @@ impl Metrics {
     /// stage timers) registered in this registry.
     pub fn queue(&self) -> &QueueMetrics {
         &self.queue
+    }
+
+    /// The cache metrics (hit/miss counters) registered in this registry.
+    pub fn cache(&self) -> &CacheMetrics {
+        &self.cache
     }
 
     /// All metrics in Prometheus text format (what `/metrics` serves).
@@ -289,6 +298,59 @@ impl QueueMetrics {
         self.stage_duration_seconds
             .with_label_values(&[stage])
             .observe(duration.as_secs_f64());
+    }
+}
+
+/// Cache hit/miss metrics (P0-049): one counter pair, labelled by
+/// cache `kind` (e.g. `plan`, `flags` — a low-cardinality caller
+/// name, never a raw id). A hit is a value served from Redis; a
+/// miss is a load (one per stampede, not one per waiter — the
+/// waiter that finds the value filled counts a hit).
+#[derive(Clone, Debug)]
+pub struct CacheMetrics {
+    hits_total: IntCounterVec,
+    misses_total: IntCounterVec,
+}
+
+impl CacheMetrics {
+    /// Register the two families into `registry`.
+    pub fn new(registry: &Registry) -> Self {
+        let hits_total = IntCounterVec::new(
+            Opts::new(
+                "detag_cache_hits_total",
+                "Cache hits (value served from Redis), by cache kind.",
+            ),
+            &["kind"],
+        )
+        .expect("detag_cache_hits_total builds");
+        let misses_total = IntCounterVec::new(
+            Opts::new(
+                "detag_cache_misses_total",
+                "Cache misses (value loaded and stored), by cache kind.",
+            ),
+            &["kind"],
+        )
+        .expect("detag_cache_misses_total builds");
+        registry
+            .register(Box::new(hits_total.clone()))
+            .expect("cache hits counter registers into a fresh registry");
+        registry
+            .register(Box::new(misses_total.clone()))
+            .expect("cache misses counter registers into a fresh registry");
+        CacheMetrics {
+            hits_total,
+            misses_total,
+        }
+    }
+
+    /// Record one hit for `kind`.
+    pub fn hit(&self, kind: &str) {
+        self.hits_total.with_label_values(&[kind]).inc();
+    }
+
+    /// Record one miss (one load) for `kind`.
+    pub fn miss(&self, kind: &str) {
+        self.misses_total.with_label_values(&[kind]).inc();
     }
 }
 

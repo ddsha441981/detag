@@ -9,11 +9,14 @@
 //! - [`keys`] — the `pf:{ns}:{key}` naming convention + TTL constants.
 //! - [`ratelimit`] — fixed-window + token-bucket primitives
 //!   (P0-048), atomic Lua scripts over the pool.
+//! - [`cache`] — `get_or_set` with TTL + singleflight +
+//!   invalidation (P0-049), with hit/miss metrics.
 //!
 //! Only the `redis://` scheme is probed (plain TCP). A `rediss://`
 //! URL reports down with an explicit detail — TLS needs the client,
 //! not this probe.
 
+pub mod cache;
 pub mod keys;
 pub mod ratelimit;
 

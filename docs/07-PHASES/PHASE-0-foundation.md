@@ -386,12 +386,13 @@
     - [x] scripts tested
   - **Status:** `crates/core/src/redis/ratelimit.rs` + `fixed_window.lua` / `token_bucket.lua` (loaded via `include_str!`, `redis::Script` = EVALSHA with EVAL fallback; needed the `script` feature on deadpool-redis, which forwards to `redis/script`). `FixedWindow::new(limit, window)` — INCR + conditional EXPIRE in one script, returns `{count, ttl}`; `TokenBucket::new(capacity, refill_per_sec)` — HMGET/HSET refill + deduct in one script, returns `{allowed, tokens as string}` (string because Redis cannot return a fractional integer reply); bucket TTL = ceil(capacity/refill) + 60 s, 24 h when refill is 0. Keys via `keys::rate_limit_key` (`pf:ratelimit:{scope}:{id}`). Both return `RateLimit { allowed, remaining, reset_in }`. Primitives only — limits are per-plan config (open question #17, Phase 5 tuning) and the 429 + `X-RateLimit-*` HTTP layer lands with Phase 1 auth. Tests: 4 unit tests (config validation, bucket TTL, Lua-source sanity) + live `crates/core/tests/ratelimit_live.rs` (5 tests: fixed-window admit/deny + per-id independence, token-bucket burst + 1.1 s refill, both 50-way races admit exactly the limit/capacity — 10 and 5 — re-run 3x stable, bad token count rejected). `just verify` needed one retry for FLAKY-001 (shutdown test).
 
-- [ ] **P0-049** — Cache helper
+- [x] **P0-049** — Cache helper
   - **Type:** feat · **Area:** redis · **Est:** M · **Deps:** P0-048 · **Prio:** P1
   - **Spec:** get_or_set with TTL + singleflight (local mutex) to prevent stampede; invalidation helper; hit/miss metrics.
   - **AC:**
-    - [ ] stampede test green
-    - [ ] metrics emitted
+    - [x] stampede test green
+    - [x] metrics emitted
+  - **Status:** `crates/core/src/redis/cache.rs`: `Cache::new(pool, &metrics)` — `get_or_set(kind, key, ttl, loader)` (values are JSON; `ttl` >= 1 s; fast path, then per-key singleflight with a re-check inside the lock so waiters hit instead of loading; loader failures are NOT cached; corrupt cached values count as a miss and are overwritten) + `invalidate(key)` (DEL). `CacheMetrics` in `crates/core/src/metrics.rs`: `detag_cache_hits_total{kind}` / `detag_cache_misses_total{kind}` (a miss is one load, not one waiter — waiters that find the value filled count a hit); `just dashboards-check` still OK. Tests: 2 singleflight unit tests (one key serializes — max concurrency 1; different keys run in parallel — proven by a started-flag, not timing) + live `crates/core/tests/cache_live.rs` (6 tests: miss→hit with metric assertions via `gather()`, TTL expiry, invalidate, corrupt entry, stampede — 50 concurrent callers on a cold key run the loader exactly once, stable over 3 runs — loader failure not cached). Design note caught by testing: the singleflight primitive only serializes; dedup comes from the caller's re-check inside the lock (a Go-style result-sharing singleflight would need `T: Clone`).
 
 - [ ] **P0-050** — SSE pubsub channel design
   - **Type:** feat · **Area:** redis · **Est:** S · **Deps:** P0-049 · **Prio:** P1
