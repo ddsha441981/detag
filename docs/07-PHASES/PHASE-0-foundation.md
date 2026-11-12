@@ -779,11 +779,12 @@
 
 ## E0.11 — Security baseline (area: security)
 
-- [ ] **P0-100** — cargo-audit/deny in CI
+- [x] **P0-100** — cargo-audit/deny in CI
   - **Type:** chore · **Area:** security · **Est:** S · **Deps:** — · **Prio:** P1
   - **Spec:** Advisory gate + weekly scheduled run; unpatched critical = red build; policy in deny.toml comments.
   - **AC:**
-    - [ ] gate green
+    - [x] gate green
+  - **Status:** The gate was NOT green when the ticket started: `just deny` failed on 14 advisories (12 vulnerabilities + 2 unmaintained), all published after the lockfile was cut — the push/PR deny job (P0-007) never sees them because the tree never changed, which is exactly why the weekly run exists. Fixed by upgrade where a path existed: aws-sdk-s3 1.155.0 → 1.159.0 (`--precise`; plain `cargo update -p` locked 0 packages) removed crypto-bigint 0.5.5 (RUSTSEC-2026-0387); utoipa 5.5.0 → 6.0.0 + utoipa-swagger-ui 9.0.2 → 10.0.2 moved zip 3.0.0 → 9.5.1 (RUSTSEC-2026-0367/-0368/-0369/-0429) — `cargo check -p detag-api` clean after the major bump, no code changes needed. 9 advisories have NO upgrade path at latest ecosystem versions and are ignored in deny.toml with per-ID reasons + removal conditions (the policy-sanctioned route, P0-007 comment): rustls 0.21.12 + rustls-webpki 0.101.7 + h2 0.3.27 (RUSTSEC-2026-0346/-0349/-0098/-0099/-0104/-0382/-0258 — the AWS SDK at latest still ships them; S3 client only talks to the operator-configured endpoint, code never Debug-prints a TLS session), astral-tokio-tar 0.6.4 (RUSTSEC-2026-0440 — testcontainers already at latest 0.28.0, dev-only), paste 1.0.15 (RUSTSEC-2024-0436 — image 0.25.10 chain, dev-only benches, unmaintained only). Weekly run added: `.github/workflows/security-audit.yml` (Mondays 03:00 UTC + workflow_dispatch, cargo-deny-action, fails the job on any new advisory). "cargo-audit" in the title is covered by cargo-deny's advisory check (same RUSTSEC DB) — no second tool installed. Gate now green: `advisories ok, bans ok, licenses ok, sources ok`. `just verify` green (357 passed, 0 failed) after 4 attempts (FLAKY-001 ×3 — streak of 3, then green after a 60 s settle); the lockfile churn is 172 lines.
 
 - [ ] **P0-101** — Input validation layer
   - **Type:** feat · **Area:** security · **Est:** M · **Deps:** P0-100 · **Prio:** P1

@@ -1,0 +1,33 @@
+# Weekly security audit (P0-100).
+#
+# The CI cargo-deny job runs on every push/PR — but advisories are
+# published over time against an UNCHANGED tree, so a lockfile that
+# was green on Friday can be red on Monday without any code change.
+# This job re-checks the tree every week so a newly published
+# advisory surfaces within days, not at the next unrelated push.
+#
+# Gate: `cargo deny check` fails the job on any unpatched advisory
+# (RUSTSEC), yanked crate, license outside the allow-list, or
+# non-crates.io source — "unpatched critical = red build". The only
+# escape hatch is an explicit `ignore` entry in deny.toml, which
+# needs a reason and a removal condition (see the comments there).
+# The job never auto-fixes anything: a red run means a human updates
+# a dependency (or records a no-upgrade-path ignore) and commits it.
+name: Security audit
+
+on:
+  schedule:
+    # Mondays 03:00 UTC.
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: EmbarkStudios/cargo-deny-action@v2
