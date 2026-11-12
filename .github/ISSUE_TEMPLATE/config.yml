@@ -1,0 +1,6 @@
+# Issue template chooser (P0-009).
+blank_issues_enabled: false
+contact_links:
+  - name: Build plan & agent kit docs
+    url: https://github.com/ddsha441981/detag/blob/main/docs/00-AGENT-BOOT.md
+    about: Questions about what to build next live in the kit docs, not in issues.

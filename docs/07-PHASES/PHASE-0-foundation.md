@@ -96,11 +96,11 @@
     - [x] scan green
     - [x] policy documented
 
-- [ ] **P0-009** — Issue/PR templates
+- [x] **P0-009** — Issue/PR templates
   - **Type:** docs · **Area:** repo · **Est:** S · **Deps:** P0-008 · **Prio:** P1
   - **Spec:** GitHub templates: bug (severity + repro fields), spike (research output expected), ticket-linking guidance to 07-PHASES; PR template auto-checklist.
   - **AC:**
-    - [ ] templates committed
+    - [x] templates committed
 
 - [ ] **P0-010** — Release tooling (cocogitto)
   - **Type:** chore · **Area:** repo · **Est:** M · **Deps:** P0-009 · **Prio:** P1

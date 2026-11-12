@@ -1,5 +1,13 @@
 ## What (ticket)
 <!-- e.g. P0-004 repo hygiene files -->
+<!-- Ticket link: docs/07-PHASES/PHASE-0-foundation.md (P0-004).
+     One ticket per PR; the ticket checkbox + docs/09-STATE/PROGRESS.md
+     update land in the same PR. -->
+
+## Quality-gate impact
+<!-- Engine changes: golden-suite metrics before → after, and whether
+     thresholds moved (threshold moves need an ADR). Other changes:
+     write "none". -->
 
 ## Definition of Done checklist
 - [ ] Code implements the ticket spec; deviations documented in the commit body
