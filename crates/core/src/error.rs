@@ -206,6 +206,10 @@ pub enum AppError {
     /// PF-5002, 409.
     #[error("invalid state transition")]
     InvalidStateTransition,
+    /// Kit (P0-064): route exists in the table but its handler is
+    /// not implemented yet (Phase 0 stub). PF-5004, 501.
+    #[error("not implemented")]
+    NotImplemented,
 }
 
 impl AppError {
@@ -247,6 +251,7 @@ impl AppError {
             DatabaseUnavailable => "PF-5001",
             CacheUnavailable => "PF-5003",
             InvalidStateTransition => "PF-5002",
+            NotImplemented => "PF-5004",
         }
     }
 
@@ -288,6 +293,7 @@ impl AppError {
             DatabaseUnavailable => 503,
             CacheUnavailable => 503,
             InvalidStateTransition => 409,
+            NotImplemented => 501,
         }
     }
 
@@ -329,6 +335,7 @@ impl AppError {
             DatabaseUnavailable => "database_unavailable",
             CacheUnavailable => "cache_unavailable",
             InvalidStateTransition => "invalid_state_transition",
+            NotImplemented => "not_implemented",
         }
     }
 
@@ -372,6 +379,7 @@ impl AppError {
             DatabaseUnavailable => "the database is temporarily unavailable",
             CacheUnavailable => "the cache is temporarily unavailable",
             InvalidStateTransition => "this transition is not allowed",
+            NotImplemented => "this endpoint is not implemented yet",
         }
     }
 
@@ -503,6 +511,7 @@ mod tests {
             DatabaseUnavailable,
             CacheUnavailable,
             InvalidStateTransition,
+            NotImplemented,
         ]
     }
 
@@ -512,7 +521,7 @@ mod tests {
     #[test]
     fn every_variant_maps_to_status_code_title() {
         let variants = all_variants();
-        assert_eq!(variants.len(), 34, "a variant was added without a test");
+        assert_eq!(variants.len(), 35, "a variant was added without a test");
         for err in &variants {
             let code = err.code();
             let status = err.status();
@@ -564,7 +573,8 @@ mod tests {
                 AppError::Internal
                 | AppError::DatabaseUnavailable
                 | AppError::CacheUnavailable
-                | AppError::InvalidStateTransition => {
+                | AppError::InvalidStateTransition
+                | AppError::NotImplemented => {
                     assert!((5000..6000).contains(&n))
                 }
             }
@@ -895,6 +905,13 @@ mod tests {
                 "invalid_state_transition",
                 "this transition is not allowed",
             ),
+            (
+                NotImplemented,
+                "PF-5004",
+                501,
+                "not_implemented",
+                "this endpoint is not implemented yet",
+            ),
         ]
     }
 
@@ -904,7 +921,7 @@ mod tests {
     #[test]
     fn variant_to_response_table() {
         let table = response_table();
-        assert_eq!(table.len(), 34, "a variant is missing from the table");
+        assert_eq!(table.len(), 35, "a variant is missing from the table");
         assert_eq!(
             table.len(),
             all_variants().len(),
@@ -913,7 +930,7 @@ mod tests {
         let mut codes: Vec<&str> = table.iter().map(|(_, c, _, _, _)| *c).collect();
         codes.sort_unstable();
         codes.dedup();
-        assert_eq!(codes.len(), 34, "two variants share a code");
+        assert_eq!(codes.len(), 35, "two variants share a code");
 
         for (err, code, status, title, detail) in &table {
             assert_eq!(err.code(), *code, "{code}");
@@ -972,6 +989,20 @@ mod tests {
             prod_json["detail"],
             "the database is temporarily unavailable"
         );
+    }
+
+    /// The Phase 0 stub code (P0-064): PF-5004, 501, and the
+    /// problem body carries it with the static detail.
+    #[test]
+    fn not_implemented_mapping() {
+        let err = AppError::NotImplemented;
+        assert_eq!(err.code(), "PF-5004");
+        assert_eq!(err.status(), 501);
+        assert_eq!(err.title(), "not_implemented");
+        assert_eq!(err.default_detail(), "this endpoint is not implemented yet");
+        let problem = err.to_problem(Profile::Production, Some("01JREQID123"), None);
+        assert_eq!(problem.code, "PF-5004");
+        assert_eq!(problem.status, 501);
     }
 
     /// Request-id propagation into bodies: present in dev and prod when

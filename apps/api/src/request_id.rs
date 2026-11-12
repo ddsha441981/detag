@@ -34,14 +34,24 @@ use uuid::Uuid;
 /// The request-id header name, request and response.
 pub const REQUEST_ID_HEADER: &str = "x-request-id";
 
+/// The request id for this request, as assigned by
+/// [`request_id_middleware`]. The middleware inserts it into the
+/// request extensions, so handlers read it with
+/// `Extension<RequestId>` (see `routes/extractors.rs`) — the same
+/// id the response header echoes and the problem bodies carry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestId(pub String);
+
 /// Slow-request threshold: slower than this, the access event is always
 /// emitted (per NFR-1 / P0-072).
 pub const SLOW_THRESHOLD: Duration = Duration::from_millis(250);
 
 /// Axum middleware: assign/echo the request id, span the request,
 /// sample the access-log event.
-pub async fn request_id_middleware(req: Request<Body>, next: Next) -> Response {
+pub async fn request_id_middleware(mut req: Request<Body>, next: Next) -> Response {
     let id = extract_or_generate(&req);
+    // Handlers read the id from here (Extension<RequestId>).
+    req.extensions_mut().insert(RequestId(id.clone()));
     let route = req
         .extensions()
         .get::<MatchedPath>()

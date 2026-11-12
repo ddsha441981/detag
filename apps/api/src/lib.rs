@@ -57,20 +57,14 @@
 pub mod http_metrics;
 pub mod metrics;
 pub mod request_id;
+pub mod routes;
 
-use axum::{
-    extract::{Extension, State},
-    http::StatusCode,
-    middleware,
-    response::Json,
-    routing::get,
-    Router,
-};
+use axum::{extract::Extension, middleware, Router};
 use detag_core::clock::{Clock, SystemClock};
 use detag_core::config::Settings;
-use detag_core::db::{connect_lazy, db_health, DbPool, PoolConfig, Readiness};
+use detag_core::db::{connect_lazy, DbPool, PoolConfig};
 use detag_core::metrics::Metrics;
-use detag_core::redis::{create_pool, redis_health, RedisPool, RedisPoolConfig, RedisPoolError};
+use detag_core::redis::{create_pool, RedisPool, RedisPoolConfig, RedisPoolError};
 use detag_storage::provider::StorageError;
 use detag_storage::s3::{S3Config, S3Storage};
 use std::sync::Arc;
@@ -144,34 +138,13 @@ impl AppState {
     }
 }
 
-/// Readiness (P0-035, FR-X-02; redis component P0-046): 200 when
-/// every component is ok, 503 otherwise. The components are the
-/// database and redis, read from the state; storage and models
-/// join in E0.7 (P0-066), which owns the full `/readyz` shape.
-/// The body is always the same JSON — the status code is the
-/// signal, the body is the diagnosis.
-async fn readyz(State(state): State<AppState>) -> (StatusCode, Json<Readiness>) {
-    let report = Readiness::from_components(vec![
-        db_health(&state.pool).await,
-        redis_health(&state.settings.redis_url).await,
-    ]);
-    let status = if report.is_ok() {
-        StatusCode::OK
-    } else {
-        StatusCode::SERVICE_UNAVAILABLE
-    };
-    (status, Json(report))
-}
-
-/// The router: process health + readiness today; the route
-/// modules land in P0-064 (`routes/{auth,uploads,jobs,billing,
-/// admin,meta}`) and the remaining middleware in P0-065. The
-/// layer order is documented at the top of this file — read it
-/// before adding a layer.
+/// The router: the route modules (`routes/`, P0-064) merged,
+/// with the state attached and the middleware layered on top.
+/// The remaining middleware lands in P0-065. The layer order is
+/// documented at the top of this file — read it before adding a
+/// layer.
 pub fn build_router(state: AppState, metrics: Metrics) -> Router {
-    Router::new()
-        .route("/healthz", get(|| async { "ok" }))
-        .route("/readyz", get(readyz))
+    routes::api_router()
         .with_state(state)
         .layer(middleware::from_fn(request_id::request_id_middleware))
         .layer(middleware::from_fn(http_metrics::http_metrics_middleware))
