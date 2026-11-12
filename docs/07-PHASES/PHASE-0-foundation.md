@@ -300,12 +300,13 @@
     - [x] prepare fresh
   - **Status:** `migrations/20261112064220_users_sessions.{up,down}.sql` — users (citext email UNIQUE, argon2id password_hash, role/status CHECKs, tos_version, deleted_at, settings jsonb) + sessions (refresh_hash UNIQUE, family_id, device jsonb {ua, ip_hash}, expires_at, revoked_at, replaced_by self-FK). Verified on a fresh scratch DB: applies clean, case-insensitive email unique rejects `alice@example.com` after `Alice@Example.com`, role/status CHECKs + sessions FK reject bad rows, revert drops both tables, re-apply restores them; committed live test `crates/core/tests/migration_001_users_sessions.rs` covers all of it. Dev DB migrated. `cargo sqlx prepare --workspace` and `--check` both pass, and `just sqlx-prepare[-check]` + a CI step (after migrate) are committed — BUT there are no `query!` macros in the codebase yet, so prepare reports "no queries found" and generates no `.sqlx/` files to check in; the gate is in place and becomes real when the repo layer lands (P0-041). sqlx-cli 0.9.0 installed locally for this; CI installs it.
 
-- [ ] **P0-038** — Migration 002 jobs+artifacts
+- [x] **P0-038** — Migration 002 jobs+artifacts
   - **Type:** feat · **Area:** db · **Est:** M · **Deps:** P0-037 · **Prio:** P1
   - **Spec:** jobs, job_events, artifacts, quality_reports, uploads per data-model; indexes from doc.
   - **AC:**
-    - [ ] migration applies
-    - [ ] indexes present
+    - [x] migration applies
+    - [x] indexes present
+  - **Status:** `migrations/20261112064924_jobs_artifacts.{up,down}.sql` — uploads (kind/status CHECKs), jobs (kind CHECK, progress 0..1, idempotency_key UNIQUE, upload_id nullable for batch jobs), job_events (type CHECK), artifacts (type CHECK, expires_at NOT NULL), quality_reports (UNIQUE job_id, gate pass|fail). Doc's 3 indexes + jobs(upload_id), job_events(job_id, at), artifacts(job_id). No CHECK on jobs.status/stage/mode/lane values: the docs name no complete state machine (only queued/running/succeeded/quality_failed in passing) — the machine is defined with the pipeline (Phase 3). jobs.attestation_id is a plain UUID for now; the FK lands in P0-040 with the attestations table. Committed live test `crates/core/tests/migration_002_jobs_artifacts.rs` (schema, indexes, CHECKs, idempotency unique, 1-1 report, user-delete CASCADE, revert/re-apply). Dev DB migrated (versions [1, 20261112064220, 20261112064924]). Also isolated both migration live tests to scratch dirs holding only the pairs they need: the P0-037 test broke when 002 landed (revert-last reverted 002, not 001).
 
 - [ ] **P0-039** — Migration 003 billing
   - **Type:** feat · **Area:** db · **Est:** M · **Deps:** P0-038 · **Prio:** P1

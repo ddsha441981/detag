@@ -1,6 +1,8 @@
 //! Live test for migration 001 — users + sessions (P0-037, E0.4).
 //!
-//! Applies the repo's real `migrations/` to a scratch DATABASE
+//! Applies ONLY the 001 migration pair (copied from the repo's real
+//! `migrations/` into a scratch dir — later migrations must not
+//! change what this test applies or reverts) to a scratch DATABASE
 //! (`detag_p037_test`, created and dropped by the test) — never the
 //! dev database, so the dev `_sqlx_migrations` is never touched
 //! (sqlx fails a later `just migrate` when applied versions are
@@ -29,11 +31,28 @@ fn test_database_url() -> String {
 
 /// The repo's real migrations dir (this file lives in
 /// `crates/core/tests/`, so two levels up is the workspace root).
-fn migrations_dir() -> PathBuf {
+fn repo_migrations_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
         .join("migrations")
+}
+
+/// A scratch dir holding ONLY the 001 pair, copied from the repo.
+/// Later migrations (002, 003, ...) must not change what this test
+/// applies or reverts, so the test never runs the whole `migrations/`
+/// dir: `migrate_revert_last` reverts the last applied version, and
+/// that must be 001 here.
+fn migrations_dir() -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("detag-p037-migrations-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create scratch migrations dir");
+    let repo = repo_migrations_dir();
+    for ext in ["up.sql", "down.sql"] {
+        let name = format!("20261112064220_users_sessions.{ext}");
+        std::fs::copy(repo.join(&name), dir.join(&name)).expect("copy 001 migration pair");
+    }
+    dir
 }
 
 async fn table_exists(pool: &DbPool, table: &str) -> bool {
@@ -83,11 +102,10 @@ async fn migration_001_users_sessions_schema_and_constraints() {
     let pool = connect(&test_database_url(), &PoolConfig::default())
         .await
         .expect("connect to the scratch database");
+    let mdir = migrations_dir();
 
-    // Apply all migrations (0001 feature_flags + 001 users+sessions).
-    let applied = migrate_up(&pool, &migrations_dir())
-        .await
-        .expect("migrate up");
+    // Apply the 001 pair only (see migrations_dir()).
+    let applied = migrate_up(&pool, &mdir).await.expect("migrate up");
     assert!(
         applied.contains(&20261112064220),
         "migration 001 must apply: {applied:?}"
@@ -180,18 +198,14 @@ async fn migration_001_users_sessions_schema_and_constraints() {
     assert!(dup_hash.is_err(), "duplicate refresh_hash must fail");
 
     // Revert 001: both tables go away; re-apply brings them back.
-    let reverted = migrate_revert_last(&pool, &migrations_dir())
-        .await
-        .expect("revert 001");
+    let reverted = migrate_revert_last(&pool, &mdir).await.expect("revert 001");
     assert_eq!(reverted, Some(20261112064220), "must revert 001");
     assert!(!table_exists(&pool, "users").await, "revert drops users");
     assert!(
         !table_exists(&pool, "sessions").await,
         "revert drops sessions"
     );
-    let reapplied = migrate_up(&pool, &migrations_dir())
-        .await
-        .expect("re-apply 001");
+    let reapplied = migrate_up(&pool, &mdir).await.expect("re-apply 001");
     assert!(
         reapplied.contains(&20261112064220),
         "re-apply must restore 001: {reapplied:?}"
@@ -199,4 +213,5 @@ async fn migration_001_users_sessions_schema_and_constraints() {
 
     pool.close().await;
     drop_test_db(&url).await;
+    let _ = std::fs::remove_dir_all(&mdir);
 }
