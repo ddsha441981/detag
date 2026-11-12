@@ -5,7 +5,6 @@
 //! checked in under `.sqlx/` (see `just sqlx-prepare`).
 
 use super::error::RepoError;
-use crate::db::DbPool;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
@@ -27,7 +26,10 @@ pub struct Plan {
 
 /// Fetch by code (`free` / `pro` / `business`). `None` when the code
 /// does not exist.
-pub async fn by_code(pool: &DbPool, code: &str) -> Result<Option<Plan>, RepoError> {
+pub async fn by_code(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    code: &str,
+) -> Result<Option<Plan>, RepoError> {
     sqlx::query_as!(
         Plan,
         "SELECT id, code, stripe_price_id, currency, amount, entitlements, created_at, updated_at
@@ -40,7 +42,9 @@ pub async fn by_code(pool: &DbPool, code: &str) -> Result<Option<Plan>, RepoErro
 }
 
 /// All plans, cheapest first (by `amount`).
-pub async fn all(pool: &DbPool) -> Result<Vec<Plan>, RepoError> {
+pub async fn all(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+) -> Result<Vec<Plan>, RepoError> {
     sqlx::query_as!(
         Plan,
         "SELECT id, code, stripe_price_id, currency, amount, entitlements, created_at, updated_at

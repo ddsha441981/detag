@@ -12,6 +12,7 @@ pub mod repos;
 pub mod shutdown;
 pub mod state_machine;
 pub mod telemetry;
+pub mod tx;
 pub mod types;
 
 /// Crate version (workspace version).

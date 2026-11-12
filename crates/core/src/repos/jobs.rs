@@ -9,7 +9,6 @@
 //! Phase 3 pipeline).
 
 use super::error::RepoError;
-use crate::db::DbPool;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
@@ -56,7 +55,10 @@ pub struct NewJob<'a> {
 /// Insert a job. A duplicate `idempotency_key` fails with
 /// `RepoError::UniqueViolation`; a bad kind with `CheckViolation`;
 /// an unknown user/upload with `ForeignKeyViolation`.
-pub async fn create(pool: &DbPool, job: &NewJob<'_>) -> Result<Job, RepoError> {
+pub async fn create(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    job: &NewJob<'_>,
+) -> Result<Job, RepoError> {
     sqlx::query_as!(
         Job,
         "INSERT INTO jobs (user_id, upload_id, kind, mode, status, lane, params, idempotency_key)
@@ -79,7 +81,10 @@ pub async fn create(pool: &DbPool, job: &NewJob<'_>) -> Result<Job, RepoError> {
 }
 
 /// Fetch by id. `None` when the id does not exist.
-pub async fn by_id(pool: &DbPool, id: Uuid) -> Result<Option<Job>, RepoError> {
+pub async fn by_id(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> Result<Option<Job>, RepoError> {
     sqlx::query_as!(
         Job,
         "SELECT id, user_id, upload_id, kind, mode, params, status, stage,
@@ -94,7 +99,11 @@ pub async fn by_id(pool: &DbPool, id: Uuid) -> Result<Option<Job>, RepoError> {
 }
 
 /// Newest-first page of a user's jobs. `limit` caps the page.
-pub async fn list_by_user(pool: &DbPool, user_id: Uuid, limit: i64) -> Result<Vec<Job>, RepoError> {
+pub async fn list_by_user(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+    limit: i64,
+) -> Result<Vec<Job>, RepoError> {
     sqlx::query_as!(
         Job,
         "SELECT id, user_id, upload_id, kind, mode, params, status, stage,
@@ -112,7 +121,11 @@ pub async fn list_by_user(pool: &DbPool, user_id: Uuid, limit: i64) -> Result<Ve
 /// Set the status (and bump `updated_at`). `NotFound` when the id
 /// does not exist. No transition validation here — see the module
 /// docs.
-pub async fn set_status(pool: &DbPool, id: Uuid, status: &str) -> Result<Job, RepoError> {
+pub async fn set_status(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+    status: &str,
+) -> Result<Job, RepoError> {
     sqlx::query_as!(
         Job,
         "UPDATE jobs SET status = $2, updated_at = now() WHERE id = $1

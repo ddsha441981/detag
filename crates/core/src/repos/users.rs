@@ -4,7 +4,6 @@
 //! `.sqlx/` (see `just sqlx-prepare`).
 
 use super::error::RepoError;
-use crate::db::DbPool;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
@@ -28,7 +27,11 @@ pub struct User {
 /// Insert a user. Duplicate email (case-insensitive — the column is
 /// citext) fails with `RepoError::UniqueViolation` naming
 /// `users_email_key`; a bad role/status fails with `CheckViolation`.
-pub async fn create(pool: &DbPool, email: &str, password_hash: &str) -> Result<User, RepoError> {
+pub async fn create(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    email: &str,
+    password_hash: &str,
+) -> Result<User, RepoError> {
     sqlx::query_as!(
         User,
         "INSERT INTO users (email, password_hash) VALUES ($1, $2)
@@ -43,7 +46,10 @@ pub async fn create(pool: &DbPool, email: &str, password_hash: &str) -> Result<U
 }
 
 /// Fetch by id. `None` when the id does not exist.
-pub async fn by_id(pool: &DbPool, id: Uuid) -> Result<Option<User>, RepoError> {
+pub async fn by_id(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> Result<Option<User>, RepoError> {
     sqlx::query_as!(
         User,
         "SELECT id, email, password_hash, email_verified_at, role, status,
@@ -64,7 +70,10 @@ pub async fn by_id(pool: &DbPool, id: Uuid) -> Result<Option<User>, RepoError> {
 /// text` (the citext value is cast to text), so a differently-cased
 /// lookup would silently miss. Casting the parameter forces the
 /// citext comparison. (Caught by the P0-041 live test.)
-pub async fn by_email(pool: &DbPool, email: &str) -> Result<Option<User>, RepoError> {
+pub async fn by_email(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    email: &str,
+) -> Result<Option<User>, RepoError> {
     sqlx::query_as!(
         User,
         "SELECT id, email, password_hash, email_verified_at, role, status,

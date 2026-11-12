@@ -5,7 +5,7 @@
 ## Where we are
 
 - **Current phase:** 0 — Foundation & Platform Baseline
-- **Current ticket:** P0-042
+- **Current ticket:** P0-043
 - **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007).
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
@@ -13,7 +13,7 @@
 
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
-| 0 | Foundation & Platform Baseline | 40 / 108 | — |
+| 0 | Foundation & Platform Baseline | 41 / 108 | — |
 | 1 | Identity & Billing | 0 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
@@ -34,11 +34,11 @@
 
 ## Next-up queue (top 5)
 
-1. P0-042 — Tx helper
-2. P0-043 — Seed + reset tasks
-3. P0-044 — Slow-query log + index checklist
-4. P0-045 — Schema docs automation
-5. P0-046 — Redis in compose
+1. P0-043 — Seed + reset tasks
+2. P0-044 — Slow-query log + index checklist
+3. P0-045 — Schema docs automation
+4. P0-046 — Redis in compose
+5. P0-047 — Connection manager
 5. P0-041 — Repo layer tests
 
 ## Bench history (append-only)

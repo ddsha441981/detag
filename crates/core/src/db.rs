@@ -4,10 +4,10 @@
 //! settings (max connections, acquire timeout, statement cache) live
 //! in exactly one place. The pool is [`DbPool`] (`sqlx::PgPool`).
 //!
-//! Queries use the untyped sqlx API (`query_scalar`, …), so this
-//! module needs no `sqlx prepare` offline data. Repositories that
-//! use the `query!` macros (Phase 1+) check their `.sqlx/` outputs
-//! in, starting with P0-037.
+//! Queries in this module use the untyped sqlx API (`query_scalar`,
+//! …), so this module needs no `sqlx prepare` offline data.
+//! Repositories that use the `query!` macros (`repos/`, P0-041)
+//! check their `.sqlx/` outputs in (see `just sqlx-prepare`).
 //!
 //! TLS: no sqlx TLS feature is enabled, so connections are plaintext.
 //! That matches the dev compose service (no TLS) and a database on a
@@ -32,6 +32,11 @@ pub struct PoolConfig {
     pub min_connections: u32,
     /// How long acquiring a connection may wait when the pool is full.
     pub acquire_timeout: Duration,
+    /// Per-transaction statement timeout applied by `with_tx`
+    /// (`tx.rs`) via `SET LOCAL statement_timeout`; `Duration::ZERO`
+    /// disables it (no timeout). Bounds any single statement inside
+    /// a transaction so a stuck query cannot hold a connection.
+    pub transaction_timeout: Duration,
     /// sqlx prepared-statement cache capacity; 0 disables the cache.
     pub statement_cache_capacity: usize,
 }
@@ -42,6 +47,7 @@ impl Default for PoolConfig {
             max_connections: 10,
             min_connections: 0,
             acquire_timeout: Duration::from_secs(5),
+            transaction_timeout: Duration::from_secs(30),
             statement_cache_capacity: 100,
         }
     }

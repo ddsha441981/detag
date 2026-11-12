@@ -10,6 +10,12 @@
 //! Error mapping: Postgres constraint failures become typed
 //! `RepoError` variants (`error.rs`) instead of raw `sqlx::Error`.
 //!
+//! Every function takes `impl Executor` rather than `&DbPool`, so
+//! the same call works against the pool and inside a transaction
+//! (`tx::with_tx` hands the closure a `&mut PgConnection`, which is
+//! an executor). Pass `&pool` at the top level, `&mut *conn` inside
+//! `with_tx` (a reborrow — the closure owns the `&mut`).
+//!
 //! Testcontainers is the kit's intended fixture for these tests,
 //! but docker cannot start containers on this VM (DOCKER-001), so
 //! the tests run against the native postgres with a scratch
