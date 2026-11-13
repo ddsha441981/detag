@@ -42,6 +42,10 @@ feature_flags   idempotency_keys   email_outbox     plans (catalog)
 
 ## Retention & cleanup jobs
 
+The account states, transitions, and what each state
+allows live in the [user lifecycle doc](06-user-lifecycle.md)
+(state diagram, NFR-40 retention, admin procedures).
+
 - artifacts: `expires_at` = now + plan TTL → hard delete object + row (daily worker).
 - uploads: pending_parts > 24 h → abort + delete.
 - users (P1-007): `status = 'deletion_pending'` and `deleted_at` older than 30 d → hard delete via `detag-gc --purge-users` (nightly, dry-run by default). The cascade: sessions, jobs (+ artifacts, job events, quality reports via jobs), uploads, subscriptions, usage counters, idempotency keys, verification tokens and attestations are `ON DELETE CASCADE`; audit rows survive with `actor_user_id` intact (no FK); outbox rows survive (addressed by hash). S3 objects are NOT deleted by the purge — the row delete makes them orphans and the next gc sweep deletes them.

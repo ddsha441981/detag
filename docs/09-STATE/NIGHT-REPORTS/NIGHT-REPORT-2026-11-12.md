@@ -18,13 +18,14 @@ P0-106/107/108 (Phase 0 ticket work done, 105/108); updated
 ~13:18 IST 13 Nov after P1-008 (Phase 1, 8/111); updated
 ~13:41 IST 13 Nov after P1-009 (Phase 1, 9/111); updated
 ~13:58 IST 13 Nov after P1-010 (Phase 1, 10/111); updated
-~14:10 IST 13 Nov after P1-011 (Phase 1, 11/111). Resumed
+~14:10 IST 13 Nov after P1-011 (Phase 1, 11/111); updated
+~14:19 IST 13 Nov after P1-012 (Phase 1, 12/111). Resumed
 from the 8th coordinator's interruption (~23:21 IST, P0-092 in
 progress with uncommitted work). Local HEAD at this update:
-`f4dd344` (P1-011). No push (local-only by rule; parent handles
+`9aea132` (P1-012). No push (local-only by rule; parent handles
 GitHub pushes).
 
-## Tickets done (23)
+## Tickets done (24)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -728,6 +729,32 @@ GitHub pushes).
   T21 now proven (LIVE) + update-log row. `just verify`
   green 557 passed, 0 failed, attempt 1 (no flakes).
 
+- **P1-012 — User lifecycle docs** (`9aea132`): new
+  `docs/03-ARCHITECTURE/06-user-lifecycle.md` — Mermaid
+  `stateDiagram-v2` (active / suspended / deletion_pending
+  / purged-terminal) with every transition labeled by actor
+  + ticket; a what-each-state-allows table (login, jobs,
+  profile, deletion, suspend/restore, purge per state);
+  retention per NFR-40 as a table mapping each item to its
+  enforcer + status; admin procedure notes (suspend/restore,
+  search, impersonate + banner, admin creation, locked-vs-
+  suspended triage, the no-admin-cancel for a pending
+  deletion). Every transition is test-proven (P1-007/P1-008/
+  P1-011) except suspended → deletion_pending, which was
+  verified live by a scratch test during this ticket (a
+  suspended user's DELETE returns 204, status becomes
+  `deletion_pending` with a fresh grace — the scratch file
+  was deleted after the run). Two honesty corrections found
+  while writing: the upload `pending_parts` abort has no
+  enforcing job (the state machine allows it, nothing runs
+  it — marked TARGET, not LIVE) and the retention table's
+  live rows are only the artifact sweep + the user purge
+  (the other six are targets enforced by P5-017); the reset
+  flow is P1-025 (named, not "a later ticket"). Linked from
+  the data-model retention section. `just verify` green 557
+  passed, 0 failed, attempt 1 (no flakes — docs only, no
+  code change).
+
 ## Tickets partially done
 
 - **P0-034 / P0-046 / P0-083**: implemented but unverified —
@@ -839,8 +866,8 @@ GitHub pushes).
   display-name unit) → **498 passed, 0 failed** (P1-006; +12
   email-change integration) → **507 passed, 0 failed**
   (P1-007; +9: 5 api deletion + 3 gc purge + 1 migration)
-  → **557 passed, 0 failed** (P1-011; +7 new
-  admin_impersonate_audit).
+  → **557 passed, 0 failed** (P1-012; docs only, no code
+  change).
   Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
@@ -899,6 +926,7 @@ GitHub pushes).
   green on its first run before the full verify).
   P1-011: 1 (no flakes — the admin_impersonate_audit binary
   ran green on its first run before the full verify).
+  P1-012: 1 (no flakes — docs only).
   Every red run was a known flake, a lint fix, or a
   test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
@@ -918,11 +946,11 @@ GitHub pushes).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-012 — User lifecycle docs.
-2. P1-013 — JWT claims + issuance.
-3. P1-014 — Refresh rotation.
-4. P1-015 — Sessions table + repo.
-5. P1-016 — Cookie + bearer <redacted> auth.
+1. P1-013 — JWT claims + issuance.
+2. P1-014 — Refresh rotation.
+3. P1-015 — Sessions table + repo.
+4. P1-016 — Cookie + bearer <redacted> auth.
+5. P1-017 — Logout endpoints.
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never
