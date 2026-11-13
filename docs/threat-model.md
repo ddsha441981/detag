@@ -15,6 +15,8 @@
 >
 > See also: `docs/05-QUALITY/03-security-testing.md` (the
 > test plan that tests against this model),
+> `docs/05-QUALITY/05-security-baseline.md` (the Phase 0
+> summary of what is enforced where),
 > `docs/06-DELIVERY/03-deploy-runbook.md` (secret rotation),
 > `docs/09-STATE/DECISIONS.md` (owner decisions).
 

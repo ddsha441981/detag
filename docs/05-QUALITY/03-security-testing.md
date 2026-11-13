@@ -66,3 +66,5 @@ gitleaks CI; `cargo deny` advisories+licenses gate; Dependabot-style weekly bump
 ## Reporting
 
 Findings land in `09-STATE/ISSUES.md` with severity per `06-DELIVERY/01-bug-triage.md`. S1 security = stop feature work immediately. A security summary table (test → result) ships in the Phase 5 release checklist.
+
+Phase 0 baseline: `docs/05-QUALITY/05-security-baseline.md` (P0-108) — what is enforced where (CI + runtime + ops) and the checklist mapping of every section above, with the known gaps stated plainly. Update it when a section's status changes.
