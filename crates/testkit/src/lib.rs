@@ -251,7 +251,7 @@ pub async fn start_containers() -> Result<Containers, testcontainers::Testcontai
         .await?;
     let redis_port = redis.get_host_port_ipv4(6379).await?;
 
-    let minio = GenericImage::new("quay.io/quay.io/minio/minio", "latest")
+    let minio = GenericImage::new("quay.io/minio/minio", "latest")
         .with_exposed_port(9000.tcp())
         .with_wait_for(WaitFor::message_on_stdout("API: http://"))
         .with_env_var("MINIO_ROOT_USER", "minioadmin")
