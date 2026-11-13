@@ -728,7 +728,12 @@ Business 72 h — then are deleted):
   INSTEAD of the artifact sweep (one mode per invocation —
   the nightly cron calls it separately) and needs the database
   only (no S3 client: purged users' objects become orphans
-  for the next sweep).
+  for the next sweep). The session purge is the same shape
+  (P1-015): `cargo run -p detag-gc -- --purge-sessions`
+  dry-runs (counts sessions past `expires_at`, deletes
+  nothing); `--purge-sessions --execute` deletes them — also
+  database-only, also instead of the sweep, also called
+  separately by the nightly cron.
 - **Live verification:** the ILM import and the GC's execute
   path wait for CI/E0.9 (DOCKER-001 — no containers on this VM).
   Until then the gates are the static checker, the repo live

@@ -21,13 +21,14 @@ P0-106/107/108 (Phase 0 ticket work done, 105/108); updated
 ~14:10 IST 13 Nov after P1-011 (Phase 1, 11/111); updated
 ~14:19 IST 13 Nov after P1-012 (Phase 1, 12/111); updated
 ~14:44 IST 13 Nov after P1-013 (Phase 1, 13/111); updated
-~15:30 IST 13 Nov after P1-014 (Phase 1, 14/111). Resumed
+~15:30 IST 13 Nov after P1-014 (Phase 1, 14/111); updated
+~15:55 IST 13 Nov after P1-015 (Phase 1, 15/111). Resumed
 from the 8th coordinator's interruption (~23:21 IST, P0-092 in
 progress with uncommitted work). Local HEAD at this update:
-`f9ce823` (P1-014). No push (local-only by rule; parent handles
+`9bb2001` (P1-015). No push (local-only by rule; parent handles
 GitHub pushes).
 
-## Tickets done (26)
+## Tickets done (27)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -821,6 +822,41 @@ GitHub pushes).
   apt update only 36 s — lists cached; same restore
   steps). `just verify` green 569 passed, 0 failed,
   attempt 1 (no flakes).
+- **P1-015 — Sessions table + repo** (`9bb2001`):
+  The table + indexes already matched the data-model
+  (migration 001: `sessions_refresh_hash_idx` UNIQUE +
+  `sessions_user_id_idx`, built by P1-003) and the repo
+  already had create/list/revoke/rotation/reuse — so this
+  ticket is the cleanup job. Core `sessions.rs`:
+  `count_expired` (`expires_at < now`, strict — a row
+  expiring exactly at `now` is still live for this run) +
+  `purge_expired` (one DELETE, all expired rows — revoked,
+  replaced, and live-but-expired alike — returns the
+  count). gc `purge.rs`: `purge_expired_sessions(pool, now,
+  dry_run)` + `SessionsPurgeReport {candidates, purged}`
+  (dry-run counts only; no audit row per session — routine
+  expiry would flood the log; the audit trail is in
+  `audit_logs`, the run's stdout line is the record). gc
+  `main.rs`: `--purge-sessions` mode (DB only, instead of
+  the sweep, like `--purge-users`) + usage + module doc;
+  `GcOpts.purge_sessions`. Tests: 2 new in `purge::tests`
+  (execute deletes only expired — live/revoked/replaced/
+  other user's — keeps unexpired incl. the live
+  replacement, writes no audit rows; dry-run counts 1,
+  deletes 0) — all 5 purge tests green. CLI proven live
+  against the dev DB: `--purge-sessions` →
+  `candidates=0 purged=0 mode=dry-run`, `--execute` → same
+  with `mode=execute`, both exit 0. Docs: data-model
+  retention row (sessions), runbook gc paragraph,
+  `sessions.rs` module doc (reuse-signal trade-off:
+  purging an expired REPLACED row loses the PF-1007 signal
+  for that token — a later present is the generic 401
+  PF-1001 and does not revoke the family; the token is
+  expired, so it cannot mint anything; the window is
+  bounded by the 30-day TTL). Also fixed in passing: the
+  `sessions.rs` module doc cited P1-007 for the session
+  list — it is P1-019. `just verify` green 571 passed, 0
+  failed, attempt 1 (no flakes).
 
 ## Tickets partially done
 
@@ -934,7 +970,8 @@ GitHub pushes).
   email-change integration) → **507 passed, 0 failed**
   (P1-007; +9: 5 api deletion + 3 gc purge + 1 migration)
   → **561 passed, 0 failed** (P1-013; +4 new core jwt)
-  → **569 passed, 0 failed** (P1-014; +8 refresh integration).
+  → **569 passed, 0 failed** (P1-014; +8 refresh integration)
+  → **571 passed, 0 failed** (P1-015; +2 gc session-purge).
   Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
@@ -1000,6 +1037,8 @@ GitHub pushes).
   P1-014: 1 (no flakes — the refresh binary ran green on
   its first run before the full verify; the full verify
   took ~13 min at load ~2, just slow, not stuck).
+  P1-015: 1 (no flakes — the full verify took ~12.5 min,
+  same slow-machine shape as P1-014).
   Every red run was a known flake, a lint fix, or a
   test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
@@ -1019,11 +1058,11 @@ GitHub pushes).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-015 — Sessions table + repo.
-2. P1-016 — Cookie + bearer dual auth.
-3. P1-017 — Logout endpoints.
-4. P1-018 — Revoke on password change.
-5. P1-019 — Session listing.
+1. P1-016 — Cookie + bearer dual auth.
+2. P1-017 — Logout endpoints.
+3. P1-018 — Revoke on password change.
+4. P1-019 — Session listing.
+5. P1-020 — Brute-force limiter wiring.
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never

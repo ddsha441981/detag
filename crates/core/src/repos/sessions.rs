@@ -15,7 +15,19 @@
 //! Lookup by hash, rotation, and reuse landed with P1-014.
 //! Revocation (`revoke_all_for_user`) landed early with
 //! P1-008: suspend revokes every live session, and that
-//! cannot wait for P1-014.
+//! cannot wait for P1-014. Cleanup (`count_expired` /
+//! `purge_expired`) landed with P1-015: the nightly gc job
+//! hard-deletes rows past `expires_at` — an expired refresh
+//! token can never mint an access token again, so the row is
+//! dead weight (the audit trail is in `audit_logs`, not the
+//! session row, and the purge writes no audit row per
+//! session — that would flood the log with routine expiry).
+//! One trade-off, recorded: purging an expired REPLACED row
+//! loses the reuse signal for that token — a later present
+//! is the generic 401 PF-1001, not PF-1007, and does not
+//! revoke the family. The token is expired, so it cannot
+//! mint anything; the window is bounded by the 30-day TTL,
+//! and the spec (P1-015) says to purge expired rows.
 
 use super::error::RepoError;
 use chrono::{DateTime, Utc};
@@ -75,7 +87,7 @@ pub async fn create(
 }
 
 /// List a user's sessions, newest first. The login test uses
-/// it to prove the session row landed; P1-007 (`GET
+/// it to prove the session row landed; P1-019 (`GET
 /// /v1/me/sessions`) wires it into the handler.
 pub async fn list_for_user(
     pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
@@ -182,5 +194,41 @@ pub async fn revoke_family(
     .execute(pool)
     .await
     .map_err(RepoError::from_sqlx)?;
+    Ok(result.rows_affected())
+}
+
+/// Count sessions past their expiry (P1-015 — the nightly
+/// cleanup's dry-run). A row is expired when `expires_at`
+/// is strictly before `now`; a row expiring exactly at `now`
+/// is still live for this run (the next run takes it).
+pub async fn count_expired(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    now: DateTime<Utc>,
+) -> Result<i64, RepoError> {
+    sqlx::query_scalar!("SELECT COUNT(*) FROM sessions WHERE expires_at < $1", now,)
+        .fetch_one(pool)
+        .await
+        .map_err(RepoError::from_sqlx)
+        .map(|count| count.unwrap_or(0))
+}
+
+/// Hard-delete sessions past their expiry (P1-015 — the
+/// nightly cleanup). One statement, all dead rows at once
+/// (revoked, replaced, and live-but-expired alike — an
+/// expired refresh token can never mint an access token
+/// again, so every expired row is dead weight). Returns how
+/// many rows were deleted. The audit trail is in
+/// `audit_logs` (`session.refreshed` /
+/// `session.refresh_reused`), not the session row — see the
+/// module docs for the one trade-off (the reuse signal for
+/// an expired replaced token is lost with the row).
+pub async fn purge_expired(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    now: DateTime<Utc>,
+) -> Result<u64, RepoError> {
+    let result = sqlx::query!("DELETE FROM sessions WHERE expires_at < $1", now)
+        .execute(pool)
+        .await
+        .map_err(RepoError::from_sqlx)?;
     Ok(result.rows_affected())
 }

@@ -28,6 +28,9 @@ pub struct GcOpts {
     /// P1-007: purge accounts past the deletion grace instead
     /// of the artifact/orphan sweep (one mode per invocation).
     pub purge_users: bool,
+    /// P1-015: purge sessions past their expiry instead of
+    /// the artifact/orphan sweep (one mode per invocation).
+    pub purge_sessions: bool,
 }
 
 impl Default for GcOpts {
@@ -36,6 +39,7 @@ impl Default for GcOpts {
             dry_run: true,
             orphan_grace: Duration::hours(24),
             purge_users: false,
+            purge_sessions: false,
         }
     }
 }

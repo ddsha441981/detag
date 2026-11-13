@@ -16,6 +16,7 @@
 //! Usage:
 //!   detag-gc [--dry-run|--execute] [--orphan-grace-hours N]
 //!   detag-gc --purge-users [--dry-run|--execute]
+//!   detag-gc --purge-sessions [--dry-run|--execute]
 //!
 //! The `--purge-users` mode (P1-007) is the nightly account
 //! purge: hard-delete accounts whose 30-day deletion grace has
@@ -23,6 +24,18 @@
 //! the artifact/orphan sweep (one mode per invocation — the
 //! nightly cron calls it separately). Dry-run lists the
 //! candidates and deletes nothing.
+//!
+//! The `--purge-sessions` mode (P1-015) is the nightly session
+//! purge: hard-delete session rows past their `expires_at`
+//! (an expired refresh token can never mint an access token
+//! again). It runs INSTEAD of the sweep, needs the database
+//! only, and dry-runs by default (counts the candidates).
+//! One trade-off, recorded in the data-model doc: purging an
+//! expired REPLACED row loses the reuse signal for that token
+//! (a later present is the generic 401 PF-1001, not PF-1007,
+//! and does not revoke the family) — the token is expired, so
+//! it cannot mint anything, and the window is bounded by the
+//! 30-day TTL.
 //!
 //! Scheduling (a daily run) lands with the delivery work; today
 //! the operator runs it by hand (`just gc` dry-runs it).
@@ -40,11 +53,11 @@ mod plan;
 mod purge;
 mod run;
 
-use purge::purge_expired_users;
+use purge::{purge_expired_sessions, purge_expired_users};
 use run::{run_gc, GcOpts};
 
 fn usage() -> &'static str {
-    "usage: detag-gc [--dry-run|--execute] [--orphan-grace-hours N]\n       detag-gc --purge-users [--dry-run|--execute]"
+    "usage: detag-gc [--dry-run|--execute] [--orphan-grace-hours N]\n       detag-gc --purge-users [--dry-run|--execute]\n       detag-gc --purge-sessions [--dry-run|--execute]"
 }
 
 fn parse_args(args: &[String]) -> Result<GcOpts, String> {
@@ -72,6 +85,11 @@ fn parse_args(args: &[String]) -> Result<GcOpts, String> {
             // flag is the mode switch — `--purge-users` without
             // `--execute` dry-runs (lists the candidates).
             "--purge-users" => opts.purge_users = true,
+            // P1-015: purge sessions past their expiry instead
+            // of the artifact/orphan sweep. Same shape —
+            // `--purge-sessions` without `--execute` dry-runs
+            // (counts the candidates).
+            "--purge-sessions" => opts.purge_sessions = true,
             "--help" | "-h" => {
                 println!(
                     "{}\n\nOrphan + retention garbage collector (P0-060). Dry-run by default; --execute deletes.",
@@ -136,6 +154,26 @@ async fn main() -> ExitCode {
             }
             Err(err) => {
                 eprintln!("detag-gc: purge failed: {err}");
+                return ExitCode::from(1);
+            }
+        }
+    }
+    // P1-015: the session purge mode needs the database only
+    // too — no storage client. It runs instead of the sweep
+    // below (one mode per invocation).
+    if opts.purge_sessions {
+        match purge_expired_sessions(&pool, chrono::Utc::now(), opts.dry_run).await {
+            Ok(report) => {
+                println!(
+                    "detag-gc: purge-sessions candidates={} purged={} mode={}",
+                    report.candidates,
+                    report.purged,
+                    if opts.dry_run { "dry-run" } else { "execute" },
+                );
+                return ExitCode::SUCCESS;
+            }
+            Err(err) => {
+                eprintln!("detag-gc: purge-sessions failed: {err}");
                 return ExitCode::from(1);
             }
         }

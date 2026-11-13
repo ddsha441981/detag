@@ -1,7 +1,9 @@
 //! Nightly user purge (P1-007): hard-delete accounts whose
-//! 30-day deletion grace has passed.
+//! 30-day deletion grace has passed. Plus the nightly
+//! session purge (P1-015): hard-delete session rows past
+//! their `expires_at`.
 //!
-//! The purge is one function over the database —
+//! The user purge is one function over the database —
 //! [`purge_expired_users`] — so the gc binary (`main.rs`,
 //! `--purge-users`) and the tests below share it. Dry-run is
 //! the default (list only); `--execute` deletes. The run
@@ -39,12 +41,50 @@ use detag_core::{
     db::{DbPool, PoolConfig},
     repos::{
         audit_logs::{self, NewAuditLog},
+        sessions,
         users::{self, DELETION_GRACE_DAYS},
         RepoError,
     },
     tx::{self, TxError},
 };
 use uuid::Uuid;
+
+/// What a session-purge run did (P1-015).
+#[derive(Debug, Default)]
+pub struct SessionsPurgeReport {
+    /// Sessions past `expires_at` (dry-run counts them;
+    /// execute deletes them).
+    pub candidates: i64,
+    /// Sessions actually deleted (0 on dry-run).
+    pub purged: u64,
+}
+
+/// Purge sessions past their expiry (P1-015). `now` is the
+/// run's timestamp (one value for the whole run, so the
+/// cutoff is stable). Dry-run counts the candidates and
+/// deletes nothing; execute deletes them in one statement
+/// and returns the count. No audit row per session — an
+/// expired refresh token is routine churn (every login's
+/// token dies after 30 days), and the audit trail for a
+/// session lives in `audit_logs` (`session.refreshed` /
+/// `session.refresh_reused`), not the session row. The gc
+/// run's stdout line (candidates/purged) is the record of
+/// the run.
+pub async fn purge_expired_sessions(
+    pool: &DbPool,
+    now: DateTime<Utc>,
+    dry_run: bool,
+) -> Result<SessionsPurgeReport, RepoError> {
+    let candidates = sessions::count_expired(pool, now).await?;
+    if dry_run {
+        return Ok(SessionsPurgeReport {
+            candidates,
+            purged: 0,
+        });
+    }
+    let purged = sessions::purge_expired(pool, now).await?;
+    Ok(SessionsPurgeReport { candidates, purged })
+}
 
 /// What a purge run did.
 #[derive(Debug, Default)]
@@ -413,6 +453,139 @@ mod tests {
             .await
             .expect("lookup")
             .is_some());
+        ctx.close().await;
+    }
+
+    /// Seed one session for a user with the given expiry;
+    /// optionally mark it revoked and/or replaced (by
+    /// `replaced_by`, which must be another session row's id
+    /// — the caller creates the replacement first). Returns
+    /// the session id.
+    async fn seed_session(
+        ctx: &TestCtx,
+        user_id: Uuid,
+        expires_at: DateTime<Utc>,
+        revoked: bool,
+        replaced_by: Option<Uuid>,
+    ) -> Uuid {
+        let session = sessions::create(
+            &ctx.pool,
+            &NewSession {
+                user_id,
+                refresh_hash: sha256_hex_for_test(&Uuid::now_v7()),
+                family_id: Uuid::now_v7(),
+                device: serde_json::json!({ "ua": "test" }),
+                expires_at,
+            },
+        )
+        .await
+        .expect("create session");
+        if revoked {
+            sqlx::query("UPDATE sessions SET revoked_at = now() WHERE id = $1")
+                .bind(session.id)
+                .execute(&ctx.pool)
+                .await
+                .expect("revoke session");
+        }
+        if let Some(replacement) = replaced_by {
+            sqlx::query("UPDATE sessions SET replaced_by = $1 WHERE id = $2")
+                .bind(replacement)
+                .bind(session.id)
+                .execute(&ctx.pool)
+                .await
+                .expect("mark replaced");
+        }
+        session.id
+    }
+
+    #[tokio::test]
+    async fn purge_sessions_deletes_only_expired() {
+        let ctx = TestCtx::new().await;
+        let now = Utc::now();
+        let user = users_repo::create_with_tos(&ctx.pool, "sess-a@example.com", "h", Some("v1"))
+            .await
+            .expect("create user")
+            .id;
+        let other = users_repo::create_with_tos(&ctx.pool, "sess-b@example.com", "h", Some("v1"))
+            .await
+            .expect("create user")
+            .id;
+
+        // The live replacement row first (unexpired): the
+        // expired replaced row points at it.
+        let replacement = seed_session(&ctx, user, now + Duration::days(30), false, None).await;
+        let _expired_live = seed_session(&ctx, user, now - Duration::hours(1), false, None).await;
+        let _expired_revoked = seed_session(&ctx, user, now - Duration::days(1), true, None).await;
+        let _expired_replaced = seed_session(
+            &ctx,
+            user,
+            now - Duration::hours(2),
+            true,
+            Some(replacement),
+        )
+        .await;
+        let live = seed_session(&ctx, user, now + Duration::days(30), false, None).await;
+        let live_revoked = seed_session(&ctx, user, now + Duration::days(30), true, None).await;
+        let _other_expired = seed_session(&ctx, other, now - Duration::hours(1), false, None).await;
+
+        let report = purge_expired_sessions(&ctx.pool, now, false)
+            .await
+            .expect("purge");
+        assert_eq!(
+            report.candidates, 4,
+            "expired live + revoked + replaced + other user's"
+        );
+        assert_eq!(report.purged, 4);
+
+        // The expired rows are gone; the unexpired rows
+        // remain — including the live replacement the expired
+        // row pointed at.
+        let remaining = sessions::list_for_user(&ctx.pool, user)
+            .await
+            .expect("list sessions");
+        let remaining_ids: Vec<Uuid> = remaining.iter().map(|s| s.id).collect();
+        assert_eq!(remaining.len(), 3, "{remaining:?}");
+        assert!(remaining_ids.contains(&replacement));
+        assert!(remaining_ids.contains(&live));
+        assert!(remaining_ids.contains(&live_revoked));
+        assert!(sessions::list_for_user(&ctx.pool, other)
+            .await
+            .expect("list sessions")
+            .is_empty());
+
+        // The purge writes no audit rows (routine expiry is
+        // not audited per session — the run's stdout line is
+        // the record).
+        let audits = audit_logs::list_for_target(&ctx.pool, "user", &user.to_string())
+            .await
+            .expect("list audits");
+        assert!(audits.is_empty(), "{audits:?}");
+        ctx.close().await;
+    }
+
+    #[tokio::test]
+    async fn purge_sessions_dry_run_deletes_nothing() {
+        let ctx = TestCtx::new().await;
+        let now = Utc::now();
+        let user = users_repo::create_with_tos(&ctx.pool, "sess-dry@example.com", "h", Some("v1"))
+            .await
+            .expect("create user")
+            .id;
+        let _expired = seed_session(&ctx, user, now - Duration::hours(1), false, None).await;
+        let _live = seed_session(&ctx, user, now + Duration::days(30), false, None).await;
+
+        let report = purge_expired_sessions(&ctx.pool, now, true)
+            .await
+            .expect("purge");
+        assert_eq!(report.candidates, 1);
+        assert_eq!(report.purged, 0);
+        assert_eq!(
+            sessions::list_for_user(&ctx.pool, user)
+                .await
+                .expect("list sessions")
+                .len(),
+            2
+        );
         ctx.close().await;
     }
 }
