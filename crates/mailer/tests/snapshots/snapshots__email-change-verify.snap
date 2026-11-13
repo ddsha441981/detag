@@ -1,0 +1,43 @@
+---
+source: crates/mailer/tests/snapshots.rs
+expression: "format!(\"subject: {}\\n\\n--- text ---\\n{}\\n--- html ---\\n{}\", rendered.subject,\nrendered.text_body, rendered.html_body)"
+---
+subject: Verify your new Detag email
+
+--- text ---
+Hi,
+
+You asked to change the email address on your Detag account. Please verify the new address by opening this link:
+
+http://localhost:8080/auth/verify-email?token=tok-abc-123
+
+The link expires in 24 hours. If you did not request this change, you can ignore this email — your account keeps its current address.
+
+— The Detag team
+
+--- html ---
+<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f6f6f6;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f6f6;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;margin:24px 0;padding:32px;font-family:Arial,Helvetica,sans-serif;color:#222222;">
+            <tr>
+              <td>
+                <p>Hi,</p>
+                <p>You asked to change the email address on your Detag account. Please verify the new address by opening the link below:</p>
+                <p>
+                  <a href="http://localhost:8080/auth/verify-email?token=tok-abc-123" style="display:inline-block;background:#1a73e8;color:#ffffff;text-decoration:none;padding:12px 24px;border-radius:4px;">Verify my new email</a>
+                </p>
+                <p>Or copy this link into your browser:<br><a href="http://localhost:8080/auth/verify-email?token=tok-abc-123">http://localhost:8080/auth/verify-email?token=tok-abc-123</a></p>
+                <p>The link expires in 24 hours. If you did not request this change, you can ignore this email — your account keeps its current address.</p>
+                <p>— The Detag team</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

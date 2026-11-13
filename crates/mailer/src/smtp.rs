@@ -16,7 +16,7 @@
 
 use crate::error::MailError;
 use detag_core::config::Settings;
-use lettre::message::{Mailbox, Message};
+use lettre::message::{Mailbox, Message, MultiPart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
 use std::sync::Mutex;
@@ -34,6 +34,9 @@ pub struct OutgoingMail {
     pub subject: String,
     /// Rendered plain-text body.
     pub text_body: String,
+    /// Rendered HTML body (P1-029) — sent as the HTML part of a
+    /// multipart/alternative message next to the text part.
+    pub html_body: String,
 }
 
 /// SMTP configuration (from `Settings`, see PF_SMTP_*).
@@ -138,7 +141,10 @@ impl MailTransport for LettreTransport {
             .from(self.from.clone())
             .to(to)
             .subject(&mail.subject)
-            .body(mail.text_body.clone())
+            .multipart(MultiPart::alternative_plain_html(
+                mail.text_body.clone(),
+                mail.html_body.clone(),
+            ))
             .map_err(|err| MailError::Smtp(err.to_string()))?;
         self.transport
             .send(message)
@@ -322,6 +328,7 @@ mod tests {
                 from: "noreply@detag.local".to_string(),
                 subject: "Verify your Detag email".to_string(),
                 text_body: "open the link".to_string(),
+                html_body: "<p>open the link</p>".to_string(),
             })
             .await
             .expect("send to the fake relay succeeds");
@@ -347,6 +354,14 @@ mod tests {
             data.contains("open the link"),
             "DATA must carry the body:\n{data}"
         );
+        assert!(
+            data.contains("multipart/alternative"),
+            "DATA must be multipart (text + html):\n{data}"
+        );
+        assert!(
+            data.contains("<p>open the link</p>"),
+            "DATA must carry the html part:\n{data}"
+        );
     }
 
     #[tokio::test]
@@ -366,6 +381,7 @@ mod tests {
                 from: "noreply@detag.local".to_string(),
                 subject: "x".to_string(),
                 text_body: "y".to_string(),
+                html_body: "<p>y</p>".to_string(),
             })
             .await
             .expect_err("a bad recipient must fail before any SMTP");
@@ -396,6 +412,7 @@ mod tests {
                 from: "noreply@detag.local".to_string(),
                 subject: "x".to_string(),
                 text_body: "y".to_string(),
+                html_body: "<p>y</p>".to_string(),
             })
             .await
             .expect_err("a dead relay must fail the send");
@@ -429,6 +446,7 @@ mod tests {
             from: "noreply@detag.local".to_string(),
             subject: "s".to_string(),
             text_body: "b".to_string(),
+            html_body: "<p>b</p>".to_string(),
         };
         assert!(transport.send(&mail).await.is_err(), "1st send fails");
         assert!(transport.send(&mail).await.is_err(), "2nd send fails");

@@ -1,0 +1,37 @@
+---
+source: crates/mailer/tests/snapshots.rs
+expression: "format!(\"subject: {}\\n\\n--- text ---\\n{}\\n--- html ---\\n{}\", rendered.subject,\nrendered.text_body, rendered.html_body)"
+---
+subject: Your Detag account deletion was requested
+
+--- text ---
+Hi,
+
+You asked to delete your Detag account. Your account is scheduled for deletion in 30 days — until then you can sign in to cancel the request and keep your account.
+
+After the 30 days your account, sessions and jobs are permanently deleted. Audit records are kept as required by law.
+
+— The Detag team
+
+--- html ---
+<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f6f6f6;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f6f6;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;margin:24px 0;padding:32px;font-family:Arial,Helvetica,sans-serif;color:#222222;">
+            <tr>
+              <td>
+                <p>Hi,</p>
+                <p>You asked to delete your Detag account. Your account is scheduled for deletion in 30 days — until then you can sign in to cancel the request and keep your account.</p>
+                <p>After the 30 days your account, sessions and jobs are permanently deleted. Audit records are kept as required by law.</p>
+                <p>— The Detag team</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

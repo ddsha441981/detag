@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f6f6f6;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f6f6;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;margin:24px 0;padding:32px;font-family:Arial,Helvetica,sans-serif;color:#222222;">
+            <tr>
+              <td>
+                <p>Hi,</p>
+                <p>You asked to delete your {{ app_name }} account. Your account is scheduled for deletion in 30 days — until then you can sign in to cancel the request and keep your account.</p>
+                <p>After the 30 days your account, sessions and jobs are permanently deleted. Audit records are kept as required by law.</p>
+                <p>— The {{ app_name }} team</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f6f6f6;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f6f6;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;margin:24px 0;padding:32px;font-family:Arial,Helvetica,sans-serif;color:#222222;">
+            <tr>
+              <td>
+                <p>Hi,</p>
+                <p>Your {{ app_name }} password was changed. As a precaution, {{ sessions_revoked }} other session(s) were signed out — only your current session stays signed in.</p>
+                <p>If this was not you, reset your password immediately and check your signed-in sessions. If it was you, no action is needed.</p>
+                <p>— The {{ app_name }} team</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

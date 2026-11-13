@@ -19,3 +19,4 @@ detag-core = { path = "../core" }
 [dev-dependencies]
 tokio.workspace = true
 detag-testkit = { path = "../testkit" }
+insta.workspace = true

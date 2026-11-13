@@ -92,9 +92,11 @@ test:
 # insta snapshot instead of writing it. Review with
 # `cargo insta review`; accept with
 # `INSTA_UPDATE=always cargo test -p detag-core --test snapshots`
+# (or `-p detag-mailer` for the email snapshots, P1-029)
 # only after reading the diff (see 05-QUALITY/01-test-strategy.md).
 snapshots-check:
     INSTA_UPDATE=no cargo test -p detag-core --test snapshots
+    INSTA_UPDATE=no cargo test -p detag-mailer --test snapshots
 
 # Property tests (P0-096): proptest harness, 1000 cases per property
 # (config lives in the test files). Also runs in CI on every push

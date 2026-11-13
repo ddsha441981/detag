@@ -54,7 +54,11 @@ JSON the api serves is pinned with [insta](https://insta.rs/)
 `crates/core/tests/snapshots/*.snap`): `problem+json` bodies in both
 profiles and the `Page<T>` list envelope today; engine quality
 reports join with the Phase 2 golden suite (same harness, same gate
-— no report type is faked before it exists).
+— no report type is faked before it exists). Transactional email
+copy is pinned the same way (P1-029:
+`crates/mailer/tests/snapshots.rs`, snapshots in
+`crates/mailer/tests/snapshots/*.snap`): subject + text + HTML per
+template, rendered with a fixed context.
 
 Snapshots are code: a changed snapshot is reviewed like a code
 change, and the `.snap` files are committed with the code that
@@ -65,8 +69,11 @@ produced them. Never accept a snapshot you have not read.
   accept/reject one by one. Without the CLI:
   `INSTA_UPDATE=always cargo test -p detag-core --test snapshots`
   overwrites the `.snap` files — only after reading the `git diff`.
+  Same for the mailer snapshots:
+  `INSTA_UPDATE=always cargo test -p detag-mailer --test snapshots`.
 - **Check locally:** `INSTA_UPDATE=no cargo test -p detag-core --test snapshots`
-  (also the CI mode — see below).
+  (also the CI mode — see below). `just snapshots-check` runs both
+  the core and the mailer snapshot suites in check mode.
 - **CI gate:** the verify job runs with `INSTA_UPDATE=no`; any new
   or changed snapshot fails the build until it is reviewed and
   committed. A test that produces a snapshot with a nondeterministic

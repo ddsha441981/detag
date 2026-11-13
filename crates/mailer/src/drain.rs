@@ -247,6 +247,7 @@ async fn send_one<T: MailTransport>(
         from: config.from.clone(),
         subject: rendered.subject,
         text_body: rendered.text_body,
+        html_body: rendered.html_body,
     };
     match transport.send(&mail).await {
         Ok(()) => {

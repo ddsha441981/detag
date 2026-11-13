@@ -1,0 +1,37 @@
+---
+source: crates/mailer/tests/snapshots.rs
+expression: "format!(\"subject: {}\\n\\n--- text ---\\n{}\\n--- html ---\\n{}\", rendered.subject,\nrendered.text_body, rendered.html_body)"
+---
+subject: Your Detag password was changed
+
+--- text ---
+Hi,
+
+Your Detag password was changed. As a precaution, 2 other session(s) were signed out — only your current session stays signed in.
+
+If this was not you, reset your password immediately and check your signed-in sessions. If it was you, no action is needed.
+
+— The Detag team
+
+--- html ---
+<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f6f6f6;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f6f6;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;margin:24px 0;padding:32px;font-family:Arial,Helvetica,sans-serif;color:#222222;">
+            <tr>
+              <td>
+                <p>Hi,</p>
+                <p>Your Detag password was changed. As a precaution, 2 other session(s) were signed out — only your current session stays signed in.</p>
+                <p>If this was not you, reset your password immediately and check your signed-in sessions. If it was you, no action is needed.</p>
+                <p>— The Detag team</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

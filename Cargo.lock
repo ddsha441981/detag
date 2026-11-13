@@ -1644,6 +1644,7 @@ dependencies = [
  "chrono",
  "detag-core",
  "detag-testkit",
+ "insta",
  "lettre",
  "serde",
  "serde_json",
