@@ -39,9 +39,12 @@ COPY . .
 # in the builder only (never in the runtime image). Belt-and-braces: the
 # workspace release profile already sets strip = "symbols" (measured
 # 27.0 MB for the api binary in P0-083), so this is a no-op unless the
-# profile ever changes.
+# profile ever changes. curl + ca-certificates: the `utoipa-swagger-ui`
+# build script downloads the Swagger UI zip at build time and falls back
+# to the `curl` binary (CI-FAIL-003 — the API image build died on
+# "curl command not found" in CI #3).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends binutils \
+    && apt-get install -y --no-install-recommends binutils curl ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && cargo build --release --bin detag-api \
     && cp target/release/detag-api /tmp/detag-api \

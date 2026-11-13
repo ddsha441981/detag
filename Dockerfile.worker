@@ -38,9 +38,13 @@ COPY . .
 # in the builder only (never in the runtime image). Belt-and-braces: the
 # workspace release profile already sets strip = "symbols" (measured
 # 6.2 MB for the worker binary in P0-084), so this is a no-op unless the
-# profile ever changes.
+# profile ever changes. curl + ca-certificates: parity with the API
+# builder (CI-FAIL-003) — the worker build never ran in CI #3 (the job
+# died at the API build first), so a curl-needing build script in the
+# worker recipe is unproven; the builder layer is discarded either way,
+# so this costs nothing if unneeded.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends binutils \
+    && apt-get install -y --no-install-recommends binutils curl ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && cargo build --release --bin detag-worker \
     && cp target/release/detag-worker /tmp/detag-worker \
