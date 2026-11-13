@@ -8,12 +8,13 @@
 //! committed spec drifts from the code — regenerate, never edit
 //! the JSON by hand.
 //!
-//! Coverage today is the twelve real handlers (`/healthz`,
+//! Coverage today is the thirteen real handlers (`/healthz`,
 //! `/readyz`, `/v1/auth/register`, `/v1/auth/verify-email`,
 //! `/v1/auth/resend-verification`, `/v1/auth/login`, `GET /v1/me`,
 //! `PATCH /v1/me`, `POST /v1/auth/confirm-email-change`,
 //! `DELETE /v1/me`, `POST /v1/admin/users/{id}/suspend`,
-//! `POST /v1/admin/users/{id}/restore`) plus the shared error schema (`Problem`).
+//! `POST /v1/admin/users/{id}/restore`, `GET /v1/admin/users`)
+//! plus the shared error schema (`Problem`).
 //! The 52 stub routes are NOT
 //! in the spec yet: each endpoint ticket adds its
 //! `#[utoipa::path]` annotation and its path to this
@@ -37,14 +38,14 @@ use detag_core::error::Problem;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::{Config, SwaggerUi, Url};
 
-use crate::routes::admin::{__path_restore, __path_suspend};
+use crate::routes::admin::{__path_restore, __path_search_users_handler, __path_suspend};
 use crate::routes::auth::{
     __path_confirm_email_change, __path_login, __path_register, __path_resend_verification,
     __path_verify_email,
 };
 use crate::routes::meta::{__path_healthz, __path_readyz};
 use crate::routes::profile::{__path_delete_me, __path_get_me, __path_patch_me};
-use crate::services::admin::SuspendRequest;
+use crate::services::admin::{SuspendRequest, UserSearchItem, UserSearchPage};
 use crate::services::login::{LoginRequest, LoginResponse};
 use crate::services::profile::{PatchProfileRequest, ProfileResponse};
 use crate::services::register::{RegisterRequest, UserResponse};
@@ -62,7 +63,7 @@ use crate::AppState;
         version = "1.0.0",
         description = "Detag — watermark removal for images and videos you own. All errors are RFC 7807 problem+json with a stable PF-code (see the Problem schema)."
     ),
-    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, get_me, patch_me, delete_me, suspend, restore),
+    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, get_me, patch_me, delete_me, suspend, restore, search_users_handler),
     components(schemas(
         Problem,
         Readiness,
@@ -76,7 +77,9 @@ use crate::AppState;
         LoginResponse,
         PatchProfileRequest,
         ProfileResponse,
-        SuspendRequest
+        SuspendRequest,
+        UserSearchItem,
+        UserSearchPage
     )),
     tags(
         (name = "meta", description = "Liveness and readiness"),

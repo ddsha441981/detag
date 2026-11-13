@@ -26,22 +26,90 @@ use super::{
     stub,
 };
 use crate::{
-    auth::AdminContext,
+    auth::{AdminContext, AdminReadContext},
     problem::ProblemResponse,
     services::{
-        admin::{restore_user, suspend_user, AdminError, SuspendRequest},
+        admin::{
+            restore_user, search_users, suspend_user, AdminError, SuspendRequest, UserSearchPage,
+        },
         register::UserResponse,
     },
     AppState,
 };
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     response::{IntoResponse, Json, Response},
     routing::{get, post},
     Router,
 };
 use detag_core::error::{AppError, Problem, Profile};
+use serde::Deserialize;
 use uuid::Uuid;
+
+/// Query params for `GET /v1/admin/users` (P1-009): all
+/// optional. `query` is a prefix filter (email, display name,
+/// or id — blank means no filter); `limit` clamps to 1..=100
+/// (default 20); `cursor` is the opaque keyset from the
+/// previous page.
+#[derive(Debug, Deserialize)]
+pub struct SearchUsersQuery {
+    pub query: Option<String>,
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
+}
+
+/// GET /v1/admin/users (P1-009): search users. Admin +
+/// support (the read-only role) may call it; a verified plain
+/// user gets 403 `PF-1002` from the extractor, no credential
+/// gets 401 `PF-1001`. Answers the api-spec pagination shape
+/// (`{"items": [...], "next_cursor": "..."}` — `next_cursor`
+/// omitted on the last page). A tampered cursor is 422
+/// `PF-2002`; a non-numeric `limit` is rejected by the `Query`
+/// extractor the same way (the error mapper rewrites the
+/// framework 400 to the 422 problem).
+#[utoipa::path(
+    get,
+    path = "/v1/admin/users",
+    params(
+        ("query" = Option<String>, Query, description = "Prefix filter on email, display name, or id (case-insensitive); blank lists everything"),
+        ("limit" = Option<u32>, Query, description = "Page size, clamped to 1..=100 (default 20)"),
+        ("cursor" = Option<String>, Query, description = "Opaque keyset from the previous page's next_cursor")
+    ),
+    responses(
+        (status = 200, description = "One page of users", body = UserSearchPage),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified plain user)", body = Problem),
+        (status = 422, description = "Tampered cursor or bad limit", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn search_users_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    _admin: AdminReadContext,
+    Query(params): Query<SearchUsersQuery>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    match search_users(&state, params.query, params.limit, params.cursor).await {
+        Ok(page) => Json(page).into_response(),
+        Err(AdminError::InvalidCursor) => ProblemResponse(AppError::ValidationFailed.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response(),
+        Err(AdminError::Validation(_)) | Err(AdminError::NotFound) => {
+            // Search takes no validated body and never 404s.
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(AdminError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
 
 /// POST /v1/admin/users/{id}/suspend (P1-008): suspend the
 /// account with a reason. Status becomes `suspended`, every
@@ -91,7 +159,8 @@ pub async fn suspend(
             ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
                 .into_response()
         }
-        Err(AdminError::Internal) => {
+        // Suspend takes no cursor — unreachable here.
+        Err(AdminError::InvalidCursor) | Err(AdminError::Internal) => {
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
                 .into_response()
         }
@@ -135,9 +204,10 @@ pub async fn restore(
     };
     match restore_user(&state, &admin_user, user_id).await {
         Ok(outcome) => Json(UserResponse::from(outcome.user)).into_response(),
-        // Restore takes no body, so Validation is unreachable
-        // here — it shares the enum with suspend.
-        Err(AdminError::Validation(_) | AdminError::Internal) => {
+        // Restore takes no body and no cursor, so Validation
+        // and InvalidCursor are unreachable here — they share
+        // the enum with suspend and search.
+        Err(AdminError::Validation(_) | AdminError::InvalidCursor | AdminError::Internal) => {
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
                 .into_response()
         }
@@ -158,7 +228,7 @@ pub fn router() -> Router<AppState> {
             "/v1/admin",
             Router::new()
                 .route("/metrics/dashboard", get(stub))
-                .route("/users", get(stub))
+                .route("/users", get(search_users_handler))
                 .route("/users/{id}/suspend", post(suspend))
                 .route("/users/{id}/restore", post(restore))
                 .route("/users/{id}/quota-grant", post(stub))

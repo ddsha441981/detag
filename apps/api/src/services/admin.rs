@@ -30,18 +30,20 @@
 //! finishes the in-flight one.
 
 use crate::AppState;
+use chrono::{DateTime, Utc};
 use detag_core::{
     db::PoolConfig,
+    pagination::{clamp_limit, Cursor, Page},
     repos::{
         audit_logs::{self, NewAuditLog},
         jobs, sessions,
-        users::{self, User},
+        users::{self, User, UserSearchRow},
         RepoError,
     },
     tx::{self, TxError},
 };
 use detag_validator::{validate_reason, Validate, ValidationErrors};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -53,6 +55,8 @@ pub enum AdminError {
     Validation(ValidationErrors),
     #[error("user not found")]
     NotFound,
+    #[error("invalid pagination cursor")]
+    InvalidCursor,
     #[error("admin action failed")]
     Internal,
 }
@@ -275,5 +279,100 @@ pub async fn restore_user(
         sessions_revoked: 0,
         jobs_held: 0,
         jobs_released,
+    })
+}
+
+/// One row of the admin user search (P1-009): the user as the
+/// dashboard shows them — identity, status, plan, and today's
+/// usage. `plan` is the plan code (`free` when the user has no
+/// live subscription); `usage_today` is the UTC day's counters
+/// (zeros when the user has used nothing today).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct UserSearchItem {
+    pub id: Uuid,
+    pub email: String,
+    pub display_name: Option<String>,
+    pub role: String,
+    pub status: String,
+    pub email_verified_at: Option<DateTime<Utc>>,
+    pub tos_version: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub plan: String,
+    pub images_used_today: i32,
+    pub video_seconds_used_today: i32,
+}
+
+impl From<UserSearchRow> for UserSearchItem {
+    fn from(row: UserSearchRow) -> Self {
+        Self {
+            id: row.id,
+            email: row.email,
+            display_name: row.display_name,
+            role: row.role,
+            status: row.status,
+            email_verified_at: row.email_verified_at,
+            tos_version: row.tos_version,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            // The query COALESCEs these (see the row doc) — a
+            // `None` here would mean the COALESCE lied, so the
+            // defaults are the documented fallbacks, not guesses.
+            plan: row.plan_code.unwrap_or_else(|| "free".to_string()),
+            images_used_today: row.images_used_today.unwrap_or(0),
+            video_seconds_used_today: row.video_seconds_used_today.unwrap_or(0),
+        }
+    }
+}
+
+/// The search response page: the api-spec pagination shape
+/// (`{"items": [...], "next_cursor": "..."}` — `next_cursor`
+/// omitted on the last page). Built from core's `Page` (the
+/// keyset math lives there); this struct exists so the
+/// response has an OpenAPI schema (`Page<T>` is generic and
+/// carries no `ToSchema`).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct UserSearchPage {
+    pub items: Vec<UserSearchItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
+/// Search users (P1-009). `query` is a prefix filter on
+/// email, display name, or id (case-insensitive; blank is
+/// no filter); `limit` clamps to 1..=100 (default 20);
+/// `cursor` is the opaque keyset from the previous page — a
+/// tampered cursor is 422 `PF-2002`, never a silent restart.
+/// One query, no N+1: the plan code and today's usage come
+/// back in the same rows (see `users::search_users`).
+pub async fn search_users(
+    state: &AppState,
+    query: Option<String>,
+    limit: Option<u32>,
+    cursor: Option<String>,
+) -> Result<UserSearchPage, AdminError> {
+    let limit = clamp_limit(limit);
+    let cursor = match cursor {
+        Some(raw) => Some(Cursor::decode(&raw).map_err(|_| AdminError::InvalidCursor)?),
+        None => None,
+    };
+    let query = query.as_deref().map(str::trim).filter(|q| !q.is_empty());
+    let day = Utc::now().date_naive();
+    let rows = users::search_users(&state.pool, query, cursor, limit + 1, day)
+        .await
+        .map_err(|err| {
+            tracing::error!(error = ?err, "admin search: query failed");
+            AdminError::Internal
+        })?;
+    let page = Page::from_window(rows, limit, |row| Cursor {
+        // `timestamp_millis()` truncates to milliseconds — the
+        // same truncation the repo's keyset compares on, so the
+        // cursor points at exactly this row.
+        ts: row.created_at.timestamp_millis(),
+        id: row.id,
+    });
+    Ok(UserSearchPage {
+        items: page.items.into_iter().map(UserSearchItem::from).collect(),
+        next_cursor: page.next_cursor,
     })
 }

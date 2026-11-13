@@ -4,7 +4,8 @@
 //! `.sqlx/` (see `just sqlx-prepare`).
 
 use super::error::RepoError;
-use chrono::{DateTime, Utc};
+use crate::pagination::Cursor;
+use chrono::{DateTime, NaiveDate, Utc};
 use uuid::Uuid;
 
 /// A row of `users` (migration 001). `settings` is the raw jsonb
@@ -356,4 +357,145 @@ pub async fn restore(
         sqlx::Error::RowNotFound => RepoError::NotFound,
         other => RepoError::from_sqlx(other),
     })
+}
+
+/// One row of the admin user search (P1-009): the user, plus
+/// the plan code (the live subscription's plan, else `free`)
+/// and today's usage (UTC day — zeros when the user has used
+/// nothing today; the read never creates the counter row).
+/// The three `Option` fields are `None` only in sqlx's eyes:
+/// the query wraps each in `COALESCE` (a missing subscription
+/// is `free`, a missing usage row is 0), so the service
+/// unwraps them with those defaults — the `Option` is sqlx's
+/// nullability inference being conservative about the scalar
+/// subquery / the LEFT JOIN, not a real null.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UserSearchRow {
+    pub id: Uuid,
+    pub email: String,
+    pub display_name: Option<String>,
+    pub role: String,
+    pub status: String,
+    pub email_verified_at: Option<DateTime<Utc>>,
+    pub tos_version: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub plan_code: Option<String>,
+    pub images_used_today: Option<i32>,
+    pub video_seconds_used_today: Option<i32>,
+}
+
+/// Escape a user-supplied search string for use as a `LIKE`
+/// prefix pattern: `\`, `%`, and `_` lose their wildcard
+/// meaning (a `%` in the query must match a literal `%`, not
+/// everything). The trailing `%` is the prefix match itself.
+fn escape_like_prefix(query: &str) -> String {
+    let mut out = String::with_capacity(query.len() + 1);
+    for ch in query.chars() {
+        if matches!(ch, '\\' | '%' | '_') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out.push('%');
+    out
+}
+
+/// Search users for the admin list (P1-009): prefix match
+/// (case-insensitive) on email, display name, or id — a
+/// `None` query lists everything. Keyset pagination on
+/// `(created_at, id)`: `cursor` is the last row of the
+/// previous page, `limit` is `limit + 1` rows (the caller
+/// drops the extra row via `Page::from_window`).
+///
+/// The keyset truncates `created_at` to milliseconds
+/// (`date_trunc`): the `Cursor` stores Unix millis (P0-068)
+/// while `created_at` carries microseconds, so comparing the
+/// raw timestamp against the cursor would re-include the
+/// cursor's own row (its microseconds sit past the truncated
+/// millisecond) or skip a row created in the same millisecond
+/// with a smaller id. Truncating both sides of the comparison
+/// — and ordering by the truncated key — makes the page
+/// boundary exact: rows in one millisecond order by `id`,
+/// and the cursor's `ts` is `created_at.timestamp_millis()`.
+/// `day` is the UTC date whose usage row is joined (today).
+pub async fn search_users(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    query: Option<&str>,
+    cursor: Option<Cursor>,
+    limit: u32,
+    day: NaiveDate,
+) -> Result<Vec<UserSearchRow>, RepoError> {
+    let pattern = match query {
+        Some(q) => escape_like_prefix(q),
+        // No filter: the pattern matches every row.
+        None => "%".to_string(),
+    };
+    match cursor {
+        Some(cursor) => {
+            let cursor_ts = DateTime::from_timestamp_millis(cursor.ts)
+                .expect("a cursor ts is a valid Unix-millis timestamp");
+            sqlx::query_as!(
+                UserSearchRow,
+                "SELECT u.id, u.email, u.display_name, u.role, u.status,
+                    u.email_verified_at, u.tos_version, u.created_at, u.updated_at,
+                    COALESCE((SELECT p.code FROM subscriptions s JOIN plans p ON p.id = s.plan_id
+                              WHERE s.user_id = u.id AND s.status IN ('trialing', 'active')
+                              ORDER BY s.created_at DESC LIMIT 1), 'free') AS plan_code,
+                    COALESCE(uc.images_used, 0) AS images_used_today,
+                    COALESCE(uc.video_seconds_used, 0) AS video_seconds_used_today
+                 FROM users u
+                 LEFT JOIN usage_counters uc ON uc.user_id = u.id AND uc.day = $2
+                 WHERE (u.email ILIKE $1 ESCAPE '\\' OR u.display_name ILIKE $1 ESCAPE '\\'
+                        OR u.id::text ILIKE $1 ESCAPE '\\')
+                   AND (date_trunc('milliseconds', u.created_at), u.id) > ($3, $4)
+                 ORDER BY date_trunc('milliseconds', u.created_at) ASC, u.id ASC
+                 LIMIT $5",
+                pattern,
+                day,
+                cursor_ts,
+                cursor.id,
+                limit as i64,
+            )
+            .fetch_all(pool)
+            .await
+            .map_err(RepoError::from_sqlx)
+        }
+        None => sqlx::query_as!(
+            UserSearchRow,
+            "SELECT u.id, u.email, u.display_name, u.role, u.status,
+                    u.email_verified_at, u.tos_version, u.created_at, u.updated_at,
+                    COALESCE((SELECT p.code FROM subscriptions s JOIN plans p ON p.id = s.plan_id
+                              WHERE s.user_id = u.id AND s.status IN ('trialing', 'active')
+                              ORDER BY s.created_at DESC LIMIT 1), 'free') AS plan_code,
+                    COALESCE(uc.images_used, 0) AS images_used_today,
+                    COALESCE(uc.video_seconds_used, 0) AS video_seconds_used_today
+                 FROM users u
+                 LEFT JOIN usage_counters uc ON uc.user_id = u.id AND uc.day = $2
+                 WHERE (u.email ILIKE $1 ESCAPE '\\' OR u.display_name ILIKE $1 ESCAPE '\\'
+                        OR u.id::text ILIKE $1 ESCAPE '\\')
+                 ORDER BY date_trunc('milliseconds', u.created_at) ASC, u.id ASC
+                 LIMIT $3",
+            pattern,
+            day,
+            limit as i64,
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(RepoError::from_sqlx),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn like_prefix_escapes_wildcards() {
+        assert_eq!(escape_like_prefix("alice"), "alice%");
+        assert_eq!(escape_like_prefix("100%"), "100\\%%");
+        assert_eq!(escape_like_prefix("a_b"), "a\\_b%");
+        assert_eq!(escape_like_prefix("a\\b"), "a\\\\b%");
+        assert_eq!(escape_like_prefix(""), "%");
+    }
 }

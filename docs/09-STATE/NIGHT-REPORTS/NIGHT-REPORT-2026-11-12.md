@@ -15,13 +15,14 @@ P0-106/107/108 (Phase 0 ticket work done, 105/108); updated
 ~10:26 IST 13 Nov after P1-005 (Phase 1, 5/111); updated
 ~11:19 IST 13 Nov after P1-006 (Phase 1, 6/111); updated
 ~12:13 IST 13 Nov after P1-007 (Phase 1, 7/111); updated
-~13:18 IST 13 Nov after P1-008 (Phase 1, 8/111). Resumed
+~13:18 IST 13 Nov after P1-008 (Phase 1, 8/111); updated
+~13:41 IST 13 Nov after P1-009 (Phase 1, 9/111). Resumed
 from the 8th coordinator's interruption (~23:21 IST, P0-092 in
 progress with uncommitted work). Local HEAD at this update:
-`408db1d` (P1-008). No push (local-only by rule; parent handles
+`c485a55` (P1-009). No push (local-only by rule; parent handles
 GitHub pushes).
 
-## Tickets done (20)
+## Tickets done (21)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -594,6 +595,60 @@ GitHub pushes).
   role/db via `sudo -u postgres psql`, `cargo sqlx migrate
   run`; attempt 4: green, no flakes).
 
+- **P1-009 — Admin user search** (`c485a55`): core repo
+  `users::search_users` (one query, no N+1): prefix match
+  (case-insensitive `ILIKE`) on email, display name, or id —
+  a `None` query lists everything; plan code from the live
+  subscription (`trialing`/`active`, newest first) else
+  `free` via `COALESCE`; today's usage via a `LEFT JOIN` on
+  `usage_counters` (UTC day, zeros when absent — the read
+  never creates the row). Keyset pagination on `(created_at,
+  id)` with `date_trunc('milliseconds', created_at)` on both
+  sides of the comparison and in the `ORDER BY` — the
+  `Cursor` stores Unix millis (P0-068) while `created_at`
+  carries microseconds, so comparing the raw timestamp would
+  re-include the cursor's own row or skip a same-millisecond
+  row with a smaller id. `LIKE` metacharacters (`%`, `_`,
+  `\`) are escaped (`escape_like_prefix` + unit test). sqlx
+  infers the `COALESCE` columns as nullable (conservative
+  analysis of the scalar subquery / LEFT JOIN), so
+  `UserSearchRow` carries them as `Option` and the service
+  unwraps with the documented defaults (`free` / 0).
+  `AdminReadContext` extractor (admits Admin + Support, else
+  403 PF-1002 — support is read-only: readable admin routes
+  take this, writes take `AdminContext`). Service
+  `search_users` (clamp_limit 1..=100 default 20; tampered
+  cursor → `AdminError::InvalidCursor` → 422 PF-2002; blank
+  query is no filter; `limit + 1` rows → `Page::from_window`
+  with `timestamp_millis()` cursors) + `UserSearchItem` /
+  `UserSearchPage` (the pagination shape; exists so the
+  response has an OpenAPI schema — core's generic `Page<T>`
+  carries no `ToSchema`). Handler `GET /v1/admin/users`
+  (thin, `Query<SearchUsersQuery>`; non-numeric `limit` is
+  rejected by the `Query` extractor → mapper → 422 PF-2002).
+  Route table 65 routes, 13 live / 52 stubs; OpenAPI gains
+  the path + 2 schemas. Tests: 11 new in
+  `tests/admin_search.rs` (list incl. plan/status/usage
+  fields; email/name/id prefix filters; no-match empty;
+  pagination walks 3 pages without duplicates; limit=0
+  clamps to 1; tampered cursor 422; bad limit 422; support
+  200 / plain user 403 PF-1002 / unauthenticated 401
+  PF-1001; live Pro plan + today's usage 3/120 shown, Free +
+  zeros otherwise), green twice in a row. Two test bugs
+  found by running: (1) the first `unique_email` helper had
+  no UUID — every test registered the same `admin@example.com`
+  and 409d (the admin_suspend pattern appends a UUID); (2)
+  the email local part exceeded the validator's 64-char cap
+  (a full UUID in the prefix + a full UUID in the email is
+  80 — the prefix now carries the full UUID and the email
+  carries none) — and the 8-hex prefix first tried as the
+  fix recurred across runs within ~65 s (top of the unix-ms
+  timestamp), so the previous run's users leaked into the
+  filtered search until the prefix carried a full UUID.
+  Docs: api-spec admin search paragraph + route-table row,
+  security-testing search bullets. `just verify` green 539
+  passed, 0 failed, attempt 1 (no flakes).
+
 ## Tickets partially done
 
 - **P0-034 / P0-046 / P0-083**: implemented but unverified —
@@ -705,8 +760,8 @@ GitHub pushes).
   display-name unit) → **498 passed, 0 failed** (P1-006; +12
   email-change integration) → **507 passed, 0 failed**
   (P1-007; +9: 5 api deletion + 3 gc purge + 1 migration)
-  → **527 passed, 0 failed** (P1-008; +20: 14 api
-  admin_suspend + 6 validator reason).
+  → **539 passed, 0 failed** (P1-009; +12: 11 api
+  admin_search + 1 core like-prefix unit).
   Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
@@ -759,6 +814,8 @@ GitHub pushes).
   `response_table()` + the three hardcoded `36` counts —
   fixed to `37`), then the 7th VM reset killed the run
   mid-api-tests; attempt 4: green, no flakes).
+  P1-009: 1 (no flakes — the admin_search binary itself ran
+  green twice in a row before the full verify).
   Every red run was a known flake, a lint fix, or a
   test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
@@ -778,11 +835,11 @@ GitHub pushes).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-009 — Admin user search.
-2. P1-010 — Impersonation.
-3. P1-011 — Impersonation audit tests.
-4. P1-012 — User lifecycle docs.
-5. P1-013 — JWT claims + issuance.
+1. P1-010 — Impersonation.
+2. P1-011 — Impersonation audit tests.
+3. P1-012 — User lifecycle docs.
+4. P1-013 — JWT claims + issuance.
+5. P1-014 — Refresh rotation.
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never

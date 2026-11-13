@@ -36,8 +36,9 @@
 //! [`Role::Admin`], rejecting a verified non-admin (user or
 //! support) with 403 `PF-1002`. Admin handlers take it instead
 //! of [`AuthContext`] so the role check cannot be forgotten.
-//! Support is read-only: its readable routes (admin search,
-//! P1-009) take their own guard, not this one.
+//! Support is read-only: its readable routes take
+//! [`AdminReadContext`] (P1-009), which admits admin + support
+//! and rejects a verified plain user with the same 403.
 //!
 //! # Credential sources (precedence)
 //!
@@ -297,7 +298,7 @@ impl FromRequestParts<AppState> for AuthContext {
 /// no credential / bad token / unknown user → the same 401s as
 /// `AuthContext`; a verified non-admin (user or support) → 403
 /// `PF-1002`. Support is read-only: its readable routes (admin
-/// search, P1-009) take their own guard, not this one.
+/// search, P1-009) take [`AdminReadContext`], not this one.
 #[derive(Debug, Clone)]
 pub struct AdminContext {
     /// The verified auth context — the admin user is always
@@ -314,6 +315,44 @@ impl FromRequestParts<AppState> for AdminContext {
     ) -> Result<Self, Self::Rejection> {
         let auth = AuthContext::from_request_parts(parts, state).await?;
         if auth.role != Role::Admin {
+            let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
+            return Err(ProblemResponse(AppError::Forbidden.to_problem(
+                Profile::Production,
+                request_id,
+                None,
+            ))
+            .into_response());
+        }
+        Ok(Self { auth })
+    }
+}
+
+/// A read-only admin context (P1-009): the verified
+/// [`AuthContext`] plus the guarantee that the caller's role
+/// is [`Role::Admin`] or [`Role::Support`].
+///
+/// Support is read-only: it may use the readable admin routes
+/// (user search, dashboard, audit query) but never a write —
+/// the write routes take [`AdminContext`], which rejects
+/// support with 403 `PF-1002`. The rejections, in order: no
+/// credential / bad token / unknown user → the same 401s as
+/// `AuthContext`; a verified plain user → 403 `PF-1002`.
+#[derive(Debug, Clone)]
+pub struct AdminReadContext {
+    /// The verified auth context — the caller is always `Some`
+    /// (a verified context always carries its user).
+    pub auth: AuthContext,
+}
+
+impl FromRequestParts<AppState> for AdminReadContext {
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let auth = AuthContext::from_request_parts(parts, state).await?;
+        if auth.role != Role::Admin && auth.role != Role::Support {
             let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
             return Err(ProblemResponse(AppError::Forbidden.to_problem(
                 Profile::Production,

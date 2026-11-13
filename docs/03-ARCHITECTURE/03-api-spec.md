@@ -372,7 +372,7 @@ Delivery: `PF-Signature: sha256=<hmac(secret, body+timestamp)>`, `PF-Timestamp` 
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/v1/admin/metrics/dashboard` | jobs today, success rate, p95, queue depth, MRR, DAU |
-| GET | `/v1/admin/users?query=` | search, plan, status |
+| GET | `/v1/admin/users?query=` | search (email/name/id prefix), cursor pagination, plan + status + usage today; admin + support |
 | POST | `/v1/admin/users/{id}/suspend` | body: reason; audited |
 | POST | `/v1/admin/users/{id}/restore` | audited |
 | POST | `/v1/admin/users/{id}/quota-grant` | temporary quota bump; audited |
@@ -413,6 +413,37 @@ the extractor does NOT check status (that check is the
 login's, plus the revocation) — the window closes at expiry
 and cannot be reopened, because the refresh sessions are
 dead and the next login is blocked.
+
+User search (P1-009, FR-A-01): `GET /v1/admin/users` lists
+users in `created_at` order, oldest first (the list is a
+keyset, not an offset). `?query=` is a prefix filter,
+case-insensitive, on email, display name, or id (a `%`, `_`,
+or `\` in the query matches literally, never as a wildcard);
+blank or absent lists everything. `?limit=` clamps to
+1..=100 (default 20; 0 is a limit, not an error — it clamps
+to 1). `?cursor=` is the opaque keyset from the previous
+page's `next_cursor`; a tampered cursor is 422 `PF-2002`
+(never a silent restart from the first page). Response is
+the pagination shape (`{"items": [...], "next_cursor":
+"..."}` — `next_cursor` omitted on the last page). Every row
+carries `id, email, display_name, role, status,
+email_verified_at, tos_version, created_at, updated_at`
+plus `plan` (the plan code — the live subscription's plan,
+else `free`) and `images_used_today` /
+`video_seconds_used_today` (the UTC day's counters, zeros
+when the user has used nothing today; the read never creates
+the counter row). One query, no N+1 — the plan and the usage
+come back in the same rows. Access: the `AdminReadContext`
+extractor — admin + support (support is read-only: it may
+use the readable admin routes, never a write); a verified
+plain user gets 403 `PF-1002`, no credential gets 401
+`PF-1001`. Keyset detail: the cursor stores Unix millis
+(P0-068) while `created_at` carries microseconds, so the
+repo truncates `created_at` to milliseconds on both sides of
+the comparison and orders by the truncated key — otherwise
+the cursor's own row would be re-included (its microseconds
+sit past the truncated millisecond) or a row created in the
+same millisecond with a smaller id would be skipped.
 | POST | `/v1/admin/users/{id}/impersonate` | reason; audited; returns scoped token |
 | GET | `/v1/admin/jobs?status=&kind=` | browse + inspect raw params/report |
 | POST | `/v1/admin/jobs/{id}/reprocess` · `/cancel` | audited |
