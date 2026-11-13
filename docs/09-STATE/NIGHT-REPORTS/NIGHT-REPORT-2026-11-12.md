@@ -23,13 +23,14 @@ P0-106/107/108 (Phase 0 ticket work done, 105/108); updated
 ~14:44 IST 13 Nov after P1-013 (Phase 1, 13/111); updated
 ~15:30 IST 13 Nov after P1-014 (Phase 1, 14/111); updated
 ~15:55 IST 13 Nov after P1-015 (Phase 1, 15/111); updated
-~15:50 IST 13 Nov after P1-016 (Phase 1, 16/111). Resumed
+~15:50 IST 13 Nov after P1-016 (Phase 1, 16/111); updated
+~16:10 IST 13 Nov after P1-017 (Phase 1, 17/111). Resumed
 from the 8th coordinator's interruption (~23:21 IST, P0-092 in
 progress with uncommitted work). Local HEAD at this update:
-`b1244b2` (P1-016). No push (local-only by rule; parent handles
+`5fec1d0` (P1-017). No push (local-only by rule; parent handles
 GitHub pushes).
 
-## Tickets done (28)
+## Tickets done (29)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -884,6 +885,43 @@ GitHub pushes).
   the `login.rs` doc pointer said P1-015 owns the cookie
   posture — it is P1-016. `just verify` green 578 passed, 0
   failed, attempt 1 (no flakes).
+- **P1-017 — Logout endpoints** (`5fec1d0`):
+  Core `sessions.rs`: `revoke_one` (conditional
+  `revoked_at IS NULL` — a second logout is a no-op, not an
+  error). Service `services/logout.rs` (new: `logout_current`,
+  `logout_all`, `LogoutError` Invalid/Internal; each is one
+  tx — revoke + audit). Handlers in `routes/auth.rs`:
+  `POST /v1/auth/logout` (cookie only — the presented
+  session; no cookie/unknown hash → 401 PF-1001; clears the
+  cookie with `Max-Age=0`) + `POST /v1/auth/logout-all`
+  (NEW route — Bearer `AuthContext`, the access token
+  identifies the user, not the session; a cookie-only caller
+  gets 401 PF-1001). Route table 66 routes, 17 live / 49
+  stubs; OpenAPI gains both paths (15 paths). Tests: 7 new
+  in `tests/logout.rs` (single logout revokes + audits +
+  clears the cookie; idempotent second logout, no second
+  audit; no-cookie/unknown-token 401; logout-all revokes all
+  3 rows + audits `sessions_revoked` = 2 — A was already
+  revoked by the rotation and is not counted twice; a
+  replaced token after logout-all is still a reuse detection
+  (PF-1007) while B/C are PF-1001; cookie-only logout-all
+  401; no-credential 401) — and the residual window is
+  asserted, not hidden: the access token already issued
+  still works on `GET /v1/me` after logout. Docs: api-spec
+  logout paragraph + auth table rows (logout "cookie" — a
+  Bearer token alone cannot log one session out, it carries
+  no session identity; logout-all row added),
+  security-testing logout bullets, threat model T22 extended
+  + update-log row. Two test bugs found by running (both in
+  the test, not the code): the audit count is the sessions
+  THIS call revoked (2, not 3), and a replaced token after
+  logout-all answers PF-1007, not PF-1001 (the row still
+  carries `replaced_by` — logout-all does not erase the
+  rotation history). `just verify` green 585 passed, 0
+  failed, attempt 2 (attempt 1: clippy
+  `doc_lazy_continuation` on a doc line starting with `+`
+  in route_table.rs + an unused variable in the logout
+  tests — both lint fixes, no flakes).
 
 ## Tickets partially done
 
@@ -999,7 +1037,8 @@ GitHub pushes).
   → **561 passed, 0 failed** (P1-013; +4 new core jwt)
   → **569 passed, 0 failed** (P1-014; +8 refresh integration)
   → **571 passed, 0 failed** (P1-015; +2 gc session-purge)
-  → **578 passed, 0 failed** (P1-016; +7: 6 dual-auth + 1 auth unit).
+  → **578 passed, 0 failed** (P1-016; +7: 6 dual-auth + 1 auth unit)
+  → **585 passed, 0 failed** (P1-017; +7 logout).
   Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
@@ -1068,6 +1107,10 @@ GitHub pushes).
   P1-015: 1 (no flakes — the full verify took ~12.5 min,
   same slow-machine shape as P1-014).
   P1-016: 1 (no flakes — the full verify took ~10.3 min).
+  P1-017: 2 (attempt 1: clippy `doc_lazy_continuation` on a
+  doc line starting with `+` in route_table.rs + an unused
+  variable in the logout tests — both lint fixes; the full
+  verify took ~13.3 min, no flakes).
   Every red run was a known flake, a lint fix, or a
   test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
@@ -1087,11 +1130,11 @@ GitHub pushes).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-017 — Logout endpoints.
-2. P1-018 — Revoke on password change.
-3. P1-019 — Session listing.
-4. P1-020 — Brute-force limiter wiring.
-5. P1-021 — Token revocation cache.
+1. P1-018 — Revoke on password change.
+2. P1-019 — Session listing.
+3. P1-020 — Brute-force limiter wiring.
+4. P1-021 — Token revocation cache.
+5. P1-022 — JWT verification extractor.
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never

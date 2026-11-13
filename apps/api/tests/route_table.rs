@@ -27,9 +27,12 @@
 //!    admin suspend/restore, P1-009 `GET /v1/admin/users`, and
 //!    P1-010 admin impersonate answer 401 PF-1001 for the probe
 //!    (no credential — the auth extractor rejects before the
-//!    handler runs). P1-014 `POST /v1/auth/refresh` also
-//!    answers 401 PF-1001 (no cookie — the handler reads the
-//!    refresh token from the cookie, not the body).
+//!    handler runs). P1-014 `POST /v1/auth/refresh` and P1-017
+//!    `POST /v1/auth/logout` also answer 401 PF-1001 (no
+//!    cookie — the handler reads the refresh token from the
+//!    cookie, not the body), and P1-017 `POST
+//!    /v1/auth/logout-all` answers 401 PF-1001 (no credential
+//!    — the Bearer extractor rejects before the handler runs).
 //!
 //! The probes send a fixed `x-request-id` and assert the 501
 //! problem body echoes it — that proves the whole chain at
@@ -72,15 +75,15 @@ fn route_table_has_no_duplicates() {
     }
     assert_eq!(
         ROUTE_TABLE.len(),
-        65,
-        "ROUTE_TABLE must list the spec's 65 routes (auth 18 + uploads 4 + jobs 9 + billing 12 + admin 20 + meta 2)"
+        66,
+        "ROUTE_TABLE must list the spec's 66 routes (auth 19 + uploads 4 + jobs 9 + billing 12 + admin 20 + meta 2)"
     );
 }
 
 #[tokio::test]
 async fn every_table_entry_resolves_to_the_stub() {
     let router = test_router();
-    // The probes send 62 /v1 requests in one burst through the
+    // The probes send 64 /v1 requests in one burst through the
     // rate limiter (P0-103). They use a per-run XFF address so
     // they never share the oneshot "unknown" bucket with the
     // other test binaries running in parallel — the aggregate
@@ -122,13 +125,14 @@ async fn every_table_entry_resolves_to_the_stub() {
             );
             continue;
         }
-        // P1-014 POST /v1/auth/refresh: a real handler that
-        // reads the refresh token from the cookie, not the
-        // body — the probe sends no cookie, so the handler
-        // answers 401 PF-1001 (not 501, not 422) and echoes
-        // the probe id (the route exists; the refresh tests
-        // cover the success paths).
-        if *method == "POST" && *path == "/v1/auth/refresh" {
+        // P1-014 POST /v1/auth/refresh + P1-017 POST
+        // /v1/auth/logout: real handlers that read the refresh
+        // token from the cookie, not the body — the probe sends
+        // no cookie, so the handler answers 401 PF-1001 (not
+        // 501, not 422) and echoes the probe id (the route
+        // exists; the refresh/logout tests cover the success
+        // paths).
+        if *method == "POST" && matches!(*path, "/v1/auth/refresh" | "/v1/auth/logout") {
             let req = Request::builder()
                 .method(Method::POST)
                 .uri(*path)
@@ -202,8 +206,9 @@ async fn every_table_entry_resolves_to_the_stub() {
         }
         // P1-005 GET + PATCH /v1/me, P1-007 DELETE /v1/me,
         // P1-008 admin suspend/restore, P1-009 GET
-        // /v1/admin/users, and P1-010 admin impersonate: real
-        // handlers behind an auth extractor — the probe sends no
+        // /v1/admin/users, P1-010 admin impersonate, and
+        // P1-017 POST /v1/auth/logout-all: real handlers
+        // behind an auth extractor — the probe sends no
         // credential, so the extractor rejects with 401 PF-1001
         // (not 501) and echoes the probe id (the route exists;
         // each handler's own test covers its success paths).
@@ -211,7 +216,8 @@ async fn every_table_entry_resolves_to_the_stub() {
             || (*method == "POST"
                 && (*path == "/v1/admin/users/{id}/suspend"
                     || *path == "/v1/admin/users/{id}/restore"
-                    || *path == "/v1/admin/users/{id}/impersonate"))
+                    || *path == "/v1/admin/users/{id}/impersonate"
+                    || *path == "/v1/auth/logout-all"))
             || (*method == "GET" && *path == "/v1/admin/users")
         {
             let req = Request::builder()

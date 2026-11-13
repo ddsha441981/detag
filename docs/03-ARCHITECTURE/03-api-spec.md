@@ -190,6 +190,40 @@ revoked every session — no separate suspended check is
 needed). The refresh token itself is never stored — only
 its sha256 lives in the session row.
 
+Logout (P1-017, FR-A-01): `POST /v1/auth/logout` revokes
+the session behind the `detag_refresh` cookie — the
+presented session — and clears the cookie (`Set-Cookie:
+detag_refresh=; ...; Max-Age=0`). No cookie, or an unknown
+hash → the generic 401 `PF-1001` (the lookup must not say
+whether the session existed). A second logout of the same
+session is a no-op 204 (no second audit — P1-008's
+idempotent-no-op convention). A Bearer token alone cannot
+log one session out: the access token carries no session
+identity (its `jti` is per-issuance, not linked to a session
+row) — that is why the logout row says "cookie", not "any".
+`POST /v1/auth/logout-all` revokes EVERY session of the
+user: the caller is the Bearer `AuthContext` (the access
+token identifies the user, not the session, so the only safe
+scope is every session), one transaction (revoke-all + the
+`session.logged_out_all` audit with `after:
+{sessions_revoked}` — the count is the sessions THIS call
+revoked; a session the rotation already revoked is not
+counted twice). A cookie-only caller gets 401 `PF-1001`
+(the extractor rejects a bare cookie — P1-016): the web
+client sends both, an API client sends the Bearer, and a
+caller with only the cookie uses `/logout` for the single
+session. Both logouts audit (`session.logged_out` with
+`after: {session_id}`; `session.logged_out_all` with the
+count) — no audit when nothing was revoked. A revoked
+refresh token cannot rotate (the refresh service answers
+the generic 401 `PF-1001` for a revoked row); a replaced
+token presented after logout-all is still a reuse detection
+(401 `PF-1007` — the row still carries `replaced_by`, and
+logout-all does not erase the rotation history). The access
+token already issued stays valid until it expires (≤ 15
+min — the documented residual window: logout revokes the
+SESSION, not the stateless token).
+
 Register behavior (P1-001, FR-A-01): the email is trimmed +
 lowercased before storage (the column is citext, so the match
 is case-insensitive either way); the password is Argon2id-hashed
@@ -384,7 +418,8 @@ append-only") — the migration is the fix, with its own live
 test (`migration_purge_cascade_triggers.rs`).
 | POST | `/v1/auth/login` | none | email, password → access_token, expires_in (+ sets refresh cookie) |
 | POST | `/v1/auth/refresh` | cookie | → new access token, rotated refresh (reuse ⇒ revoke all sessions PF-1007) |
-| POST | `/v1/auth/logout` | any | → 204, revoke presented session |
+| POST | `/v1/auth/logout` | cookie | → 204, revoke presented session; clears the refresh cookie |
+| POST | `/v1/auth/logout-all` | bearer | → 204, revoke every session; clears the refresh cookie |
 | POST | `/v1/auth/forgot-password` | none | email → always 204 (no enumeration) |
 | POST | `/v1/auth/reset-password` | none | token, new_password → 204, revoke all sessions |
 | GET | `/v1/me` | user | profile + plan + quota snapshot |

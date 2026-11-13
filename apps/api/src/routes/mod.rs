@@ -55,10 +55,10 @@ use self::extractors::RequestId;
 use crate::AppState;
 
 /// The (method, path) table from the API spec. Counts per
-/// module: auth 18, uploads 4, jobs 9, billing 12, admin 20,
-/// meta 2 — 65 total.
+/// module: auth 19, uploads 4, jobs 9, billing 12, admin 20,
+/// meta 2 — 66 total.
 pub const ROUTE_TABLE: &[(&str, &str)] = &[
-    // auth (18)
+    // auth (19)
     ("POST", "/v1/auth/register"),
     ("POST", "/v1/auth/verify-email"),
     ("POST", "/v1/auth/resend-verification"),
@@ -66,6 +66,7 @@ pub const ROUTE_TABLE: &[(&str, &str)] = &[
     ("POST", "/v1/auth/login"),
     ("POST", "/v1/auth/refresh"),
     ("POST", "/v1/auth/logout"),
+    ("POST", "/v1/auth/logout-all"),
     ("POST", "/v1/auth/forgot-password"),
     ("POST", "/v1/auth/reset-password"),
     ("GET", "/v1/me"),

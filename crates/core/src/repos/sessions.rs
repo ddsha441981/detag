@@ -15,7 +15,8 @@
 //! Lookup by hash, rotation, and reuse landed with P1-014.
 //! Revocation (`revoke_all_for_user`) landed early with
 //! P1-008: suspend revokes every live session, and that
-//! cannot wait for P1-014. Cleanup (`count_expired` /
+//! cannot wait for P1-014. Single-session revocation
+//! (`revoke_one`) landed with P1-017 (logout). Cleanup (`count_expired` /
 //! `purge_expired`) landed with P1-015: the nightly gc job
 //! hard-deletes rows past `expires_at` — an expired refresh
 //! token can never mint an access token again, so the row is
@@ -103,6 +104,30 @@ pub async fn list_for_user(
     .fetch_all(pool)
     .await
     .map_err(RepoError::from_sqlx)
+}
+
+/// Revoke one session (P1-017 — logout). Sets
+/// `revoked_at = now()` where it is still NULL and returns
+/// `true` when the row was revoked, `false` when it was
+/// already revoked (a second logout of the same session is a
+/// no-op, not an error — P1-008's idempotent-no-op
+/// convention). A revoked refresh token can no longer rotate
+/// (the refresh service answers the generic 401 PF-1001 for
+/// a revoked row); the access token already issued stays
+/// valid until it expires (≤ 15 min — the documented
+/// residual window).
+pub async fn revoke_one(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    session_id: Uuid,
+) -> Result<bool, RepoError> {
+    let result = sqlx::query!(
+        "UPDATE sessions SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL",
+        session_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(result.rows_affected() > 0)
 }
 
 /// Revoke every live session of a user (P1-008 — the suspend

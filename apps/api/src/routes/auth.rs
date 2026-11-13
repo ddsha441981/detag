@@ -8,9 +8,11 @@
 //! real since P1-002, `/v1/auth/login`, real since P1-003,
 //! `POST /v1/auth/confirm-email-change`, real since P1-006,
 //! `POST /v1/auth/refresh`, real since P1-014,
-//! and `GET`/`PATCH`/`DELETE /v1/me`, real since P1-005 (GET +
-//! PATCH) and P1-007 (DELETE) — in `routes/profile.rs`, the
-//! handlers live there, the nest lives here.
+//! `POST /v1/auth/logout` + `/v1/auth/logout-all`, real since
+//! P1-017, and `GET`/`PATCH`/`DELETE /v1/me`, real since
+//! P1-005 (GET + PATCH) and P1-007 (DELETE) — in
+//! `routes/profile.rs`, the handlers live there, the nest
+//! lives here.
 
 use super::extractors::RequestId;
 use super::stub;
@@ -22,6 +24,7 @@ use crate::{
         login::{
             login_user, DeviceInfo, LoginError, LoginRequest, LoginResponse, REFRESH_COOKIE_NAME,
         },
+        logout::{logout_all as logout_all_service, logout_current, LogoutError},
         refresh::{refresh_session, RefreshError},
         register::{register_user, RegisterError, RegisterRequest, UserResponse},
         verification::{
@@ -394,6 +397,134 @@ pub async fn refresh(
     }
 }
 
+/// The value that clears the refresh cookie (P1-017): the
+/// same name, path, and flags as the login/refresh cookie,
+/// with an empty value and `Max-Age=0` — the browser drops
+/// it on receipt. Both logout handlers set it on success
+/// (the client must not keep presenting a dead token).
+fn clear_refresh_cookie() -> HeaderValue {
+    HeaderValue::from_static(
+        "detag_refresh=; HttpOnly; Secure; SameSite=Lax; Path=/v1/auth; Max-Age=0",
+    )
+}
+
+/// Log out of the presented session (P1-017, FR-A-01). Thin
+/// handler: the service owns the flow; this maps its errors
+/// to the problem+json envelope and clears the refresh
+/// cookie. The session is the one behind the `detag_refresh`
+/// cookie — there is no body, and a Bearer token alone
+/// cannot log one session out (the access token carries no
+/// session identity; its `jti` is per-issuance, not linked
+/// to a session row). No cookie, or an unknown hash → the
+/// generic 401 `PF-1001` (the lookup must not say whether
+/// the session existed). Logging out twice is a no-op 204
+/// (the session is already dead — P1-008's convention).
+#[utoipa::path(
+    post,
+    path = "/v1/auth/logout",
+    responses(
+        (status = 204, description = "Presented session revoked; the refresh cookie is cleared"),
+        (status = 401, description = "No cookie, or unknown refresh token (PF-1001, generic)", body = Problem)
+    ),
+    tag = "auth"
+)]
+pub async fn logout(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    headers: HeaderMap,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let token = match parse_session_cookie(&headers) {
+        Some(Credential::Session(token)) => token,
+        // No cookie (or a cookie that is not a session
+        // cookie): no credential — the generic 401.
+        _ => {
+            return ProblemResponse(AppError::Unauthenticated.to_problem(
+                Profile::Production,
+                request_id,
+                None,
+            ))
+            .into_response();
+        }
+    };
+    match logout_current(&state, &token).await {
+        Ok(_) => {
+            let mut res = StatusCode::NO_CONTENT.into_response();
+            res.headers_mut()
+                .insert(header::SET_COOKIE, clear_refresh_cookie());
+            res
+        }
+        Err(LogoutError::Invalid) => ProblemResponse(AppError::Unauthenticated.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response(),
+        Err(LogoutError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
+/// Log out of every session (P1-017, FR-A-01). Thin handler:
+/// the service owns the flow; this maps its errors to the
+/// problem+json envelope and clears the refresh cookie. The
+/// caller is the Bearer `AuthContext` — the access token
+/// identifies the USER (not the session), so the only safe
+/// scope is every session. A cookie-only caller gets 401
+/// `PF-1001` (the extractor rejects a bare cookie — P1-016):
+/// the web client sends both (Bearer in memory + the cookie
+/// the browser attaches), an API client sends the Bearer,
+/// and a caller with only the cookie uses `POST
+/// /v1/auth/logout` for the single session.
+#[utoipa::path(
+    post,
+    path = "/v1/auth/logout-all",
+    responses(
+        (status = 204, description = "Every session revoked; the refresh cookie is cleared"),
+        (status = 401, description = "No credential, or an invalid/expired access token (PF-1001/1010/1011)", body = Problem)
+    ),
+    tag = "auth"
+)]
+pub async fn logout_all(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    auth: crate::auth::AuthContext,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    // A verified context always carries its user (P1-005) —
+    // the `let Some(ref user)` keeps `auth` usable for the
+    // audit actor (P1-011's E0382 lesson).
+    let Some(ref user) = auth.user else {
+        return ProblemResponse(AppError::Unauthenticated.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
+    let actor = auth.audit_actor_id(user);
+    match logout_all_service(&state, user, actor).await {
+        Ok(_) => {
+            let mut res = StatusCode::NO_CONTENT.into_response();
+            res.headers_mut()
+                .insert(header::SET_COOKIE, clear_refresh_cookie());
+            res
+        }
+        Err(LogoutError::Invalid) => ProblemResponse(AppError::Unauthenticated.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response(),
+        Err(LogoutError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// The auth nests: registration/login/session management under
 /// `/v1/auth`, the profile + sessions under `/v1/me`, API keys
 /// under `/v1/api-keys`.
@@ -408,7 +539,8 @@ pub fn router() -> Router<AppState> {
                 .route("/confirm-email-change", post(confirm_email_change))
                 .route("/login", post(login))
                 .route("/refresh", post(refresh))
-                .route("/logout", post(stub))
+                .route("/logout", post(logout))
+                .route("/logout-all", post(logout_all))
                 .route("/forgot-password", post(stub))
                 .route("/reset-password", post(stub)),
         )
