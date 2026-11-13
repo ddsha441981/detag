@@ -68,6 +68,17 @@ pub async fn error_mapper_middleware(req: Request<Body>, next: Next) -> Response
     };
     let problem = err.to_problem(Profile::Production, request_id.as_deref(), None);
     let (mut parts, _body) = res.into_parts();
+    // The wire status is the problem's status, not the
+    // framework's: a 400 from an extractor (bad path param,
+    // bad query) becomes a 422 problem, body AND status — the
+    // old code kept the framework's 400 while the body said
+    // 422, so a client reading the status saw a different
+    // answer than a client reading the body (found by the
+    // P1-008 malformed-UUID test). The other mappings are
+    // unaffected — their problems carry the same status the
+    // framework sent (404/413/415).
+    parts.status =
+        StatusCode::from_u16(problem.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     // The old body is dropped (see the module docs: it can echo
     // user input). Content-Length is stale for the new body and
     // Content-Type is replaced by the problem responder.

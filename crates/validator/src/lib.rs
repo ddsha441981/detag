@@ -12,6 +12,8 @@
 //!   crate in the tree).
 //! - [`validate_display_name`] — a profile display name:
 //!   trimmed, 1–100 characters, no control characters (P1-005).
+//! - [`validate_reason`] — an admin-action reason: trimmed,
+//!   1–500 characters, no control characters (P1-008).
 //! - [`sanitize_filename`] — cleans an upload filename (separators,
 //!   control chars, leading dots) or rejects it when nothing usable
 //!   remains.
@@ -30,12 +32,14 @@ pub mod email;
 pub mod filename;
 pub mod password;
 pub mod public_url;
+pub mod reason;
 
 pub use display_name::{validate_display_name, MAX_DISPLAY_NAME_LEN};
 pub use email::validate_email;
 pub use filename::sanitize_filename;
 pub use password::{validate_password, MIN_PASSWORD_LEN};
 pub use public_url::validate_public_url;
+pub use reason::{validate_reason, MAX_REASON_LEN};
 
 use detag_core::error::{AppError, FieldError, Problem, Profile};
 

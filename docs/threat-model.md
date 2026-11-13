@@ -106,6 +106,7 @@ Mitigation status: **LIVE** (in code + tested), **WIRED**
 | T17 | Spoofing — credential stuffing / brute-force login | `/v1/auth/login` | Generic 401 `PF-1001` (unknown email ≡ wrong password — byte-identical bodies, P1-003) + constant-time verify via the precomputed dummy hash (P1-003) + per-account bucket 10 burst / 1 per min, checked pre-auth (P1-003) + per-IP bucket (P0-103) + durable lockout (P1-004): 5 failures in a 15-min window lock account + IP, 60 s doubling to a 1-hour cap, 423 `PF-1008` with `Retry-After`, no record while locked, one notification per episode, reset on success | LIVE |
 | T18 | Spoofing — account takeover via email change | `PATCH /v1/me` + `POST /v1/auth/confirm-email-change` | Change requires the new address to confirm (single-use 24h token, hash-only, purpose `email_change` — a registration token is invalid here, P1-006) + takeover alert queued to the OLD address on every new intent (P1-006) + swap is one atomic tx (consume + swap + audit) with the `pending_email IS NOT NULL` guard, so a cleared intent cannot be swapped (P1-006) + the swap enforces uniqueness via the citext constraint (address taken meanwhile → 409, token survives — tx rolls back, P1-006) + one live token per user (a resend kills a live change token; a change PATCH kills a live registration token — P1-006) | LIVE |
 | T19 | Tampering / Information disclosure — account deletion + erasure | `DELETE /v1/me` + `detag-gc --purge-users` | Deletion is a request, not an instant delete: 30-day grace (`status = 'deletion_pending'`, `deleted_at` set — the account stays usable, P1-007) + a login during the grace cancels it in the same tx as the new session (P1-007) + the second DELETE is a no-op (grace runs from the first request, P1-007) + the purge hard-deletes past-grace accounts with the full DB cascade (P1-007) + audit rows survive with the actor id intact (migration 20261113062352 dropped the actor FK — the actor is a historical fact; the FK's SET NULL was an UPDATE the append-only trigger forbids, P1-007) + the `job_events` / `attestations` triggers are UPDATE-only (history is never rewritten; DELETE is the purge's erasure path, P1-007) + the `audit_logs` trigger keeps its DELETE branch (the audit trail is never deleted, P1-007) + S3 objects become orphans for the next gc sweep (rows first, objects after, P1-007) | LIVE |
+| T20 | Elevation of privilege / Tampering — suspension bypass + admin-action abuse | `POST /v1/admin/users/{id}/suspend` + `/restore` + `POST /v1/auth/login` | The guard is the `AdminContext` extractor (P1-008): a verified non-admin gets 403 `PF-1002`, no credential gets 401 `PF-1001` — the role check cannot be forgotten by a handler, because the handler never sees a non-admin + suspend requires a reason (1–500 chars, trimmed, no control chars — 422 otherwise, P1-008) + the action is one tx (status flip + session revocations + job holds + the audit, so a half-suspended account cannot exist, P1-008) + suspend revokes every live session (`revoked_at` set — no new access token can be minted, P1-008) + the next login is blocked (403 `PF-1003` after a correct password, the generic 401 after a wrong one — probing learns nothing, P1-008) + only `queued` jobs are held (`held` — a running job finishes; Phase 2 intake/claim must treat `held` as "do not start", P1-008) + restore releases held jobs and leaves sessions revoked (the user logs in again, P1-008) + both are idempotent no-ops in the target state (no second audit, P1-008) + a suspend cancels any pending deletion (`deleted_at` cleared; the audit's `before` records the prior status + `deleted_at`, P1-008) + no suspension mail is sent (the spec does not ask for one, P1-008) | LIVE — with the residual-token trade-off below |
 
 ## Recorded trade-offs (accepted risks)
 
@@ -133,6 +134,17 @@ Mitigation status: **LIVE** (in code + tested), **WIRED**
 - **JWT dual-verify is drafted, not implemented (P0-105).**
   Rotation is a procedure on paper until P1-016 lands the
   verifier; the Phase 5 rehearsal is the proof.
+- **A suspended user's access token stays valid until it
+  expires (P1-008).** The token is stateless, so a suspend
+  cannot kill it — the residual window is ≤ 15 min (the
+  access-token TTL). The window cannot be reopened: the
+  suspend revokes every refresh session (no new access token
+  can be minted) and the next login is blocked (403
+  `PF-1003`). The extractor deliberately does NOT check
+  status — a per-request DB lookup would cost a round trip
+  on every call for a 15-minute edge. If a shorter window is
+  ever needed, the fix is a revocation check in the extractor
+  (or a shorter access TTL), not a second status column.
 
 ## Compliance boundaries (non-negotiable)
 
@@ -154,3 +166,4 @@ Mitigation status: **LIVE** (in code + tested), **WIRED**
 | 2026-11-13 | T17 lockout now LIVE: 5 failures in 15 min lock account + IP, 60 s doubling to a 1-hour cap, 423 PF-1008 + Retry-After, no record while locked, one notification per episode, reset on success | P1-004 |
 | 2026-11-13 | T18 added (account takeover via email change): purpose-separated change token + old-address alert + atomic swap with pending guard + uniqueness enforced at swap | P1-006 |
 | 2026-11-13 | T19 added (account deletion + erasure): 30-day grace + login-cancel + idempotent re-request + purge cascade with audit rows surviving (actor intact) + S3 objects via the orphan sweep; the purge exposed a cascade-vs-trigger conflict (audit FK SET NULL + job_events/attestations DELETE branch) fixed by migration 20261113062352 | P1-007 |
+| 2026-11-13 | T20 added (suspension bypass / admin-action abuse): AdminContext guard + reason required + one-tx suspend (status + revoke + hold + audit) + login blocked after correct password (403 PF-1003) + held jobs released on restore + sessions stay revoked + suspend cancels the deletion grace; residual ≤ 15 min access-token window recorded as a trade-off | P1-008 |

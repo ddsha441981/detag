@@ -299,3 +299,61 @@ pub async fn delete_user(
         .map_err(RepoError::from_sqlx)?;
     Ok(result.rows_affected() > 0)
 }
+
+/// Suspend an account (P1-008): status becomes `suspended`
+/// and any pending deletion is cancelled (`deleted_at` is
+/// cleared — the deletion request does not survive admin
+/// intervention; the audit's `before` records the prior status
+/// and `deleted_at`, so the cancellation is visible). The
+/// invariant this keeps: `deleted_at` is non-NULL exactly when
+/// the status is `deletion_pending`. `NotFound` when the id
+/// does not exist. The service decides idempotence (a second
+/// suspend is a no-op there, not here).
+pub async fn suspend(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> Result<User, RepoError> {
+    sqlx::query_as!(
+        User,
+        "UPDATE users SET status = 'suspended', deleted_at = NULL, updated_at = now()
+         WHERE id = $1
+         RETURNING id, email, password_hash, email_verified_at, role, status,
+             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
+        id
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|err| match err {
+        sqlx::Error::RowNotFound => RepoError::NotFound,
+        other => RepoError::from_sqlx(other),
+    })
+}
+
+/// Restore a suspended account (P1-008): status becomes
+/// `active` (`deleted_at` is cleared too — a suspension
+/// cancels any pending deletion, so a restored account never
+/// carries a stale grace timestamp). `NotFound` when the id
+/// does not exist. Restoring does NOT un-revoke sessions (a
+/// suspend revokes them permanently; the user logs in again)
+/// and does NOT re-run a deletion — the service owns both.
+/// The service decides idempotence (restoring a non-suspended
+/// account is a no-op there, not here).
+pub async fn restore(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> Result<User, RepoError> {
+    sqlx::query_as!(
+        User,
+        "UPDATE users SET status = 'active', deleted_at = NULL, updated_at = now()
+         WHERE id = $1
+         RETURNING id, email, password_hash, email_verified_at, role, status,
+             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
+        id
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|err| match err {
+        sqlx::Error::RowNotFound => RepoError::NotFound,
+        other => RepoError::from_sqlx(other),
+    })
+}

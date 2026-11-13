@@ -31,6 +31,14 @@
 //! stateless access token's remaining lifetime (≤ 15 min) is that
 //! ticket's design space, not this extractor's.
 //!
+//! The admin guard is [`AdminContext`] (P1-008): it wraps this
+//! extractor and additionally requires the role to be
+//! [`Role::Admin`], rejecting a verified non-admin (user or
+//! support) with 403 `PF-1002`. Admin handlers take it instead
+//! of [`AuthContext`] so the role check cannot be forgotten.
+//! Support is read-only: its readable routes (admin search,
+//! P1-009) take their own guard, not this one.
+//!
 //! # Credential sources (precedence)
 //!
 //! 1. `Authorization: Bearer <token>` — a JWT (two dots:
@@ -277,6 +285,44 @@ impl FromRequestParts<AppState> for AuthContext {
             verified: true,
             user: Some(user),
         })
+    }
+}
+
+/// An admin-only context (P1-008): the verified [`AuthContext`]
+/// plus the guarantee that the caller's role is [`Role::Admin`].
+///
+/// Handlers that need admin rights take this instead of
+/// [`AuthContext`] — the role check runs in the extractor, so a
+/// handler body can never forget it. The rejections, in order:
+/// no credential / bad token / unknown user → the same 401s as
+/// `AuthContext`; a verified non-admin (user or support) → 403
+/// `PF-1002`. Support is read-only: its readable routes (admin
+/// search, P1-009) take their own guard, not this one.
+#[derive(Debug, Clone)]
+pub struct AdminContext {
+    /// The verified auth context — the admin user is always
+    /// `Some` (a verified context always carries its user).
+    pub auth: AuthContext,
+}
+
+impl FromRequestParts<AppState> for AdminContext {
+    type Rejection = Response;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let auth = AuthContext::from_request_parts(parts, state).await?;
+        if auth.role != Role::Admin {
+            let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
+            return Err(ProblemResponse(AppError::Forbidden.to_problem(
+                Profile::Production,
+                request_id,
+                None,
+            ))
+            .into_response());
+        }
+        Ok(Self { auth })
     }
 }
 

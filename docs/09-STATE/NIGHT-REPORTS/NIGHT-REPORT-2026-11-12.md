@@ -14,13 +14,14 @@ P0-106/107/108 (Phase 0 ticket work done, 105/108); updated
 ~09:15 IST 13 Nov after P1-004 (Phase 1, 4/111); updated
 ~10:26 IST 13 Nov after P1-005 (Phase 1, 5/111); updated
 ~11:19 IST 13 Nov after P1-006 (Phase 1, 6/111); updated
-~12:13 IST 13 Nov after P1-007 (Phase 1, 7/111). Resumed
+~12:13 IST 13 Nov after P1-007 (Phase 1, 7/111); updated
+~13:18 IST 13 Nov after P1-008 (Phase 1, 8/111). Resumed
 from the 8th coordinator's interruption (~23:21 IST, P0-092 in
 progress with uncommitted work). Local HEAD at this update:
-`018c6ba` (P1-007). No push (local-only by rule; parent handles
+`408db1d` (P1-008). No push (local-only by rule; parent handles
 GitHub pushes).
 
-## Tickets done (19)
+## Tickets done (20)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -519,6 +520,80 @@ GitHub pushes).
   LIVE), runbook gc purge mode. `just verify` green 507
   passed, 0 failed, attempt 1 (no flakes).
 
+- **P1-008 — Admin suspend/restore** (`408db1d`): error
+  taxonomy `AccountSuspended` PF-1003, 403, title
+  `account_suspended` (PF-1003/1004/1005/1006 were all free)
+  + validator `validate_reason` (trim, 1–500 chars, no
+  control chars; codes `required`/`too_long`/`invalid_reason`)
+  + 6 unit tests + core repos `users::suspend` /
+  `users::restore` (status flip + `deleted_at = NULL`),
+  `sessions::revoke_all_for_user` (sets `revoked_at` where
+  NULL, returns count), `jobs::hold_queued_for_user`
+  (`queued` → `held`) + `jobs::release_held_for_user`
+  (`held` → `queued`) + `AdminContext` extractor (wraps
+  `AuthContext`, requires `role == Role::Admin`, else 403
+  PF-1002) + service `services/admin.rs` (`suspend_user` /
+  `restore_user`, `AdminError`, `AdminActionOutcome`; each
+  action is one tx — status + revoke/hold/release + audit;
+  suspend audit `user.suspended` with the reason +
+  `{status, sessions_revoked, jobs_held}` in `after`;
+  restore audit `user.restored` with
+  `{status: active, jobs_released}`; both idempotent no-ops
+  in the target state; suspend cancels the deletion grace —
+  invariant `deleted_at` non-NULL exactly when status is
+  `deletion_pending`; sessions stay revoked on restore; no
+  suspension mail) + login blocks suspended users AFTER the
+  password verify (correct password → 403 PF-1003,
+  `login.failure` audited with reason `suspended`, no lockout
+  counter; wrong password still the generic 401; lockout
+  check stays first; the extractor still does NOT check
+  status — residual access token ≤ 15 min is the documented
+  design, threat-model trade-off) + handlers in
+  `routes/admin.rs` (thin, `Response` directly; suspend takes
+  `ValidatedJson<SuspendRequest>`, restore takes no body; 200
+  with reused `UserResponse`). Route table 65 routes, 12
+  live / 53 stubs; OpenAPI gains both paths +
+  `SuspendRequest` schema. Tests: 14 new in
+  `tests/admin_suspend.rs` (happy path incl. audit counts +
+  sessions revoked + jobs held; non-admin 403 PF-1002;
+  unauthenticated 401 PF-1001; unknown user 404 PF-2010;
+  missing/blank reason 422 PF-2002; malformed UUID 422
+  PF-2002; already-suspended no-op; restore happy path incl.
+  jobs released + sessions stay revoked; restore active
+  no-op; restore auth rejections; unknown restore 404;
+  suspend cancels pending deletion; suspended login 403
+  PF-1003 / wrong password 401 + audit; login works after
+  restore). Bonus finding: the malformed-UUID test caught a
+  real error-mapper bug — the mapper kept the framework's
+  400 wire status while the problem body said 422 (its own
+  docs already promised "a framework 400 becomes a 422
+  problem"); the mapper now stamps the wire status from the
+  problem (404/413/415 mappings unaffected). Fixes found by
+  running: `ValidationErrors` has no `add`/`into_result`
+  (use `default()` + `push` + `is_empty`, the profile
+  pattern); `validate_reason` was not re-exported from the
+  validator crate root; the rewritten `routes/admin.rs` had
+  dropped the `routing::{get, post}` + `Router` imports;
+  clippy `doc_lazy_continuation` on doc lines starting with
+  `+` (users.rs `suspend` doc, admin_suspend.rs header,
+  routes/admin.rs header — the P1-001 lesson, re-learned);
+  the new variant was missing from core's error test tables
+  (`response_table()` row + all three hardcoded `36` counts
+  → `37`). Docs: api-spec admin section + login paragraph,
+  data-model jobs row (`held` + Phase 2 claim note) + users
+  row (`deleted_at` invariant), security-testing suspend
+  bullets, threat model T20 (suspension bypass /
+  admin-action abuse — LIVE) + residual-token trade-off.
+  `just verify` green 527 passed, 0 failed, attempt 4
+  (attempt 1: fmt; attempt 2: clippy `doc_lazy_continuation`
+  ×2 files; attempt 3: 2 core error-table failures, then the
+  7th VM reset killed the run mid-api-tests — environment
+  restored per ASSUMPTION-010: no os-intent replay running
+  this time, full `apt-get update` (6m43s) + install, setsid
+  redis, `pg_ctlcluster 16 main start`, recreate `pf`
+  role/db via `sudo -u postgres psql`, `cargo sqlx migrate
+  run`; attempt 4: green, no flakes).
+
 ## Tickets partially done
 
 - **P0-034 / P0-046 / P0-083**: implemented but unverified —
@@ -629,7 +704,9 @@ GitHub pushes).
   profile integration + 5 profile-service unit + 6 validator
   display-name unit) → **498 passed, 0 failed** (P1-006; +12
   email-change integration) → **507 passed, 0 failed**
-  (P1-007; +9: 5 api deletion + 3 gc purge + 1 migration).
+  (P1-007; +9: 5 api deletion + 3 gc purge + 1 migration)
+  → **527 passed, 0 failed** (P1-008; +20: 14 api
+  admin_suspend + 6 validator reason).
   Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
@@ -673,6 +750,15 @@ GitHub pushes).
   superuser takes peer auth only — password auth fails),
   `cargo sqlx migrate run` on the fresh `pf` DB),
   P1-007: 1 (no flakes).
+  P1-008: 4 (attempt 1: fmt; attempt 2: clippy
+  `doc_lazy_continuation` on doc lines starting with `+`
+  (users.rs `suspend` doc, admin_suspend.rs header,
+  routes/admin.rs header — the P1-001 lesson, re-learned);
+  attempt 3: 2 core error-table failures (the new
+  `AccountSuspended` variant was missing from
+  `response_table()` + the three hardcoded `36` counts —
+  fixed to `37`), then the 7th VM reset killed the run
+  mid-api-tests; attempt 4: green, no flakes).
   Every red run was a known flake, a lint fix, or a
   test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
@@ -692,11 +778,11 @@ GitHub pushes).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-008 — Admin suspend/restore.
-2. P1-009 — Admin user search.
-3. P1-010 — Impersonation.
-4. P1-011 — Impersonation audit tests.
-5. P1-012 — User lifecycle docs.
+1. P1-009 — Admin user search.
+2. P1-010 — Impersonation.
+3. P1-011 — Impersonation audit tests.
+4. P1-012 — User lifecycle docs.
+5. P1-013 — JWT claims + issuance.
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never
@@ -799,4 +885,9 @@ without compiling the workspace.
    same; a local restore script would pay for itself. The 5th
    reset (P1-004) was cheaper — the os-intent replay reinstalled
    the packages itself; just wait for it, then restart services
-   + recreate `pf` role/db + re-apply migrations.
+   + recreate `pf` role/db + re-apply migrations. The 7th reset
+   (P1-008, ~12:57 IST) had NO replay running — full `apt-get
+   update` (6m43s) + install was needed again; the restore
+   recipe is now stable (install → setsid redis →
+   `pg_ctlcluster` → recreate `pf` via `sudo -u postgres psql`
+   → `cargo sqlx migrate run`), it just costs ~8 min each time.

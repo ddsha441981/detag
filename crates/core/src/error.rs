@@ -129,6 +129,12 @@ pub enum AppError {
     /// PF-1002, 403.
     #[error("forbidden")]
     Forbidden,
+    /// P1-008: the account is suspended — login is refused after
+    /// a correct password (a wrong password is still the generic
+    /// 401, so probing an address learns nothing new). PF-1003,
+    /// 403. The code is assigned here (the PF-1003 slot was free).
+    #[error("account suspended")]
+    AccountSuspended,
     /// Kit: refresh-token reuse detected; all sessions revoked. PF-1007, 401.
     #[error("refresh token reuse detected; all sessions revoked")]
     RefreshReuse,
@@ -270,6 +276,7 @@ impl AppError {
         match self {
             Unauthenticated => "PF-1001",
             Forbidden => "PF-1002",
+            AccountSuspended => "PF-1003",
             RefreshReuse => "PF-1007",
             AccountLocked => "PF-1008",
             EmailNotVerified => "PF-1009",
@@ -313,6 +320,7 @@ impl AppError {
         match self {
             Unauthenticated => 401,
             Forbidden => 403,
+            AccountSuspended => 403,
             RefreshReuse => 401,
             AccountLocked => 423,
             EmailNotVerified => 403,
@@ -356,6 +364,7 @@ impl AppError {
         match self {
             Unauthenticated => "unauthenticated",
             Forbidden => "forbidden",
+            AccountSuspended => "account_suspended",
             RefreshReuse => "refresh_token_reused",
             AccountLocked => "account_locked",
             EmailNotVerified => "email_not_verified",
@@ -401,6 +410,7 @@ impl AppError {
         match self {
             Unauthenticated => "authentication is required for this resource",
             Forbidden => "you do not have permission for this resource",
+            AccountSuspended => "this account is suspended",
             RefreshReuse => "refresh token reuse detected; all sessions have been revoked",
             AccountLocked => {
                 "this account is temporarily locked after too many failed login attempts"
@@ -546,6 +556,7 @@ mod tests {
         vec![
             Unauthenticated,
             Forbidden,
+            AccountSuspended,
             RefreshReuse,
             AccountLocked,
             EmailNotVerified,
@@ -589,7 +600,7 @@ mod tests {
     #[test]
     fn every_variant_maps_to_status_code_title() {
         let variants = all_variants();
-        assert_eq!(variants.len(), 36, "a variant was added without a test");
+        assert_eq!(variants.len(), 37, "a variant was added without a test");
         for err in &variants {
             let code = err.code();
             let status = err.status();
@@ -608,6 +619,7 @@ mod tests {
             match err {
                 AppError::Unauthenticated
                 | AppError::Forbidden
+                | AppError::AccountSuspended
                 | AppError::RefreshReuse
                 | AppError::AccountLocked
                 | AppError::EmailNotVerified
@@ -782,6 +794,13 @@ mod tests {
                 403,
                 "forbidden",
                 "you do not have permission for this resource",
+            ),
+            (
+                AccountSuspended,
+                "PF-1003",
+                403,
+                "account_suspended",
+                "this account is suspended",
             ),
             (
                 RefreshReuse,
@@ -1030,7 +1049,7 @@ mod tests {
     #[test]
     fn variant_to_response_table() {
         let table = response_table();
-        assert_eq!(table.len(), 36, "a variant is missing from the table");
+        assert_eq!(table.len(), 37, "a variant is missing from the table");
         assert_eq!(
             table.len(),
             all_variants().len(),
@@ -1039,7 +1058,7 @@ mod tests {
         let mut codes: Vec<&str> = table.iter().map(|(_, c, _, _, _)| *c).collect();
         codes.sort_unstable();
         codes.dedup();
-        assert_eq!(codes.len(), 36, "two variants share a code");
+        assert_eq!(codes.len(), 37, "two variants share a code");
 
         for (err, code, status, title, detail) in &table {
             assert_eq!(err.code(), *code, "{code}");

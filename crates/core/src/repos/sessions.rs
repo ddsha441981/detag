@@ -13,8 +13,10 @@
 //! the raw IP.
 //!
 //! P1-003 needs only `create` (login). Lookup by hash,
-//! revocation, and rotation land with P1-014/P1-017 — they are
-//! not invented here.
+//! rotation, and reuse land with P1-014/P1-017 — they are
+//! not invented here. Revocation (`revoke_all_for_user`)
+//! landed early with P1-008: suspend revokes every live
+//! session, and that cannot wait for P1-014.
 
 use super::error::RepoError;
 use chrono::{DateTime, Utc};
@@ -90,4 +92,27 @@ pub async fn list_for_user(
     .fetch_all(pool)
     .await
     .map_err(RepoError::from_sqlx)
+}
+
+/// Revoke every live session of a user (P1-008 — the suspend
+/// path; P1-014 still owns rotation/reuse, P1-017 logout).
+/// Sets `revoked_at = now()` where it is still NULL and
+/// returns how many sessions were revoked. A revoked refresh
+/// token can no longer mint access tokens; the access token
+/// already issued stays valid until it expires (≤ 15 min —
+/// the documented residual window, see the api-spec login
+/// paragraph). Revocation is permanent: restore does NOT
+/// un-revoke — the user logs in again.
+pub async fn revoke_all_for_user(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+) -> Result<u64, RepoError> {
+    let result = sqlx::query!(
+        "UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL",
+        user_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(result.rows_affected())
 }

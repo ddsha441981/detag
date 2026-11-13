@@ -51,7 +51,11 @@
 //! logout are P1-014 / P1-017; this ticket creates the session
 //! row and the cookie, nothing more. A login DOES cancel a
 //! pending account deletion (P1-007): the grace ends at the
-//! login, in the same transaction as the new session.
+//! login, in the same transaction as the new session. A login
+//! does NOT work for a suspended account (P1-008): after a
+//! correct password the service returns 403 `PF-1003`
+//! (`account_suspended`) — a wrong password is still the
+//! generic 401, so probing an address learns nothing new.
 
 use chrono::{Duration, Utc};
 use detag_core::{
@@ -176,6 +180,8 @@ pub struct LoginOutcome {
 pub enum LoginError {
     #[error("invalid email or password")]
     Invalid,
+    #[error("account suspended")]
+    Suspended,
     #[error("account locked")]
     Locked {
         /// Seconds until the lock lifts (the later of the
@@ -347,6 +353,40 @@ pub async fn login_user(
             tracing::error!(error = ?err, "login: password verify failed");
             return Err(LoginError::Internal);
         }
+    }
+
+    // A suspended account cannot log in (P1-008): the password
+    // verify ran FIRST (a wrong password is still the generic
+    // 401, so probing an address learns nothing new), and only
+    // a correct password reaches this 403. The attempt is
+    // audited (`login.failure`, reason `suspended`, internal
+    // only — a single insert, no tx needed for one row) and no
+    // lockout counter is recorded: the account is already out,
+    // and the lockout state is the admin's to clear via
+    // restore. A suspended user who is ALSO locked gets the
+    // 423 first (the lockout check above runs before the
+    // verify); a deletion-pending user is NOT blocked here —
+    // their login cancels the deletion (P1-007) below.
+    if user.status == "suspended" {
+        if let Err(err) = audit_logs::insert(
+            &state.pool,
+            &NewAuditLog {
+                actor_user_id: Some(user.id),
+                actor_client: None,
+                action: "login.failure".to_string(),
+                target_type: "user".to_string(),
+                target_id: Some(user.id.to_string()),
+                before: None,
+                after: None,
+                reason: Some("suspended".to_string()),
+            },
+        )
+        .await
+        {
+            tracing::error!(error = ?err, "login: suspended-attempt audit failed");
+            return Err(LoginError::Internal);
+        }
+        return Err(LoginError::Suspended);
     }
 
     // One transaction: reset both counters (a success clears

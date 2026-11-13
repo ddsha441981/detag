@@ -6,7 +6,10 @@
 //! The repo is deliberately dumb about the job state machine: it
 //! inserts, fetches and updates the status column. Which transitions
 //! are legal is the state machine's job (`state_machine.rs`,
-//! Phase 3 pipeline).
+//! Phase 3 pipeline). One status value is defined here already:
+//! `held` (P1-008) — a queued job of a suspended account, held
+//! until restore releases it back to `queued`. The Phase 2
+//! intake/claim path must treat `held` as "do not start".
 
 use super::error::RepoError;
 use chrono::{DateTime, Utc};
@@ -139,4 +142,48 @@ pub async fn set_status(
     .await
     .map_err(RepoError::from_sqlx)?
     .ok_or(RepoError::NotFound)
+}
+
+/// Hold a suspended user's queued jobs (P1-008): every job
+/// with status `queued` becomes `held`, and returns how many
+/// were held. Only `queued` jobs move — a job already running
+/// (or terminal) is left alone; the worker finishes it. A
+/// `held` job is not runnable: the Phase 2 intake/claim path
+/// must treat `held` as "do not start" (there is no claim
+/// query to teach yet — the worker is Redis/apalis-driven and
+/// the Postgres status is a record until Phase 2 wires the
+/// claim). Restore releases them (`release_held_for_user`).
+pub async fn hold_queued_for_user(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+) -> Result<u64, RepoError> {
+    let result = sqlx::query!(
+        "UPDATE jobs SET status = 'held', updated_at = now()
+         WHERE user_id = $1 AND status = 'queued'",
+        user_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(result.rows_affected())
+}
+
+/// Release a restored user's held jobs (P1-008): every job
+/// with status `held` goes back to `queued`, and returns how
+/// many were released. The jobs re-enter the queue in their
+/// original order (their `created_at` never changed — the
+/// hold is a status flip, not a re-queue).
+pub async fn release_held_for_user(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+) -> Result<u64, RepoError> {
+    let result = sqlx::query!(
+        "UPDATE jobs SET status = 'queued', updated_at = now()
+         WHERE user_id = $1 AND status = 'held'",
+        user_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(result.rows_affected())
 }

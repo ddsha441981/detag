@@ -273,6 +273,15 @@ pub async fn login(
             None,
         ))
         .into_response(),
+        // 403 PF-1003 (P1-008): the account is suspended. Only
+        // a correct password reaches here — a wrong password is
+        // the generic 401 above, so probing learns nothing.
+        Err(LoginError::Suspended) => ProblemResponse(AppError::AccountSuspended.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response(),
         Err(LoginError::Locked { retry_after_secs }) => {
             // 423 PF-1008 (P1-004). Same problem+json envelope
             // as every error, plus Retry-After — the client

@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE jobs SET status = 'held', updated_at = now()\n         WHERE user_id = $1 AND status = 'queued'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "73b55b93243534f7f521fb501c26f47d94c40004cd7be204ab4a8864d69fa6f9"
+}

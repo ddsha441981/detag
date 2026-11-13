@@ -93,7 +93,17 @@ email still costs one Argon2id verify, against the state's
 precomputed dummy hash (one hash at boot, same params). A
 malformed stored hash is a 500, never "wrong password".
 Login does NOT require a verified email — verification gates
-job creation (PF-1009), not authentication. Rate limits:
+job creation (PF-1009), not authentication. Login DOES block
+a suspended account (P1-008): after a correct password the
+service returns 403 `PF-1003` (`account_suspended`) and
+audits `login.failure` with reason `suspended` (internal
+only, no lockout counter recorded — the account is already
+out). A wrong password is still the generic 401, so probing
+an address learns nothing about whether it is suspended. A
+suspended user who is ALSO locked gets the 423 first (the
+lockout check runs before the password verify). A login
+cancels a pending deletion (P1-007) — the grace ends in the
+same transaction as the new session. Rate limits:
 per-IP via the middleware bucket (P0-103) + per-account via
 the `login_account` bucket (10 burst / 1 per min,
 `PF_RATE_LIMIT_LOGIN_ACCOUNT_*`, keyed by the sha256 of the
@@ -366,6 +376,43 @@ Delivery: `PF-Signature: sha256=<hmac(secret, body+timestamp)>`, `PF-Timestamp` 
 | POST | `/v1/admin/users/{id}/suspend` | body: reason; audited |
 | POST | `/v1/admin/users/{id}/restore` | audited |
 | POST | `/v1/admin/users/{id}/quota-grant` | temporary quota bump; audited |
+
+Suspend/restore (P1-008, FR-A-01): `POST
+/v1/admin/users/{id}/suspend` takes `{"reason": "..."}` (1–500
+characters after trimming, no control characters — 422
+`PF-2002` otherwise) and returns 200 with the updated user
+(the `UserResponse` shape). The suspend is one transaction:
+status `suspended` + every live session revoked
+(`sessions.revoked_at` set — the refresh tokens die, so no
+new access token can be minted) + every `queued` job held
+(status `held`) + a `user.suspended` audit (actor = the
+admin, `after` carries `{status, sessions_revoked,
+jobs_held}`, the reason in the audit's `reason`). `POST
+/v1/admin/users/{id}/restore` takes no body and returns 200
+with the updated user: status `active`, held jobs released
+back to `queued` (original `created_at` order — the hold is
+a status flip, not a re-queue), `user.restored` audited
+(`after` carries `{status: active, jobs_released}`).
+Sessions stay revoked on restore — the user logs in again.
+Both are idempotent no-ops when the account is already in
+the target state (no write, no audit, no second mail).
+A suspend cancels any pending deletion: `deleted_at` is
+cleared, and the audit's `before` records the prior status +
+`deleted_at` — the invariant is `deleted_at` is non-NULL
+exactly when status is `deletion_pending`. Only `queued`
+jobs are held — a job already running finishes; the Phase 2
+intake/claim must treat `held` as "do not start" (a held job
+is never claimed, and a restore releases it, so no job is
+lost to the hold). No suspension mail is sent (the spec does
+not ask for one). Access: both routes take the `AdminContext`
+extractor — a verified non-admin gets 403 `PF-1002`, no
+credential gets 401 `PF-1001`, an unknown target gets 404
+`PF-2010`. Residual window: the access token already issued
+is stateless and stays valid until it expires (≤ 15 min);
+the extractor does NOT check status (that check is the
+login's, plus the revocation) — the window closes at expiry
+and cannot be reopened, because the refresh sessions are
+dead and the next login is blocked.
 | POST | `/v1/admin/users/{id}/impersonate` | reason; audited; returns scoped token |
 | GET | `/v1/admin/jobs?status=&kind=` | browse + inspect raw params/report |
 | POST | `/v1/admin/jobs/{id}/reprocess` · `/cancel` | audited |
