@@ -444,7 +444,62 @@ the comparison and orders by the truncated key — otherwise
 the cursor's own row would be re-included (its microseconds
 sit past the truncated millisecond) or a row created in the
 same millisecond with a smaller id would be skipped.
-| POST | `/v1/admin/users/{id}/impersonate` | reason; audited; returns scoped token |
+
+Impersonation (P1-010, FR-A-01): `POST
+/v1/admin/users/{id}/impersonate` takes `{"reason": "..."}`
+(1–500 characters after trimming, no control characters —
+422 `PF-2002` otherwise) and returns 200
+`{access_token, token_type: "Bearer", expires_in: 900,
+impersonator_id, user_id}`. The token is a normal HS256
+access token whose claims carry `impersonator_id` (the
+admin's id); its `sub` + `role` are the TARGET user's, so it
+acts as them on user routes (`GET /v1/me` returns the
+target's profile). It lives 15 minutes and has no refresh:
+no session row is created behind it, no cookie is set, and
+P1-014's refresh must reject it (there is nothing to
+rotate). Auto-expiry is the JWT `exp`, enforced by the
+extractor with leeway 0 — an expired impersonation token is
+401 `PF-1011`, exactly like an expired login token. The
+impersonation is audited as `user.impersonated` (actor = the
+admin, target = the user, the reason in the audit's `reason`,
+`after` carries `{expires_in: 900}`); the token is issued
+before the audit insert, so the audit records a token that
+was actually handed out (an audit failure returns 500 and
+the client never learns the token string). Access: admin
+only — the `AdminContext` extractor; support gets 403
+`PF-1002` (impersonation is a write), no credential gets
+401 `PF-1001`, an unknown target gets 404 `PF-2010`. An
+impersonator cannot reach admin endpoints: both admin
+guards (`AdminContext` + `AdminReadContext`) reject any
+context carrying `impersonator_id` with 403 `PF-1002` —
+writes AND reads — so the token cannot be used to suspend
+someone, read the admin list, or impersonate someone else.
+Any user may be impersonated, including another admin: the
+audit is the control, not a restriction the spec does not
+name (the guards make it safe for admin endpoints either
+way). Impersonation does not bypass the target's suspension
+for login (that check is the login's, and this is not a
+login).
+**Banner contract (the AC "banner requirement
+documented"):** any console that uses an impersonation
+token MUST render a persistent banner for the whole
+session naming both parties ("You are impersonating
+<user> as <admin>") and MUST NOT offer admin actions
+(the API rejects them anyway). The signal is the token
+itself: the console requested it, so it knows — and the
+response carries both ids for the banner text. The banner
+is a Phase 4 console requirement; this paragraph is the
+contract it implements.
+**Audit convention for impersonated actions (P1-011's
+scope):** when an action is performed under impersonation,
+the audit row's `actor_user_id` is the impersonator (the
+human who acted) and the `target_id` is the user acted-as —
+both ids are already in the standard columns, so no new
+convention is needed beyond "the actor is whoever the
+`impersonator_id` names". P1-011 proves it on the
+audited actions that exist today (profile update) and on
+the admin block.
+| POST | `/v1/admin/users/{id}/impersonate` | reason; audited; returns 15-min scoped token with `impersonator_id` claim; admin only (support forbidden) |
 | GET | `/v1/admin/jobs?status=&kind=` | browse + inspect raw params/report |
 | POST | `/v1/admin/jobs/{id}/reprocess` · `/cancel` | audited |
 | GET | `/v1/admin/dlq?queue=&limit=` | dead-letter queue: quarantined jobs with payload snapshot (P0-078 stub — Phase 4 wires UI) |

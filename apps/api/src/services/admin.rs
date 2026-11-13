@@ -88,16 +88,18 @@ pub struct AdminActionOutcome {
     pub jobs_released: u64,
 }
 
-/// POST /v1/admin/users/{id}/suspend body: the reason is
-/// required (an admin action without one is not auditable).
+/// The body for admin actions that need a reason (suspend,
+/// impersonate): the reason is required — an admin action
+/// without one is not auditable. Shared by every such action
+/// so the shape (and the validation) has one definition.
 #[derive(Debug, Deserialize, ToSchema)]
-pub struct SuspendRequest {
-    /// Why the account is suspended (1–500 characters after
+pub struct ReasonRequest {
+    /// Why the action is taken (1–500 characters after
     /// trimming; the audit carries it verbatim).
     pub reason: String,
 }
 
-impl Validate for SuspendRequest {
+impl Validate for ReasonRequest {
     fn validate(&self) -> Result<(), ValidationErrors> {
         let mut errors = ValidationErrors::default();
         if let Err(err) = validate_reason("reason", &self.reason) {
@@ -119,7 +121,7 @@ pub async fn suspend_user(
     state: &AppState,
     admin: &User,
     target_id: Uuid,
-    req: &SuspendRequest,
+    req: &ReasonRequest,
 ) -> Result<AdminActionOutcome, AdminError> {
     // Validate (again — the handler's ValidatedJson is the
     // gate; this call is the transform that yields the trimmed
@@ -374,5 +376,108 @@ pub async fn search_users(
     Ok(UserSearchPage {
         items: page.items.into_iter().map(UserSearchItem::from).collect(),
         next_cursor: page.next_cursor,
+    })
+}
+
+/// The impersonation response (P1-010): a 15-minute scoped
+/// token that acts as the target user, plus the two ids the
+/// console needs for the banner — who is acting, and as whom.
+/// There is no refresh token and no session row behind it:
+/// the token dies at `exp` and cannot be renewed.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ImpersonateResponse {
+    /// The HS256 access token (15 min), carrying
+    /// `impersonator_id` in its claims.
+    pub access_token: String,
+    /// Always `"Bearer"`.
+    pub token_type: String,
+    /// Seconds until the access token expires (900).
+    pub expires_in: i64,
+    /// The admin who is impersonating (the token's
+    /// `impersonator_id` claim).
+    pub impersonator_id: Uuid,
+    /// The user being impersonated (the token's `sub`).
+    pub user_id: Uuid,
+}
+
+/// Impersonate a user (P1-010). Mints a 15-minute scoped
+/// token that acts as the target (`sub` + `role` are the
+/// target's) and carries the admin's id as
+/// `impersonator_id`. Then audits `user.impersonated`
+/// (actor = the admin, target = the user, the reason in the
+/// audit's `reason`, `after` carries `{expires_in: 900}`).
+///
+/// The token is issued BEFORE the audit insert: the audit
+/// records a token that was actually handed out. If the
+/// audit fails, the client gets a 500 and never learns the
+/// token string — an unusable token that exists only in
+/// memory. There is no transaction spanning the two, because
+/// token issuance is not a database operation.
+///
+/// What impersonation does NOT do: it does not create a
+/// session (no refresh, no cookie, no row — the token dies
+/// at `exp`); it does not bypass the target's suspension for
+/// login (that check is the login's, and this is not a
+/// login); it does not grant admin rights — the admin guards
+/// reject any context carrying `impersonator_id`, so the
+/// token cannot reach admin endpoints even when the target
+/// is an admin. Any user may be impersonated, including
+/// another admin — the audit is the control, not a
+/// restriction the spec does not name.
+pub async fn impersonate_user(
+    state: &AppState,
+    admin: &User,
+    target_id: Uuid,
+    req: &ReasonRequest,
+) -> Result<ImpersonateResponse, AdminError> {
+    // Validate (again — the handler's ValidatedJson is the
+    // gate; this call is the transform that yields the trimmed
+    // reason to store).
+    let reason = validate_reason("reason", &req.reason)
+        .map_err(|err| AdminError::Validation(ValidationErrors(vec![err])))?;
+    let target = users::by_id(&state.pool, target_id).await.map_err(|err| {
+        tracing::error!(error = ?err, "admin impersonate: user lookup failed");
+        AdminError::Internal
+    })?;
+    let Some(target) = target else {
+        return Err(AdminError::NotFound);
+    };
+    let access_token = detag_core::jwt::issue_impersonation_token(
+        &state.settings.jwt_secret,
+        target.id,
+        &target.role,
+        admin.id,
+        detag_core::jwt::ACCESS_TOKEN_TTL_SECS,
+    )
+    .map_err(|err| {
+        tracing::error!(error = ?err, "admin impersonate: token issue failed");
+        AdminError::Internal
+    })?;
+    audit_logs::insert(
+        &state.pool,
+        &NewAuditLog {
+            actor_user_id: Some(admin.id),
+            actor_client: None,
+            action: "user.impersonated".to_string(),
+            target_type: "user".to_string(),
+            target_id: Some(target.id.to_string()),
+            before: None,
+            after: Some(serde_json::json!({
+                "expires_in": detag_core::jwt::ACCESS_TOKEN_TTL_SECS,
+            })),
+            reason: Some(reason),
+        },
+    )
+    .await
+    .map_err(|err| {
+        tracing::error!(error = ?err, "admin impersonate: audit failed");
+        AdminError::Internal
+    })?;
+    Ok(ImpersonateResponse {
+        access_token,
+        token_type: "Bearer".to_string(),
+        expires_in: detag_core::jwt::ACCESS_TOKEN_TTL_SECS,
+        impersonator_id: admin.id,
+        user_id: target.id,
     })
 }

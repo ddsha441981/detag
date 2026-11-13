@@ -24,9 +24,10 @@
 //!    — 422 PF-2002, since `ValidatedJson` rejects the empty
 //!    body — and the probe asserts that instead of 501. P1-005
 //!    `GET` + `PATCH /v1/me`, P1-007 `DELETE /v1/me`, P1-008
-//!    admin suspend/restore, and P1-009 `GET /v1/admin/users`
-//!    answer 401 PF-1001 for the probe (no credential — the
-//!    auth extractor rejects before the handler runs).
+//!    admin suspend/restore, P1-009 `GET /v1/admin/users`, and
+//!    P1-010 admin impersonate answer 401 PF-1001 for the probe
+//!    (no credential — the auth extractor rejects before the
+//!    handler runs).
 //!
 //! The probes send a fixed `x-request-id` and assert the 501
 //! problem body echoes it — that proves the whole chain at
@@ -164,16 +165,17 @@ async fn every_table_entry_resolves_to_the_stub() {
             continue;
         }
         // P1-005 GET + PATCH /v1/me, P1-007 DELETE /v1/me,
-        // P1-008 admin suspend/restore, and P1-009 GET
-        // /v1/admin/users: real handlers behind an auth
-        // extractor — the probe sends no credential, so the
-        // extractor rejects with 401 PF-1001 (not 501) and
-        // echoes the probe id (the route exists; each handler's
-        // own test covers its success paths).
+        // P1-008 admin suspend/restore, P1-009 GET
+        // /v1/admin/users, and P1-010 admin impersonate: real
+        // handlers behind an auth extractor — the probe sends no
+        // credential, so the extractor rejects with 401 PF-1001
+        // (not 501) and echoes the probe id (the route exists;
+        // each handler's own test covers its success paths).
         if ((*method == "GET" || *method == "PATCH" || *method == "DELETE") && *path == "/v1/me")
             || (*method == "POST"
                 && (*path == "/v1/admin/users/{id}/suspend"
-                    || *path == "/v1/admin/users/{id}/restore"))
+                    || *path == "/v1/admin/users/{id}/restore"
+                    || *path == "/v1/admin/users/{id}/impersonate"))
             || (*method == "GET" && *path == "/v1/admin/users")
         {
             let req = Request::builder()

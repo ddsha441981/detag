@@ -30,7 +30,8 @@ use crate::{
     problem::ProblemResponse,
     services::{
         admin::{
-            restore_user, search_users, suspend_user, AdminError, SuspendRequest, UserSearchPage,
+            impersonate_user, restore_user, search_users, suspend_user, AdminError,
+            ImpersonateResponse, ReasonRequest, UserSearchPage,
         },
         register::UserResponse,
     },
@@ -122,7 +123,7 @@ pub async fn search_users_handler(
 #[utoipa::path(
     post,
     path = "/v1/admin/users/{id}/suspend",
-    request_body = SuspendRequest,
+    request_body = ReasonRequest,
     responses(
         (status = 200, description = "Suspended (or already suspended)", body = UserResponse),
         (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
@@ -138,7 +139,7 @@ pub async fn suspend(
     Extension(id): Extension<RequestId>,
     admin: AdminContext,
     Path(user_id): Path<Uuid>,
-    ValidatedJson(req): ValidatedJson<SuspendRequest>,
+    ValidatedJson(req): ValidatedJson<ReasonRequest>,
 ) -> Response {
     let request_id = Some(id.0.as_str());
     let Some(admin_user) = admin.auth.user else {
@@ -218,6 +219,62 @@ pub async fn restore(
     }
 }
 
+/// POST /v1/admin/users/{id}/impersonate (P1-010): mint a
+/// 15-minute scoped token that acts as the target user. Admin
+/// only (support may not impersonate — it is a write, and the
+/// `AdminContext` extractor rejects support with 403
+/// `PF-1002`). The token carries `impersonator_id` in its
+/// claims; it has no refresh and no session row, so it dies
+/// at `exp`. Returns the token + the two ids the console
+/// needs for the banner.
+#[utoipa::path(
+    post,
+    path = "/v1/admin/users/{id}/impersonate",
+    request_body = ReasonRequest,
+    responses(
+        (status = 200, description = "Scoped impersonation token (15 min)", body = ImpersonateResponse),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified non-admin, incl. support)", body = Problem),
+        (status = 404, description = "No such user", body = Problem),
+        (status = 422, description = "Reason missing, blank, too long, or with control characters", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn impersonate(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    admin: AdminContext,
+    Path(user_id): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<ReasonRequest>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let Some(admin_user) = admin.auth.user else {
+        // The extractor guarantees a user for a verified context.
+        return ProblemResponse(AppError::Internal.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
+    match impersonate_user(&state, &admin_user, user_id, &req).await {
+        Ok(response) => Json(response).into_response(),
+        Err(AdminError::Validation(errors)) => {
+            ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
+        }
+        Err(AdminError::NotFound) => {
+            ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        // Impersonation takes no cursor — unreachable here.
+        Err(AdminError::InvalidCursor) | Err(AdminError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// The admin nest: dashboard, users (search / suspend / restore /
 /// quota-grant / impersonate), jobs (browse / reprocess / cancel),
 /// flags, plans, audit, abuse reports, attestations, system —
@@ -232,7 +289,7 @@ pub fn router() -> Router<AppState> {
                 .route("/users/{id}/suspend", post(suspend))
                 .route("/users/{id}/restore", post(restore))
                 .route("/users/{id}/quota-grant", post(stub))
-                .route("/users/{id}/impersonate", post(stub))
+                .route("/users/{id}/impersonate", post(impersonate))
                 .route("/jobs", get(stub))
                 .route("/jobs/{id}/reprocess", post(stub))
                 .route("/jobs/{id}/cancel", post(stub))

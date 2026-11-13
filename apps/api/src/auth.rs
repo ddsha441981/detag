@@ -160,6 +160,14 @@ pub struct AuthContext {
     /// context — handlers that need the user take the context
     /// and read this (it is `Some` exactly when `verified`).
     pub user: Option<User>,
+    /// The impersonating admin's id, when the verified token is
+    /// an impersonation token (P1-010): `Some` exactly when the
+    /// token's claims carry `impersonator_id`. `None` on a normal
+    /// login token and on every unverified context. Handlers
+    /// that act for the user read `user`; the admin guards
+    /// reject any context where this is `Some` (an impersonator
+    /// cannot reach admin endpoints — P1-011 tests that).
+    pub impersonator_id: Option<uuid::Uuid>,
 }
 
 /// The web session cookie name (provisional — Phase 1 confirms it;
@@ -180,6 +188,7 @@ impl AuthContext {
             role: Role::Anonymous,
             verified: false,
             user: None,
+            impersonator_id: None,
         }
     }
 }
@@ -285,6 +294,12 @@ impl FromRequestParts<AppState> for AuthContext {
             role: Role::from_user_role(&user.role),
             verified: true,
             user: Some(user),
+            // The impersonation marker rides the claims (P1-010):
+            // a token minted by `issue_impersonation_token`
+            // carries the admin's id here, and the admin guards
+            // reject the context on that basis. The `role` above
+            // is the TARGET user's role — the token acts as them.
+            impersonator_id: claims.impersonator_id,
         })
     }
 }
@@ -297,8 +312,11 @@ impl FromRequestParts<AppState> for AuthContext {
 /// handler body can never forget it. The rejections, in order:
 /// no credential / bad token / unknown user → the same 401s as
 /// `AuthContext`; a verified non-admin (user or support) → 403
-/// `PF-1002`. Support is read-only: its readable routes (admin
-/// search, P1-009) take [`AdminReadContext`], not this one.
+/// `PF-1002`; a context carrying `impersonator_id` → 403
+/// `PF-1002` (P1-010 — an impersonator cannot reach admin
+/// endpoints, not even to impersonate someone else). Support is
+/// read-only: its readable routes (admin search, P1-009) take
+/// [`AdminReadContext`], not this one.
 #[derive(Debug, Clone)]
 pub struct AdminContext {
     /// The verified auth context — the admin user is always
@@ -323,6 +341,20 @@ impl FromRequestParts<AppState> for AdminContext {
             ))
             .into_response());
         }
+        // An impersonator cannot reach admin endpoints (P1-010):
+        // the token acts as the target user, and the admin who
+        // impersonated them must not use that token to act as an
+        // admin — not even to impersonate someone else. The
+        // rejection is the same 403 PF-1002 as a wrong role.
+        if auth.impersonator_id.is_some() {
+            let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
+            return Err(ProblemResponse(AppError::Forbidden.to_problem(
+                Profile::Production,
+                request_id,
+                None,
+            ))
+            .into_response());
+        }
         Ok(Self { auth })
     }
 }
@@ -336,7 +368,10 @@ impl FromRequestParts<AppState> for AdminContext {
 /// the write routes take [`AdminContext`], which rejects
 /// support with 403 `PF-1002`. The rejections, in order: no
 /// credential / bad token / unknown user → the same 401s as
-/// `AuthContext`; a verified plain user → 403 `PF-1002`.
+/// `AuthContext`; a verified plain user → 403 `PF-1002`; a
+/// context carrying `impersonator_id` → 403 `PF-1002` (P1-010
+/// — an impersonator cannot reach admin endpoints, reads
+/// included).
 #[derive(Debug, Clone)]
 pub struct AdminReadContext {
     /// The verified auth context — the caller is always `Some`
@@ -353,6 +388,20 @@ impl FromRequestParts<AppState> for AdminReadContext {
     ) -> Result<Self, Self::Rejection> {
         let auth = AuthContext::from_request_parts(parts, state).await?;
         if auth.role != Role::Admin && auth.role != Role::Support {
+            let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
+            return Err(ProblemResponse(AppError::Forbidden.to_problem(
+                Profile::Production,
+                request_id,
+                None,
+            ))
+            .into_response());
+        }
+        // An impersonator cannot reach admin endpoints either
+        // (P1-010) — reads included: the token acts as the
+        // target user, and the admin who impersonated them must
+        // not use it to read the admin list, the dashboard, or
+        // the audit trail. Same 403 PF-1002 as a wrong role.
+        if auth.impersonator_id.is_some() {
             let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
             return Err(ProblemResponse(AppError::Forbidden.to_problem(
                 Profile::Production,

@@ -16,13 +16,14 @@ P0-106/107/108 (Phase 0 ticket work done, 105/108); updated
 ~11:19 IST 13 Nov after P1-006 (Phase 1, 6/111); updated
 ~12:13 IST 13 Nov after P1-007 (Phase 1, 7/111); updated
 ~13:18 IST 13 Nov after P1-008 (Phase 1, 8/111); updated
-~13:41 IST 13 Nov after P1-009 (Phase 1, 9/111). Resumed
+~13:41 IST 13 Nov after P1-009 (Phase 1, 9/111); updated
+~13:58 IST 13 Nov after P1-010 (Phase 1, 10/111). Resumed
 from the 8th coordinator's interruption (~23:21 IST, P0-092 in
 progress with uncommitted work). Local HEAD at this update:
-`c485a55` (P1-009). No push (local-only by rule; parent handles
+`3c630f9` (P1-010). No push (local-only by rule; parent handles
 GitHub pushes).
 
-## Tickets done (21)
+## Tickets done (22)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -649,6 +650,55 @@ GitHub pushes).
   security-testing search bullets. `just verify` green 539
   passed, 0 failed, attempt 1 (no flakes).
 
+- **P1-010 — Impersonation** (`3c630f9`): core JWT
+  `AccessTokenClaims.impersonator_id: Option<Uuid>` (serde
+  default + skip_serializing_if — normal tokens omit it,
+  pre-P1-010 tokens without the field still verify) +
+  `issue_impersonation_token(secret, user_id, role,
+  impersonator_id, ttl_secs)` + 3 unit tests (carries the
+  impersonator + exactly 900 s; normal token has None;
+  expired impersonation token → `JwtError::Expired`).
+  `AuthContext.impersonator_id: Option<Uuid>` (None in
+  `from_headers`; set from the claims in the verified
+  construction — the `role` is the TARGET user's role). Both
+  admin guards reject any context carrying
+  `impersonator_id` with 403 PF-1002 (`AdminContext` +
+  `AdminReadContext`, writes AND reads — the token cannot
+  suspend anyone, read the admin list, or impersonate
+  someone else). Service: `impersonate_user` (reason via
+  `validate_reason`; target loaded, 404 when missing; token
+  issued BEFORE the audit insert — the audit records a token
+  actually handed out; an audit failure returns 500 and the
+  client never learns the token; `user.impersonated` audit
+  with actor = admin, target = user, reason verbatim,
+  `after: {expires_in: 900}`) + `ImpersonateResponse
+  {access_token, token_type: "Bearer", expires_in: 900,
+  impersonator_id, user_id}`. No session row, no cookie, no
+  refresh — the token dies at `exp` (P1-014's refresh must
+  reject it). Any user may be impersonated, including
+  another admin — the audit is the control, not a
+  restriction the spec does not name. `SuspendRequest`
+  renamed to `ReasonRequest` (shared admin-action reason
+  body — suspend + impersonate). Handler `POST
+  /v1/admin/users/{id}/impersonate` (AdminContext — support
+  gets 403 PF-1002, it is a write). Route table 65 routes,
+  14 live / 51 stubs; OpenAPI gains the path +
+  `ImpersonateResponse` schema (`SuspendRequest` schema
+  renamed to `ReasonRequest`). Tests: 8 new in
+  `tests/admin_impersonate.rs` (happy path incl. claims
+  verified directly + audit; token acts as the user on GET
+  /v1/me; token cannot reach admin endpoints — suspend 403 +
+  user list 403; support/plain-user 403 + unauthenticated
+  401 + no audit for rejections; unknown user 404;
+  missing/blank reason 422; malformed UUID 422; expired
+  impersonation token → 401 PF-1011). Docs: api-spec
+  impersonation paragraph (banner contract + per-action
+  audit convention for P1-011 + refresh note for P1-014),
+  security-testing impersonation bullets, threat model T21
+  (impersonation abuse — LIVE, P1-011 proves the audit rows
+  + admin block + expiry). `just verify` green 550 passed,
+  0 failed, attempt 1 (no flakes).
+
 ## Tickets partially done
 
 - **P0-034 / P0-046 / P0-083**: implemented but unverified —
@@ -760,8 +810,8 @@ GitHub pushes).
   display-name unit) → **498 passed, 0 failed** (P1-006; +12
   email-change integration) → **507 passed, 0 failed**
   (P1-007; +9: 5 api deletion + 3 gc purge + 1 migration)
-  → **539 passed, 0 failed** (P1-009; +12: 11 api
-  admin_search + 1 core like-prefix unit).
+  → **550 passed, 0 failed** (P1-010; +11: 8 api
+  admin_impersonate + 3 core jwt).
   Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
@@ -816,6 +866,8 @@ GitHub pushes).
   mid-api-tests; attempt 4: green, no flakes).
   P1-009: 1 (no flakes — the admin_search binary itself ran
   green twice in a row before the full verify).
+  P1-010: 1 (no flakes — the admin_impersonate binary ran
+  green on its first run before the full verify).
   Every red run was a known flake, a lint fix, or a
   test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
@@ -835,11 +887,11 @@ GitHub pushes).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-010 — Impersonation.
-2. P1-011 — Impersonation audit tests.
-3. P1-012 — User lifecycle docs.
-4. P1-013 — JWT claims + issuance.
-5. P1-014 — Refresh rotation.
+1. P1-011 — Impersonation audit tests.
+2. P1-012 — User lifecycle docs.
+3. P1-013 — JWT claims + issuance.
+4. P1-014 — Refresh rotation.
+5. P1-015 — Sessions table + repo.
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never

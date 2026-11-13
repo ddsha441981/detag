@@ -7,9 +7,21 @@
 //!
 //! Claims (minimal, nothing invented): `sub` = the user id,
 //! `role` = the user's role string, `exp` / `iat` = unix
-//! seconds. No `iss`/`aud` — no issuer or audience is defined
-//! anywhere in the docs, and inventing one would be a lie the
-//! verifier would then have to enforce.
+//! seconds, `impersonator_id` = the admin's id when the token
+//! is an impersonation token (P1-010 — absent on a normal
+//! login token). No `iss`/`aud` — no issuer or audience is
+//! defined anywhere in the docs, and inventing one would be a
+//! lie the verifier would then have to enforce.
+//!
+//! Impersonation (P1-010): an impersonation token is a normal
+//! access token whose claims carry `impersonator_id`. It acts
+//! as the target user (its `sub` + `role` are the target's),
+//! lives 15 minutes ([`ACCESS_TOKEN_TTL_SECS`]), and has no
+//! refresh — there is no session row behind it, so P1-014's
+//! refresh must reject it (there is nothing to rotate). The
+//! `AuthContext` surfaces the claim; the admin guards reject
+//! any context that carries it (an impersonator cannot reach
+//! admin endpoints — P1-011 tests that).
 //!
 //! Lifetimes are product-policy constants, not config (the
 //! P1-001 precedent: the password minimum is a constant too,
@@ -51,13 +63,21 @@ pub const REFRESH_TOKEN_TTL_SECS: i64 = 30 * 24 * 60 * 60;
 
 /// The access-token claims. `sub` is the user id (UUID
 /// string); `role` is the user's role string (`user`,
-/// `support`, `admin`).
+/// `support`, `admin`). `impersonator_id` is `Some` only on
+/// an impersonation token (P1-010) — it is omitted from the
+/// JSON on a normal token, and a token issued before P1-010
+/// (without the field) still verifies, because the field
+/// defaults to `None`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccessTokenClaims {
     /// The user id.
     pub sub: String,
     /// The user's role.
     pub role: String,
+    /// The impersonating admin's id, when this token is an
+    /// impersonation token (P1-010).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impersonator_id: Option<Uuid>,
     /// Expiry (unix seconds).
     pub exp: i64,
     /// Issued at (unix seconds).
@@ -103,6 +123,39 @@ pub fn issue_access_token(
     let claims = AccessTokenClaims {
         sub: user_id.to_string(),
         role: role.to_string(),
+        impersonator_id: None,
+        exp: (now + Duration::seconds(ttl_secs)).timestamp(),
+        iat: now.timestamp(),
+    };
+    encode(
+        &Header::new(Algorithm::HS256),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .map_err(|_| JwtError::IssueFailed)
+}
+
+/// Issue an impersonation token (P1-010): an access token
+/// for the target user (`sub` + `role` are the target's)
+/// that carries the impersonating admin's id. The caller
+/// passes [`ACCESS_TOKEN_TTL_SECS`] in production (15
+/// minutes — the impersonation token's whole lifetime); tests
+/// pass short (or negative) TTLs to prove expiry without a
+/// clock. There is no refresh for this token — no session row
+/// is created behind it, so it dies at `exp` and cannot be
+/// renewed (P1-014's refresh must reject it).
+pub fn issue_impersonation_token(
+    secret: &str,
+    user_id: Uuid,
+    role: &str,
+    impersonator_id: Uuid,
+    ttl_secs: i64,
+) -> Result<String, JwtError> {
+    let now = Utc::now();
+    let claims = AccessTokenClaims {
+        sub: user_id.to_string(),
+        role: role.to_string(),
+        impersonator_id: Some(impersonator_id),
         exp: (now + Duration::seconds(ttl_secs)).timestamp(),
         iat: now.timestamp(),
     };
@@ -195,5 +248,35 @@ mod tests {
         assert!(matches!(err, JwtError::Invalid));
         let err = verify_access_token(SECRET, "").expect_err("empty must fail");
         assert!(matches!(err, JwtError::Invalid));
+    }
+
+    #[test]
+    fn impersonation_token_carries_the_impersonator() {
+        let admin = Uuid::parse_str("019aa1b2-c3d4-7e5f-8000-000000000002").unwrap();
+        let token =
+            issue_impersonation_token(SECRET, user_id(), "user", admin, ACCESS_TOKEN_TTL_SECS)
+                .expect("issue succeeds");
+        let claims = verify_access_token(SECRET, &token).expect("verify succeeds");
+        assert_eq!(claims.sub, user_id().to_string());
+        assert_eq!(claims.role, "user");
+        assert_eq!(claims.impersonator_id, Some(admin));
+        assert_eq!(claims.exp - claims.iat, ACCESS_TOKEN_TTL_SECS);
+    }
+
+    #[test]
+    fn normal_token_has_no_impersonator() {
+        let token = issue_access_token(SECRET, user_id(), "user", ACCESS_TOKEN_TTL_SECS)
+            .expect("issue succeeds");
+        let claims = verify_access_token(SECRET, &token).expect("verify succeeds");
+        assert_eq!(claims.impersonator_id, None);
+    }
+
+    #[test]
+    fn expired_impersonation_token_is_expired() {
+        let admin = Uuid::parse_str("019aa1b2-c3d4-7e5f-8000-000000000002").unwrap();
+        let token = issue_impersonation_token(SECRET, user_id(), "user", admin, -60)
+            .expect("issue succeeds");
+        let err = verify_access_token(SECRET, &token).expect_err("expired must fail");
+        assert!(matches!(err, JwtError::Expired));
     }
 }
