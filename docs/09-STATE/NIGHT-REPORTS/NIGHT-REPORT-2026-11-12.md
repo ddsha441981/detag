@@ -17,13 +17,14 @@ P0-106/107/108 (Phase 0 ticket work done, 105/108); updated
 ~12:13 IST 13 Nov after P1-007 (Phase 1, 7/111); updated
 ~13:18 IST 13 Nov after P1-008 (Phase 1, 8/111); updated
 ~13:41 IST 13 Nov after P1-009 (Phase 1, 9/111); updated
-~13:58 IST 13 Nov after P1-010 (Phase 1, 10/111). Resumed
+~13:58 IST 13 Nov after P1-010 (Phase 1, 10/111); updated
+~14:10 IST 13 Nov after P1-011 (Phase 1, 11/111). Resumed
 from the 8th coordinator's interruption (~23:21 IST, P0-092 in
 progress with uncommitted work). Local HEAD at this update:
-`3c630f9` (P1-010). No push (local-only by rule; parent handles
+`f4dd344` (P1-011). No push (local-only by rule; parent handles
 GitHub pushes).
 
-## Tickets done (22)
+## Tickets done (23)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -699,6 +700,34 @@ GitHub pushes).
   + admin block + expiry). `just verify` green 550 passed,
   0 failed, attempt 1 (no flakes).
 
+- **P1-011 — Impersonation audit tests** (`f4dd344`):
+  The one code change this test ticket needed: the audit
+  actor is threaded through the profile + deletion services
+  — `AuthContext::audit_actor_id(user)` (the impersonator
+  when impersonating, else the user) +
+  `patch_profile(state, user, actor_user_id, req)` +
+  `request_account_deletion(state, user, actor_user_id)`;
+  the handlers pass it explicitly, and the `let Some(ref
+  user)` borrow keeps `auth` usable after the unwrap (a
+  moved `user` made `auth` unusable — the first compile
+  failed with E0382 on both handlers). The other audited
+  flows (register, verify, login, admin actions) need no
+  change: register/verify/login take no Bearer <redacted> and
+  the admin guards already block impersonation. Tests: 7 new
+  in `tests/admin_impersonate_audit.rs` (impersonated profile
+  update audits both ids + the action works as the user;
+  normal profile update still audits actor == target;
+  impersonated deletion request audits both ids + the account
+  is deletion-pending; the `user.impersonated` row checked
+  field by field; admin block on every live admin route —
+  restore + impersonate + user list, on top of P1-010's
+  suspend; expired token on admin endpoints is 401 PF-1011,
+  not 403; impersonating an admin target is still blocked
+  while user routes work as the target). Docs:
+  security-testing impersonation-audit bullets, threat model
+  T21 now proven (LIVE) + update-log row. `just verify`
+  green 557 passed, 0 failed, attempt 1 (no flakes).
+
 ## Tickets partially done
 
 - **P0-034 / P0-046 / P0-083**: implemented but unverified —
@@ -810,8 +839,8 @@ GitHub pushes).
   display-name unit) → **498 passed, 0 failed** (P1-006; +12
   email-change integration) → **507 passed, 0 failed**
   (P1-007; +9: 5 api deletion + 3 gc purge + 1 migration)
-  → **550 passed, 0 failed** (P1-010; +11: 8 api
-  admin_impersonate + 3 core jwt).
+  → **557 passed, 0 failed** (P1-011; +7 new
+  admin_impersonate_audit).
   Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
@@ -868,6 +897,8 @@ GitHub pushes).
   green twice in a row before the full verify).
   P1-010: 1 (no flakes — the admin_impersonate binary ran
   green on its first run before the full verify).
+  P1-011: 1 (no flakes — the admin_impersonate_audit binary
+  ran green on its first run before the full verify).
   Every red run was a known flake, a lint fix, or a
   test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
@@ -887,11 +918,11 @@ GitHub pushes).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-011 — Impersonation audit tests.
-2. P1-012 — User lifecycle docs.
-3. P1-013 — JWT claims + issuance.
-4. P1-014 — Refresh rotation.
-5. P1-015 — Sessions table + repo.
+1. P1-012 — User lifecycle docs.
+2. P1-013 — JWT claims + issuance.
+3. P1-014 — Refresh rotation.
+4. P1-015 — Sessions table + repo.
+5. P1-016 — Cookie + bearer <redacted> auth.
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never

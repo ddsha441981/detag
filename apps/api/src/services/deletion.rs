@@ -61,8 +61,15 @@ enum DeletionTxError {
 /// Request account deletion for `user` (already loaded by the
 /// extractor — fresh per request). A second request while
 /// already pending is a no-op 200-equivalent: no write, no
-/// audit, no second mail.
-pub async fn request_account_deletion(state: &AppState, user: &User) -> Result<(), DeletionError> {
+/// audit, no second mail. `actor_user_id` is the audit actor
+/// (P1-011): the impersonator when the caller is
+/// impersonating, else `user.id` — the audit row's
+/// `target_id` is always the user acted-as.
+pub async fn request_account_deletion(
+    state: &AppState,
+    user: &User,
+    actor_user_id: uuid::Uuid,
+) -> Result<(), DeletionError> {
     if user.status == "deletion_pending" {
         return Ok(());
     }
@@ -76,7 +83,7 @@ pub async fn request_account_deletion(state: &AppState, user: &User) -> Result<(
             audit_logs::insert(
                 &mut *conn,
                 &NewAuditLog {
-                    actor_user_id: Some(user.id),
+                    actor_user_id: Some(actor_user_id),
                     actor_client: None,
                     action: "account.delete_requested".to_string(),
                     target_type: "user".to_string(),

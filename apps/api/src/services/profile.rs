@@ -204,10 +204,16 @@ pub async fn get_profile(state: &AppState, user: &User) -> Result<ProfileRespons
 
 /// PATCH /v1/me: set the display name and/or record an
 /// email-change intent. `user` is the extractor's verified
-/// user (the base values for the patch).
+/// user (the base values for the patch). `actor_user_id` is
+/// the audit actor (P1-011): the impersonator when the caller
+/// is impersonating, else `user.id` — the handler computes it
+/// from the `AuthContext`; the audit row's `target_id` is
+/// always the user acted-as, so an impersonated action's row
+/// carries both ids.
 pub async fn patch_profile(
     state: &AppState,
     user: &User,
+    actor_user_id: uuid::Uuid,
     req: &PatchProfileRequest,
 ) -> Result<ProfileResponse, ProfileError> {
     // Display name: validate (again — the handler's
@@ -325,7 +331,7 @@ pub async fn patch_profile(
             audit_logs::insert(
                 &mut *conn,
                 &NewAuditLog {
-                    actor_user_id: Some(user.id),
+                    actor_user_id: Some(actor_user_id),
                     actor_client: None,
                     action: "profile.update".to_string(),
                     target_type: "user".to_string(),

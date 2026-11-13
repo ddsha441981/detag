@@ -175,6 +175,17 @@ pub struct AuthContext {
 pub const REFRESH_COOKIE: &str = "detag_refresh";
 
 impl AuthContext {
+    /// The user id to record as the audit actor for an action
+    /// this context performs (P1-011): the impersonator when
+    /// the caller is impersonating (the human who acted), else
+    /// the user themself. The audit row's `target_id` still
+    /// names the user acted-as — so an impersonated action's
+    /// row carries both ids in the standard columns, and a
+    /// normal action's row is unchanged (actor == target).
+    pub fn audit_actor_id(&self, user: &User) -> uuid::Uuid {
+        self.impersonator_id.unwrap_or(user.id)
+    }
+
     /// Parse the credential from request headers. Pure (no I/O,
     /// no verification) — unit-tested here; the extractor below
     /// calls it, then verifies.

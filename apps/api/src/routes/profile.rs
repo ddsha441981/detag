@@ -88,7 +88,10 @@ pub async fn patch_me(
     ValidatedJson(req): ValidatedJson<PatchProfileRequest>,
 ) -> Response {
     let request_id = Some(id.0.as_str());
-    let Some(user) = auth.user else {
+    // Borrowed, not moved: the audit actor comes from the same
+    // context (P1-011), and a moved `user` would make `auth`
+    // unusable afterwards.
+    let Some(ref user) = auth.user else {
         // The extractor guarantees a user for a verified context.
         return ProblemResponse(AppError::Internal.to_problem(
             Profile::Production,
@@ -97,7 +100,7 @@ pub async fn patch_me(
         ))
         .into_response();
     };
-    match patch_profile(&state, &user, &req).await {
+    match patch_profile(&state, user, auth.audit_actor_id(user), &req).await {
         Ok(profile) => Json(profile).into_response(),
         Err(ProfileError::Duplicate) => {
             ProblemResponse(AppError::Conflict.to_problem(Profile::Production, request_id, None))
@@ -132,12 +135,14 @@ pub async fn patch_me(
     security(("bearer_auth" = []))
 )]
 pub async fn delete_me(State(state): State<AppState>, auth: AuthContext) -> Response {
-    let Some(user) = auth.user else {
+    // Borrowed, not moved: the audit actor comes from the same
+    // context (P1-011).
+    let Some(ref user) = auth.user else {
         // The extractor guarantees a user for a verified context.
         return ProblemResponse(AppError::Internal.to_problem(Profile::Production, None, None))
             .into_response();
     };
-    match request_account_deletion(&state, &user).await {
+    match request_account_deletion(&state, user, auth.audit_actor_id(user)).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(DeletionError::Internal) => {
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, None, None))
