@@ -418,18 +418,33 @@ field with plain derive (`null` deserializes as the outer
 that maps `null` to `Some(None)` (clear) and leaves missing
 as `None` (unchanged).
 
-Auth extractor, Bearer leg (P1-005, FR-A-02): the extractor
-verifies a `Bearer <jwt>` (HS256 signature + expiry, leeway 0)
-against `PF_JWT_SECRET`, loads the `sub` as a user, and yields
-a verified context carrying that user + the role from the user
-row. A Bearer API key is 401 `PF-1001` (no key table is read
-yet — API keys are E1.4, a later epic). A session cookie,
-alone, is 401 `PF-1001` — FINAL (P1-016): the `detag_refresh`
-cookie holds a refresh token, which is not an access
-credential. User status is NOT checked here — suspension
-revokes sessions at suspend time (P1-008); a token issued
-before suspension staying valid until expiry (≤ 15 min) is
-that ticket's design space, not this extractor's.
+Auth extractor, Bearer token (P1-005, FR-A-02): the extractor
+verifies a `Bearer <jwt>` (HS256 signature + expiry +
+not-before, leeway 0) against `PF_JWT_SECRET`, loads the
+`sub` as a user, and yields a verified context carrying that
+user + the role from the user row. The role is re-read from
+the database on EVERY request (P1-022): a role change takes
+effect immediately on the same token — a demoted admin loses
+admin access at once (403 `PF-1002`) while their user routes
+still work, a promoted user gains admin access at once, and
+a token whose embedded `role` claim says "admin" for a plain
+user is still treated as that user (the claim is never
+trusted — proven by test). A tampered token (flipped payload
+character, or the same claims signed with another secret) is
+401 `PF-1010`; a token whose `nbf` is in the future is
+immature — 401 `PF-1010`, never `PF-1011` (expired). The
+locked claims shape is now nine keys (P1-022 adds `nbf` =
+`iat` on every minted token; a pre-P1-022 token without
+`nbf` still verifies — it defaults to 0, long past). A Bearer
+API key is 401 `PF-1001` (no key table is read yet — the
+API-key leg is the E1.4 integration point and its
+verification lands with P1-034, "Key auth extractor"). A
+session cookie, alone, is 401 `PF-1001` — FINAL (P1-016):
+the `detag_refresh` cookie holds a refresh token, which is
+not an access credential. User status is NOT checked here —
+suspension revokes sessions at suspend time (P1-008); a token
+issued before suspension staying valid until expiry (≤ 15
+min) is that ticket's design space, not this extractor's.
 
 Cookie + bearer dual auth (P1-016, FR-A-02): the web client
 holds TWO things — the access token in memory (sent as

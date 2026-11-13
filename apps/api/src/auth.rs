@@ -10,17 +10,24 @@
 //!
 //! # Phase 1 status — Bearer verified, cookie final, API keys later
 //!
-//! A `Bearer <jwt>` is verified (HS256 signature + expiry, leeway 0)
-//! against `PF_JWT_SECRET` and the `sub` claim is loaded as a user:
-//! a verified context carries the [`User`] (`verified: true`, the real
-//! [`Role`] from the user row). The rejections:
+//! A `Bearer <jwt>` is verified (HS256 signature + expiry +
+//! not-before, leeway 0) against `PF_JWT_SECRET` and the `sub`
+//! claim is loaded as a user: a verified context carries the
+//! [`User`] (`verified: true`, the real [`Role`] from the user
+//! row — re-read from the database on EVERY request, so a role
+//! change takes effect immediately and the token's embedded
+//! role is never trusted for admin routes, P1-022). The
+//! rejections:
 //! - no credential → 401 `PF-1001`;
 //! - a Bearer token that is not a valid JWT → 401 `PF-1010`;
-//!   an expired one → 401 `PF-1011`;
+//!   an expired one → 401 `PF-1011`; a not-yet-valid one
+//!   (`nbf` in the future) → 401 `PF-1010` (immature, not
+//!   expired, P1-022);
 //! - a valid JWT for an unknown user id → 401 `PF-1001` (the token
 //!   is well-formed but the account is gone);
 //! - a Bearer API key → 401 `PF-1001` (no key table is read yet —
-//!   API keys are E1.4, a later epic, not this ticket);
+//!   the API-key leg is the E1.4 integration point and its
+//!   verification lands with P1-034, "Key auth extractor");
 //! - a session cookie, alone → 401 `PF-1001` — and that is FINAL,
 //!   not a placeholder (P1-016): the `detag_refresh` cookie holds
 //!   a REFRESH token, which is not an access credential. The web
@@ -366,7 +373,16 @@ impl FromRequestParts<AppState> for AuthContext {
         let AuthContext { credential, .. } = ctx;
         let token = match credential {
             Credential::None => return Err(reject(AppError::Unauthenticated)),
-            Credential::ApiKey(_) | Credential::Session(_) => {
+            // The API-key leg is the E1.4 integration point
+            // (P1-022): the credential is recognised here and
+            // dispatched, but there is no key table yet —
+            // verification (hash lookup, scope check, throttled
+            // `last_used_at`, per-key rate tier) lands with
+            // P1-034 ("Key auth extractor"). Until then an API
+            // key answers the generic 401 PF-1001, the same as
+            // no credential (P1-016's FINAL decision).
+            Credential::ApiKey(_) => return Err(reject(AppError::Unauthenticated)),
+            Credential::Session(_) => {
                 return Err(reject(AppError::Unauthenticated));
             }
             Credential::Bearer(token) => token,

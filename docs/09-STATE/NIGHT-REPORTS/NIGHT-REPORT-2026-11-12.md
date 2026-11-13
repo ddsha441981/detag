@@ -41,8 +41,16 @@ force-push ~18:11 IST, then the main agent pushed 3a8528c
 (CI workflow_dispatch trigger, ~18:17 IST, public repo, CI
 #3 running); the P1-021 commit is local until the driver's
 next push run).
+Updated ~18:40 IST 13 Nov after P1-022 (Phase 1, 22/111).
+Local HEAD at this update: `a20e104` (P1-022). No push
+(local-only by rule — the driver cron pushes). THIS
+COORDINATOR STOPS HERE: the user chose coordinator flow for
+the three CI #3 S1s (CI-FAIL-001/002/003, filed in ISSUES.md)
+— the NEXT coordinator fixes them first, each as its own
+commit, before the next ticket (P1-023). See the handoff in
+Blocked items.
 
-## Tickets done (33)
+## Tickets done (34)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -1083,6 +1091,37 @@ next push run).
   fixed by adding the P1-021 migration to its stem list; no
   flakes).
 
+- **P1-022 — JWT verification extractor** (`a20e104`): `nbf`
+  is now minted (= `iat`) on every access + impersonation
+  token and enforced by the verifier (`validate_nbf = true`,
+  leeway 0 — a future-`nbf` token is 401 PF-1010, immature
+  not expired; a pre-P1-022 token without `nbf` still
+  verifies, defaulting to 0). The role was already re-read
+  from the DB on every request (P1-005) — this ticket PROVES
+  it with tests rather than changing it. The api-key clause
+  is the E1.4 integration point, not a build: the
+  extractor's `Credential::ApiKey` arm is now split out and
+  named in code + docs (verification — hash lookup, scope
+  check, throttled `last_used_at` — lands with P1-034,
+  "Key auth extractor"; until then an API key is 401
+  PF-1001, the P1-016 FINAL decision). Tests: 1 new core
+  unit test (`verify_rejects_future_nbf`) + the legacy test
+  pins `nbf == 0` + the claims-shape test now locks 9 keys;
+  5 new in `tests/extractor.rs` (tampered payload + foreign
+  secret → 401 PF-1010; forged `role: "admin"` claim ignored
+  — profile 200, admin list 403 PF-1002; future `nbf` →
+  PF-1010, past `nbf` → 200; role refresh — demote/promote
+  take effect immediately on the same token in both
+  directions; API key → 401 PF-1001). Docs: api-spec
+  extractor paragraph (nbf + role refresh + api-key
+  integration point), security-testing P1-022 bullets,
+  threat model T20 extended + update-log row. NOTE: this
+  commit also carries the main agent's CI-FAIL-001/002/003
+  entries in ISSUES.md (written by the main agent during the
+  run, swept in by `git add -A` — they are accurate state,
+  not this coordinator's work). `just verify` green 615
+  passed, 0 failed, attempt 1 (no flakes).
+
 ## Tickets partially done
 
 - **P0-034 / P0-046 / P0-083**: implemented but unverified —
@@ -1116,23 +1155,49 @@ next push run).
 
 - **DOCKER-001** (open): containers still cannot start on this VM.
   Dev fallback used all run: native Postgres 16 + native redis.
-- **CI-WORKFLOWS-001** (CHANGED STATE, verify next run): the
-  App-403 push path is RETIRED — the workflows reached GitHub
-  through the deploy-key git route instead (all 4 workflows
-  are on main: ci.yml, commits.yml, nightly.yml,
-  security-audit.yml). The repo went PUBLIC ~18:13 IST 13 Nov
-  (user's decision — GitHub Actions minutes were exhausted
-  while private) and CI #3 was triggered ~18:17 IST by
-  3a8528c ('ci(repo): P0-013 add workflow_dispatch trigger
-  for manual CI runs'), verified In progress on the public
-  Actions page. DO NOT close this item until a CI run goes
-  green — the next coordinator checks CI #3's result. If it
-  is green, the `fixtures-check` / `templates-check` /
-  nightly `prop` jobs have run remotely for the first time,
-  and the P0-034/046/083 live ACs + exit gates can move off
-  the deferred list. If it is red, the failure is the next
-  coordinator's first job (read the Actions log, do not
-  guess).
+- **CI-WORKFLOWS-001** (CHANGED STATE — CI #3 ran, 3 S1s open):
+  the App-403 push path is RETIRED — the workflows reached
+  GitHub through the deploy-key git route (all 4 workflows
+  are on main). The repo went PUBLIC ~18:13 IST 13 Nov and
+  CI #3 (run 43428116339, commit 3a8528c) ran on it:
+  cargo-deny + gitleaks PASSED, but three jobs failed, all
+  diagnosed exactly from the user-supplied logs zip and filed
+  as S1s in ISSUES.md — DO NOT close this item until a CI run
+  goes green:
+  - **CI-FAIL-001** (S1): verify failed at step 13
+    openapi-check — `docs/api/openapi.json` is stale; the
+    JSON deep-diff shows exactly one addition: the 429
+    response on POST /v1/auth/register from P1-020 (the
+    spec was never regenerated). Fix: run `just openapi`
+    and commit the regenerated spec. TIMING: only after
+    P1-022 commits (it has now — `a20e104`).
+  - **CI-FAIL-002** (S1): smoke failed — compose pulls dead
+    image `minio/minio:latest` (pull access denied; MinIO
+    moved to Quay). Fix: `quay.io/minio/minio:latest` +
+    `quay.io/minio/mc:latest` in `ops/compose.minio.yml`
+    + `ops/compose.base.yml` (check other references too).
+  - **CI-FAIL-003** (S1): image-size failed — the
+    Dockerfile.api builder lacks curl, and the
+    utoipa-swagger-ui build script needs it to download
+    Swagger UI (NOT a size-ceiling failure — no image was
+    built to measure). Fix: add curl (+ ca-certificates)
+    to the builder-stage apt-get install next to binutils.
+  **HANDOFF (user's decision, ~18:23 IST): the NEXT
+  coordinator fixes these S1s FIRST, each as its own
+  commit, before the next ticket (P1-023).** Process lesson
+  from CI-FAIL-001: `just verify` locally does NOT run
+  openapi-check (or the other CI drift checks), so spec
+  drift was invisible here — any ticket that changes an
+  OpenAPI path/response MUST regenerate `docs/api/openapi.json`
+  (`just openapi`) and the route table in the same commit;
+  consider adding the drift checks to the per-ticket verify
+  or a pre-push check (a fix for the next coordinator to
+  weigh, not a silent change). The user asked whether CI had
+  been run locally first — the honest answer: `just verify`
+  runs locally at every ticket (green), but `just smoke` and
+  the image-size gate need Docker and were never runnable on
+  this VM (DOCKER-001) — they were deferred to CI by design,
+  which is why CI #3 is the first time they ran.
 - **Remote state, 13 Nov evening (for the next
   coordinator):** remote main == local main at 35925df after
   a ONE-TIME user-approved force-push ~18:11 IST (user:
@@ -1237,7 +1302,8 @@ next push run).
   → **588 passed, 0 failed** (P1-018; +3 password-sessions)
   → **600 passed, 0 failed** (P1-019; +12: 6 sessions-list + 6 user-agent unit)
   → **603 passed, 0 failed** (P1-020; +3: 1 login-IP + 1 register + 1 service-bucket race)
-  → **609 passed, 0 failed** (P1-021; +6: 4 revocation integration + 2 revocation unit).
+  → **609 passed, 0 failed** (P1-021; +6: 4 revocation integration + 2 revocation unit)
+  → **615 passed, 0 failed** (P1-022; +6: 5 extractor integration + 1 nbf unit).
   Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
@@ -1326,6 +1392,7 @@ next push run).
   lacked the new column — the P1-005 lesson, fixed by adding
   the P1-021 migration to its stem list; attempt 3 green,
   ~7 min, no flakes).
+  P1-022: 1 (no flakes — the full verify took ~12 min).
   Every red run was a known flake, a lint fix, or a
   test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
@@ -1345,11 +1412,17 @@ next push run).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-022 — JWT verification extractor.
-2. P1-023 — Auth integration suite.
-3. P1-024 — Auth design notes.
-4. P1-025 — Forgot/reset flow.
-5. P1-026 — Password policy + pwned check.
+1. CI-FAIL-001 — regenerate `docs/api/openapi.json` (`just openapi`), its own commit.
+2. CI-FAIL-002 — MinIO image → Quay (`quay.io/minio/minio:latest` + `quay.io/minio/mc:latest`), its own commit.
+3. CI-FAIL-003 — add curl (+ ca-certificates) to the Dockerfile.api builder stage, its own commit.
+4. P1-023 — Auth integration suite.
+5. P1-024 — Auth design notes.
+
+(The S1s come first, each as its own commit, before the next
+ticket — the user's decision, ~18:23 IST 13 Nov. Then the
+queue resumes at P1-023. Branch-based work starts with the
+next handoff: the next coordinator starts on a phase branch,
+not on main — main only receives merges.)
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never

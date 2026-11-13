@@ -11,7 +11,10 @@
 //! version (1), `impersonator_id` = the admin's id when the
 //! token is an impersonation token (P1-010 — absent on a
 //! normal login token), `jti` = the token's unique id (one
-//! UUID per issuance), `exp` / `iat` = unix seconds,
+//! UUID per issuance), `exp` / `iat` / `nbf` = unix seconds
+//! (`nbf` = `iat` on every token minted since P1-022 — the
+//! token is valid from issuance; a token whose `nbf` is in
+//! the future is rejected as Invalid, never Expired),
 //! `iss` = `"detag"`, `aud` = `"detag-api"`. The JOSE header
 //! carries `kid` = the signing key's fingerprint (the first
 //! 16 hex chars of the secret's sha256) + `alg: HS256`.
@@ -29,7 +32,9 @@
 //! still verifies — the new fields default on decode
 //! (`ver` → 1, `iss` → `"detag"`, `aud` → `"detag-api"`,
 //! `jti` / `impersonator_id` → `None`, missing `kid` →
-//! accepted). A token that CARRIES a wrong value is
+//! accepted). A pre-P1-022 token (no `nbf`) still verifies
+//! too — `nbf` defaults to 0, which is long past, so the
+//! not-before check passes. A token that CARRIES a wrong value is
 //! rejected: wrong `iss`/`aud` → Invalid (jsonwebtoken's
 //! issuer/audience validation), `ver` ≠ 1 → Invalid, a
 //! `kid` that is not this secret's fingerprint → Invalid.
@@ -149,6 +154,13 @@ pub struct AccessTokenClaims {
     pub exp: i64,
     /// Issued at (unix seconds).
     pub iat: i64,
+    /// Not before (unix seconds) — the token is not valid
+    /// before this instant. Minted equal to `iat` (P1-022):
+    /// the token is valid from issuance. Defaults to 0 on
+    /// decode, so a pre-P1-022 token (no `nbf`) still
+    /// verifies — 0 is long past, so the check passes.
+    #[serde(default)]
+    pub nbf: i64,
     /// The issuer (`"detag"`). Defaults on decode, so a
     /// pre-P1-013 token (no `iss`) still verifies.
     #[serde(default = "default_issuer")]
@@ -206,6 +218,7 @@ pub fn issue_access_token(
         jti: Some(Uuid::now_v7()),
         exp: (now + Duration::seconds(ttl_secs)).timestamp(),
         iat: now.timestamp(),
+        nbf: now.timestamp(),
         iss: TOKEN_ISSUER.to_string(),
         aud: TOKEN_AUDIENCE.to_string(),
     };
@@ -244,6 +257,7 @@ pub fn issue_impersonation_token(
         jti: Some(Uuid::now_v7()),
         exp: (now + Duration::seconds(ttl_secs)).timestamp(),
         iat: now.timestamp(),
+        nbf: now.timestamp(),
         iss: TOKEN_ISSUER.to_string(),
         aud: TOKEN_AUDIENCE.to_string(),
     };
@@ -280,6 +294,12 @@ pub fn issue_impersonation_token(
 pub fn verify_access_token(secret: &str, token: &str) -> Result<AccessTokenClaims, JwtError> {
     let mut validation = Validation::new(Algorithm::HS256);
     validation.leeway = 0;
+    // `nbf` is enforced (P1-022): a token whose not-before
+    // is in the future is immature, not expired — it answers
+    // `Invalid` (PF-1010), never `Expired` (PF-1011). Leeway
+    // stays 0: issuer and verifier are the same service, so
+    // no clock-skew tolerance is needed.
+    validation.validate_nbf = true;
     validation.set_issuer(&[TOKEN_ISSUER]);
     validation.set_audience(&[TOKEN_AUDIENCE]);
     let data = decode::<AccessTokenClaims>(
@@ -426,6 +446,7 @@ mod tests {
             jti: Some(Uuid::now_v7()),
             exp: (now + Duration::seconds(ACCESS_TOKEN_TTL_SECS)).timestamp(),
             iat: now.timestamp(),
+            nbf: now.timestamp(),
             iss: TOKEN_ISSUER.to_string(),
             aud: TOKEN_AUDIENCE.to_string(),
         }
@@ -466,7 +487,7 @@ mod tests {
         keys.sort_unstable();
         assert_eq!(
             keys,
-            ["aud", "exp", "iat", "iss", "jti", "role", "sub", "ver"],
+            ["aud", "exp", "iat", "iss", "jti", "nbf", "role", "sub", "ver"],
             "the claims shape is locked: {payload}"
         );
         assert_eq!(payload["sub"], user_id().to_string());
@@ -542,6 +563,21 @@ mod tests {
     }
 
     #[test]
+    fn verify_rejects_future_nbf() {
+        // A token whose not-before is an hour in the future
+        // is immature — rejected as Invalid (PF-1010), never
+        // Expired (PF-1011). Minted tokens carry `nbf = iat`,
+        // so this can only be a forged or clock-skewed token.
+        let mut claims = base_claims();
+        claims.nbf = Utc::now().timestamp() + 3600;
+        let token = encode_with(SECRET, &claims, Some(&key_fingerprint(SECRET)));
+        assert!(matches!(
+            verify_access_token(SECRET, &token).expect_err("future nbf must fail"),
+            JwtError::Invalid
+        ));
+    }
+
+    #[test]
     fn verify_accepts_legacy_token_without_new_fields() {
         // A pre-P1-013 token: claims {sub, role, exp, iat}
         // only, no header kid. It still verifies — the new
@@ -565,5 +601,8 @@ mod tests {
         assert_eq!(claims.aud, TOKEN_AUDIENCE);
         assert_eq!(claims.jti, None);
         assert_eq!(claims.impersonator_id, None);
+        // No `nbf` on the wire → the default 0 (long past),
+        // so the not-before check passes.
+        assert_eq!(claims.nbf, 0);
     }
 }

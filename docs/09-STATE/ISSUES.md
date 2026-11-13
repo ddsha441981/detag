@@ -4,6 +4,27 @@
 
 ## Open issues
 
+### CI-FAIL-001 [bug] CI #3 verify job fails at openapi-check — docs/api/openapi.json stale (missing 429 on POST /v1/auth/register)
+- Date: 2026-11-13 · Ticket: P1-020 (cause) · Severity: S1 (CI red on main)
+- Symptom: CI run #3 (commit 3a8528c), verify job stopped at step 13 `openapi-check`: `openapi-check: docs/api/openapi.json is stale — run 'just openapi' and commit it`. Steps 5–12 passed (fmt, clippy -D warnings, env-check, config-table-check, schema-docs-check, dashboards-check, prometheus-check, just). Steps 14+ (route-table-check, fixtures-check, migrate, sqlx prepare --check, nextest, coverage) never ran — their status on CI is still unknown.
+- Cause (proven by JSON deep-diff of the log's committed vs generated blobs): exactly one difference — ADDED `/paths//v1/auth/register/post/responses/429`. P1-020 added the per-email register brute-force bucket (429 Too Many Requests) to the route but never regenerated the spec (`just openapi`).
+- Fix: run `just openapi` and commit the regenerated `docs/api/openapi.json`. TIMING CONSTRAINT: do NOT regenerate while P1-022 is uncommitted (coordinator has uncommitted auth.rs/jwt.rs changes) — regenerating now would bake half-done P1-022 into the spec. Regenerate immediately after P1-022 commits (or as part of its commit). Also: `just verify` locally does NOT run openapi-check, so this drift was invisible here — consider adding the drift checks to the per-ticket verify or a pre-push check.
+- Status: open
+
+### CI-FAIL-002 [bug] CI #3 smoke job fails — compose pulls dead image minio/minio:latest (pull access denied)
+- Date: 2026-11-13 · Ticket: P0-090 (smoke) · Severity: S1 (CI red on main)
+- Symptom: CI run #3, smoke job step 5: `Error response from daemon: pull access denied for minio/minio, repository does not exist or may require 'docker login'` — the compose stack never started (`smoke: FAILED — compose stack did not go healthy in 120s`). This is NOT a VM issue (DOCKER-001): the image name is dead on Docker Hub itself — MinIO moved to Quay.
+- Cause: `ops/compose.minio.yml:47` and `ops/compose.base.yml:106` use `image: minio/minio:latest`; lines 68/128 use `image: minio/mc:latest`.
+- Fix: change to `quay.io/minio/minio:latest` and `quay.io/minio/mc:latest` in both files, then re-run CI. (Also check any other `minio/minio` references in docs/scripts.)
+- Status: open
+
+### CI-FAIL-003 [bug] CI #3 image-size job fails — Dockerfile.api build breaks: utoipa-swagger-ui needs curl, builder has none
+- Date: 2026-11-13 · Ticket: P0-083/P0-084 · Severity: S1 (CI red on main)
+- Symptom: CI run #3, image-size job step 4 (`just image-size-check`): `cargo chef cook` fails — `utoipa-swagger-ui-10.0.2/build.rs: failed to download Swagger UI: "curl command not found"`. The API image never built, so the size gate never ran (NOT a size-ceiling failure — no image existed to measure).
+- Cause: `Dockerfile.api` builder stage installs only `binutils` (curl is installed only in the runtime stage, line ~55); the `utoipa-swagger-ui` build script downloads the Swagger UI zip at build time and falls back to the `curl` binary. `Dockerfile.worker` already installs curl in its builder, so only the API builder is affected.
+- Fix: add `curl` (and `ca-certificates` for https) to the builder-stage `apt-get install` in `Dockerfile.api`, next to `binutils`. Longer-term alternative: vendor the Swagger UI zip so the build needs no download.
+- Status: open
+
 ### PERF-001 [hardening] Synchronous Argon2id verify blocks tokio workers — a burst of concurrent logins 500s on pool timeout (P1-004)
 - Date: 2026-11-13 · Ticket: P1-004
 - Finding: the login service verifies the password inline (`verify_password` in the async handler). Argon2id is ~250 ms of synchronous CPU per verify. On this VM (2-worker runtime, 10-connection pool), twenty concurrent logins starve the workers: the failure transactions cannot drain (each statement waits for worker time), pool acquires hit the 5 s timeout, and the login 500s — proven by a scratch run that reproduced the exact flow with the real error (`PoolTimedOut` at the very first query, 8/20 ok; the repo layer alone is clean 20/20, counter exactly 20). An HTTP-level concurrent race test was tried at 20, then 8, then 4 concurrent logins and flaked in the full-binary run (the other five lockout tests' verifies add load), so the race proof lives at the repo layer (`concurrent_counter_records_never_lose_an_increment` in `tests/lockout.rs`) and the HTTP tests prove the wiring sequentially.
