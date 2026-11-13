@@ -1,0 +1,26 @@
+# garage.toml — Garage S3 server config for the dev/smoke stack (CI-FAIL-004).
+#
+# MinIO is gone as a distribution (Docker Hub removed, Quay anonymous
+# pulls denied, dl.min.io 410 — the open-source server/mc are archived),
+# so the stack runs Garage v2.5.0 (Rust, AGPL-3.0, S3-compatible) instead.
+# Single node, replication_factor 1. The S3 API binds :9000 so every
+# PF_S3_ENDPOINT in the stack (http://garage:9000 in-network,
+# http://localhost:9000 from the host) is unchanged from the MinIO days.
+# s3_region MUST match the client's signing region: the api signs
+# us-east-1 (PF_S3_REGION), and Garage rejects a mismatched scope
+# (AuthorizationHeaderMalformed). Secrets come from the environment
+# (GARAGE_RPC_SECRET, GARAGE_ADMIN_TOKEN) — never in this file.
+# The layout + key + bucket are created by ops/garage-entrypoint.sh on
+# first start; the file itself only declares the node.
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+replication_factor = 1
+rpc_bind_addr = "[::]:3901"
+
+[s3_api]
+api_bind_addr = "[::]:9000"
+s3_region = "us-east-1"
+
+[admin]
+api_bind_addr = "[::]:3903"

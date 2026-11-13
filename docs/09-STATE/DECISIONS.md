@@ -50,6 +50,11 @@
 **Decision:** New variant `AppError::CacheUnavailable` — PF-5003, HTTP 503, title `cache_unavailable`, safe detail "the cache is temporarily unavailable". `From` impls map `deadpool_redis::PoolError`, `redis::RedisError`, and the `Pool`/`Redis` variants of `CacheError`/`RateLimitError`/`PubSubError` to it; all other module-error variants map to `Internal` (programmer/caller errors, not failover). The provider error is discarded at the boundary — its detail never reaches a problem body.
 **Consequences:** Any Redis outage now surfaces as a typed, PII-free 503. The exhaustive taxonomy tests (34 variants) pin the code. If a future ticket needs to distinguish checkout vs command failures, it must add variants, not match on provider strings.
 
+## ADR-0019 — S3 backend: MinIO → Garage v2.5.0 (2026-11-13, Phase 1)
+**Context:** CI #5 smoke died because MinIO's distribution is gone on every channel — Hub removed minio/minio, Quay denies anonymous pulls of quay.io/minio/minio and quay.io/minio/mc, dl.min.io answers 410 (open-source server/mc archived). The stack needs an S3-compatible server for dev/smoke/CI.
+**Decision:** Garage v2.5.0 (Deuxfleurs, Rust, AGPL-3.0, single static binary, dxflrs/garage on Docker Hub, pinned tag). Single node, replication_factor 1, S3 API on :9000 (endpoint unchanged from the MinIO days), s3_region us-east-1 (must match the api's signing region — Garage rejects a mismatched scope). Layout + deterministic key import (PF_S3_* from env) + bucket + RWO allow run in the garage entrypoint; the 72 h lifecycle ceiling is applied by a separate bootstrap-lifecycle service (amazon/aws-cli, S3 PutBucketLifecycleConfiguration). Buckets are private by default (Garage has no ACLs/policies — the old `mc anonymous set none` step has no equivalent and is not needed). Verified end-to-end locally with the real binary + boto3 before landing (all S3 ops + lifecycle + presigned URLs 200).
+**Consequences:** The dev/smoke S3 backend is Garage, not MinIO. The local-dev compose.minio.yml file and the testcontainers live legs still reference MinIO (TESTKIT-MINIO-001, follow-up). If Garage ever becomes unsuitable, the swap point is ops/compose.base.yml + ops/garage.toml + the entrypoint — the api/worker only see a standard S3 endpoint.
+
 ## owner-input-needed queue
 
 | # | Date | Question | Temporary default in use | Owner answer |

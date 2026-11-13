@@ -104,6 +104,10 @@ jobs:
         run: just openapi-check
       - name: route-table-check (committed route table matches generated, P0-074)
         run: just route-table-check
+      - name: Set up Python 3.12 for the fixture/template generators (CI-FAIL-005)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: fixtures-check (committed fixtures match the generator, P0-093)
         run: |
           python3 -m pip install --quiet "pillow==10.2.0" "numpy==1.26.4"

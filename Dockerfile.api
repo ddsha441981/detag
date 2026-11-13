@@ -33,18 +33,23 @@ FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 # sqlx `query!` macros compile offline from the checked-in .sqlx/ data (P0-041).
 ENV SQLX_OFFLINE=true
+# curl + ca-certificates BEFORE `cargo chef cook`: the `utoipa-swagger-ui`
+# build script downloads the Swagger UI zip at build time and falls back
+# to the `curl` binary. CI-FAIL-003's fix installed curl only in the later
+# `cargo build` step, but `cook` compiles the same dependencies first —
+# CI #5 died on "curl command not found" in the cook step (CI-FAIL-006).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 # `strip` needs binutils, which the chef image does not ship — install it
 # in the builder only (never in the runtime image). Belt-and-braces: the
 # workspace release profile already sets strip = "symbols" (measured
 # 27.0 MB for the api binary in P0-083), so this is a no-op unless the
-# profile ever changes. curl + ca-certificates: the `utoipa-swagger-ui`
-# build script downloads the Swagger UI zip at build time and falls back
-# to the `curl` binary (CI-FAIL-003 — the API image build died on
-# "curl command not found" in CI #3).
+# profile ever changes.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends binutils curl ca-certificates \
+    && apt-get install -y --no-install-recommends binutils \
     && rm -rf /var/lib/apt/lists/* \
     && cargo build --release --bin detag-api \
     && cp target/release/detag-api /tmp/detag-api \

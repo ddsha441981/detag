@@ -1,0 +1,13 @@
+# Dockerfile.garage — Garage S3 server image for the dev/smoke stack (CI-FAIL-004).
+#
+# The dxflrs/garage image is scratch + the static binary (no shell), so
+# this wrapper adds Alpine (sh + curl) and the bootstrap entrypoint that
+# creates the layout + key + bucket on first start. The binary is copied
+# out of the upstream image, so the version stays pinned in one place
+# (v2.5.0) — the same tag the garage service would use directly.
+FROM alpine:3.20
+RUN apk add --no-cache curl ca-certificates
+COPY --from=dxflrs/garage:v2.5.0 /garage /usr/local/bin/garage
+COPY garage-entrypoint.sh /usr/local/bin/garage-entrypoint.sh
+RUN chmod +x /usr/local/bin/garage-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/garage-entrypoint.sh"]
