@@ -9,6 +9,15 @@
 //! attestations), the deferred jobs.attestation_id FK, plus the
 //! migration's revert, then cleans up. The `pf` role needs CREATEDB
 //! (granted in the VM dev setup; CI's postgres service user has it).
+//!
+//! NOTE: this pins migration 004's contract AS SHIPPED — DELETE
+//! forbidden on all three append-only tables. Migration
+//! 20261113062352 (P1-007) changed the LIVE contract: the
+//! job_events / attestations triggers are UPDATE-only now (the
+//! purge cascade must be able to erase them) and the audit_logs
+//! actor FK is dropped. See
+//! `migration_purge_cascade_triggers.rs` for the current contract;
+//! do not "fix" this file's DELETE assertions to match it.
 
 use detag_core::db::{connect, DbPool, PoolConfig};
 use detag_core::migrate::{migrate_revert_last, migrate_up};

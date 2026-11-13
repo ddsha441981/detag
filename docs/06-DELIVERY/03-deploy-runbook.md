@@ -721,7 +721,14 @@ Business 72 h — then are deleted):
   mistake every object for an orphan). A failed delete is
   reported, not fatal — the next run retries it. Scheduling
   (a daily run) lands with the delivery work; today it is run
-  by hand.
+  by hand. The account purge is a separate mode of the same
+  binary (P1-007): `cargo run -p detag-gc -- --purge-users`
+  dry-runs the purge (lists past-grace accounts, deletes
+  nothing); `--purge-users --execute` deletes them. It runs
+  INSTEAD of the artifact sweep (one mode per invocation —
+  the nightly cron calls it separately) and needs the database
+  only (no S3 client: purged users' objects become orphans
+  for the next sweep).
 - **Live verification:** the ILM import and the GC's execute
   path wait for CI/E0.9 (DOCKER-001 — no containers on this VM).
   Until then the gates are the static checker, the repo live

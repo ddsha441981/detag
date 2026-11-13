@@ -25,6 +25,9 @@ pub struct GcOpts {
     pub dry_run: bool,
     /// Orphans younger than this are kept (default 24 h).
     pub orphan_grace: Duration,
+    /// P1-007: purge accounts past the deletion grace instead
+    /// of the artifact/orphan sweep (one mode per invocation).
+    pub purge_users: bool,
 }
 
 impl Default for GcOpts {
@@ -32,6 +35,7 @@ impl Default for GcOpts {
         Self {
             dry_run: true,
             orphan_grace: Duration::hours(24),
+            purge_users: false,
         }
     }
 }

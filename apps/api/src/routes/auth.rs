@@ -7,9 +7,9 @@
 //! `/v1/auth/verify-email` + `/v1/auth/resend-verification`,
 //! real since P1-002, `/v1/auth/login`, real since P1-003,
 //! `POST /v1/auth/confirm-email-change`, real since P1-006,
-//! and `GET`/`PATCH /v1/me`, real since P1-005 (in
-//! `routes/profile.rs` — the handlers live there, the nest lives
-//! here).
+//! and `GET`/`PATCH`/`DELETE /v1/me`, real since P1-005 (GET +
+//! PATCH) and P1-007 (DELETE) — in `routes/profile.rs`, the
+//! handlers live there, the nest lives here.
 
 use super::extractors::RequestId;
 use super::stub;
@@ -322,7 +322,7 @@ pub fn router() -> Router<AppState> {
                     "/",
                     get(super::profile::get_me)
                         .patch(super::profile::patch_me)
-                        .delete(stub),
+                        .delete(super::profile::delete_me),
                 )
                 .route("/sessions", get(stub))
                 .route("/sessions/{id}", delete(stub))

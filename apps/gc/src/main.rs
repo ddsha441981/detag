@@ -15,6 +15,14 @@
 //!
 //! Usage:
 //!   detag-gc [--dry-run|--execute] [--orphan-grace-hours N]
+//!   detag-gc --purge-users [--dry-run|--execute]
+//!
+//! The `--purge-users` mode (P1-007) is the nightly account
+//! purge: hard-delete accounts whose 30-day deletion grace has
+//! passed (cascade per the data-model doc). It runs INSTEAD of
+//! the artifact/orphan sweep (one mode per invocation — the
+//! nightly cron calls it separately). Dry-run lists the
+//! candidates and deletes nothing.
 //!
 //! Scheduling (a daily run) lands with the delivery work; today
 //! the operator runs it by hand (`just gc` dry-runs it).
@@ -29,12 +37,14 @@ use detag_core::repos::artifacts;
 use detag_storage::s3::{S3Config, S3Storage};
 
 mod plan;
+mod purge;
 mod run;
 
+use purge::purge_expired_users;
 use run::{run_gc, GcOpts};
 
 fn usage() -> &'static str {
-    "usage: detag-gc [--dry-run|--execute] [--orphan-grace-hours N]"
+    "usage: detag-gc [--dry-run|--execute] [--orphan-grace-hours N]\n       detag-gc --purge-users [--dry-run|--execute]"
 }
 
 fn parse_args(args: &[String]) -> Result<GcOpts, String> {
@@ -57,6 +67,11 @@ fn parse_args(args: &[String]) -> Result<GcOpts, String> {
                 opts.orphan_grace = Duration::hours(hours);
                 i += 1;
             }
+            // P1-007: purge accounts past the 30-day deletion
+            // grace instead of the artifact/orphan sweep. The
+            // flag is the mode switch — `--purge-users` without
+            // `--execute` dry-runs (lists the candidates).
+            "--purge-users" => opts.purge_users = true,
             "--help" | "-h" => {
                 println!(
                     "{}\n\nOrphan + retention garbage collector (P0-060). Dry-run by default; --execute deletes.",
@@ -95,6 +110,36 @@ async fn main() -> ExitCode {
             return ExitCode::from(1);
         }
     };
+    // P1-007: the purge mode needs the database only — no
+    // storage client, no artifact sets. It runs instead of the
+    // sweep below.
+    if opts.purge_users {
+        match purge_expired_users(&pool, chrono::Utc::now(), opts.dry_run).await {
+            Ok(report) => {
+                println!(
+                    "detag-gc: purge-users candidates={} purged={} failures={} mode={}",
+                    report.candidates.len(),
+                    report.purged.len(),
+                    report.failures.len(),
+                    if opts.dry_run { "dry-run" } else { "execute" },
+                );
+                for id in &report.candidates {
+                    println!("detag-gc: purge-users candidate {id}");
+                }
+                if report.failures.is_empty() {
+                    return ExitCode::SUCCESS;
+                }
+                for (id, err) in &report.failures {
+                    eprintln!("detag-gc: failed to purge {id}: {err}");
+                }
+                return ExitCode::from(1);
+            }
+            Err(err) => {
+                eprintln!("detag-gc: purge failed: {err}");
+                return ExitCode::from(1);
+            }
+        }
+    }
     let storage = match S3Storage::new(S3Config {
         endpoint: settings.s3_endpoint.clone(),
         bucket: settings.s3_bucket.clone(),

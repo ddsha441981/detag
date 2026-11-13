@@ -13,13 +13,14 @@ P0-106/107/108 (Phase 0 ticket work done, 105/108); updated
 ~08:31 IST 13 Nov after P1-003 (Phase 1, 3/111); updated
 ~09:15 IST 13 Nov after P1-004 (Phase 1, 4/111); updated
 ~10:26 IST 13 Nov after P1-005 (Phase 1, 5/111); updated
-~11:19 IST 13 Nov after P1-006 (Phase 1, 6/111). Resumed
+~11:19 IST 13 Nov after P1-006 (Phase 1, 6/111); updated
+~12:13 IST 13 Nov after P1-007 (Phase 1, 7/111). Resumed
 from the 8th coordinator's interruption (~23:21 IST, P0-092 in
 progress with uncommitted work). Local HEAD at this update:
-`6d074d3` (P1-006). No push (local-only by rule; parent handles
+`018c6ba` (P1-007). No push (local-only by rule; parent handles
 GitHub pushes).
 
-## Tickets done (18)
+## Tickets done (19)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -465,6 +466,58 @@ GitHub pushes).
   ASSUMPTION-010). Docs: api-spec email-change paragraph +
   route-table row, data-model tokens row, security-testing
   email-change line, threat model T18.
+- **P1-007 — Account deletion** (018c6ba): core repo `users.rs`
+  (`DELETION_GRACE_DAYS` 30, `request_deletion`,
+  `cancel_deletion`, `purgeable`, `delete_user`) + deletion
+  service (`request_account_deletion` — one tx: status +
+  `account.delete_requested` audit + `account-deletion`
+  confirmation mail; second request while pending is a no-op,
+  grace runs from the FIRST request) + `DELETE /v1/me`
+  handler (204, Bearer extractor; `deleted_at` added to the
+  profile response so `GET /v1/me` shows the grace) + login
+  cancels a pending deletion in the success tx (with the new
+  session; a concurrent cancel first is not an error) + gc
+  purge (`purge_expired_users`, dry-run default, one tx per
+  user: `account.purged` audit + hard delete; `detag-gc
+  --purge-users` mode, DB only — S3 objects become orphans
+  for the next sweep). Migration
+  `20261113062352_purge_cascade_triggers` — the purge test
+  PROVED a cascade-vs-trigger conflict (purge_one failed
+  with "table audit_logs is append-only"): (1) the
+  `audit_logs.actor_user_id` FK is dropped (the actor is a
+  historical fact — the FK's `ON DELETE SET NULL` is an
+  UPDATE the trigger forbids, so no user with audit rows
+  could ever be purged; the actor id is now retained intact,
+  a stronger trail than NULL); (2) the `job_events` /
+  `attestations` triggers are UPDATE-only (history is never
+  rewritten; DELETE is the purge's erasure path); (3) the
+  `audit_logs` trigger keeps its DELETE branch (the audit
+  trail is never deleted). Down migration restores the FK
+  `NOT VALID` (a plain re-add would fail validation against
+  purged users' retained actor ids) + the DELETE branches.
+  Route table 65 routes, 10 live / 55 stubs; OpenAPI gains
+  the DELETE path. Tests: 5 new in `tests/deletion.rs` + 3 gc
+  purge tests (cascade incl. job_events + attestations +
+  upload; grace/active kept; dry-run deletes nothing) + 1
+  migration test (`migration_purge_cascade_triggers.rs` —
+  FK gone, trigger defs, UPDATE-fails/DELETE contract,
+  user-delete cascade with the audit row surviving with its
+  actor intact, revert + re-apply). Two test bugs found by
+  running: `subscriptions.provider` + `idempotency_keys.endpoint`
+  are NOT NULL (seed fixed). Lessons: (1) `just sqlx-prepare`
+  does not compile `#[cfg(test)]` code — macro queries in
+  tests have no offline data, so test SQL uses the literal
+  function form; (2) sqlx 0.9 rejects dynamically built SQL
+  (`SqlSafeStr`) — the gc test's count helper uses explicit
+  per-table literal queries; (3) the 004 migration test pins
+  its migration set and its old trigger contract by design —
+  the new contract gets its own test file, not an edit of the
+  004 assertions (a header note points at it). Docs: api-spec
+  deletion paragraph + route row, data-model cascade /
+  retention + audit actor + trigger notes, security-testing
+  deletion line, threat model T19 (deletion + erasure —
+  LIVE), runbook gc purge mode. `just verify` green 507
+  passed, 0 failed, attempt 1 (no flakes).
 
 ## Tickets partially done
 
@@ -575,7 +628,9 @@ GitHub pushes).
   integration) → **486 passed, 0 failed** (P1-005; +27: 16
   profile integration + 5 profile-service unit + 6 validator
   display-name unit) → **498 passed, 0 failed** (P1-006; +12
-  email-change integration). Python script tests:
+  email-change integration) → **507 passed, 0 failed**
+  (P1-007; +9: 5 api deletion + 3 gc purge + 1 migration).
+  Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
   all green. `just bench` green (17 benches, 2m54s). `just coverage`
@@ -616,7 +671,8 @@ GitHub pushes).
   `pg_ctlcluster 16 main start`, recreate `pf` role/db via
   `sudo -u postgres psql` (the fresh cluster's `postgres`
   superuser takes peer auth only — password auth fails),
-  `cargo sqlx migrate run` on the fresh `pf` DB).
+  `cargo sqlx migrate run` on the fresh `pf` DB),
+  P1-007: 1 (no flakes).
   Every red run was a known flake, a lint fix, or a
   test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
@@ -636,11 +692,11 @@ GitHub pushes).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-007 — Account deletion.
-2. P1-008 — Admin suspend/restore.
-3. P1-009 — Admin user search.
-4. P1-010 — (next in the phase file after P1-009).
-5. P1-011 — (next in the phase file after P1-010).
+1. P1-008 — Admin suspend/restore.
+2. P1-009 — Admin user search.
+3. P1-010 — Impersonation.
+4. P1-011 — Impersonation audit tests.
+5. P1-012 — User lifecycle docs.
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never

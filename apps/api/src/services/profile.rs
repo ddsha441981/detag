@@ -70,6 +70,11 @@ pub struct ProfileResponse {
     pub role: String,
     /// The status (`active` / `suspended` / `deletion_pending`).
     pub status: String,
+    /// When the deletion was requested (set only during the
+    /// 30-day deletion grace, P1-007 — the account is purged
+    /// 30 days after this timestamp unless a login cancels it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted_at: Option<DateTime<Utc>>,
     /// When the account was created.
     pub created_at: DateTime<Utc>,
     /// The current plan (the live subscription's plan, else
@@ -376,6 +381,7 @@ fn profile_response(
         pending_email: user.pending_email.clone(),
         role: user.role.clone(),
         status: user.status.clone(),
+        deleted_at: user.deleted_at,
         created_at: user.created_at,
         plan: PlanResponse {
             code: plan.code.clone(),

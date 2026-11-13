@@ -1,6 +1,7 @@
-//! Profile routes (P1-005): GET /v1/me + PATCH /v1/me.
+//! Profile routes (P1-005): GET /v1/me + PATCH /v1/me; DELETE
+//! /v1/me since P1-007.
 //!
-//! Both take [`AuthContext`]: the extractor verifies the Bearer
+//! All take [`AuthContext`]: the extractor verifies the Bearer
 //! JWT and rejects unverified callers with 401 before the handler
 //! body runs, so `auth.user` is always `Some` here (a missing
 //! user is a 500 — it means the extractor's invariant broke).
@@ -14,13 +15,15 @@ use super::extractors::{RequestId, ValidatedJson};
 use crate::{
     auth::AuthContext,
     problem::ProblemResponse,
-    services::profile::{
-        get_profile, patch_profile, PatchProfileRequest, ProfileError, ProfileResponse,
+    services::{
+        deletion::{request_account_deletion, DeletionError},
+        profile::{get_profile, patch_profile, PatchProfileRequest, ProfileError, ProfileResponse},
     },
     AppState,
 };
 use axum::{
     extract::{Extension, State},
+    http::StatusCode,
     response::{IntoResponse, Json, Response},
 };
 use detag_core::error::{AppError, Problem, Profile};
@@ -105,6 +108,39 @@ pub async fn patch_me(
         }
         Err(ProfileError::Internal) => {
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
+/// DELETE /v1/me (P1-007): request account deletion. The
+/// account enters the 30-day grace (`status =
+/// 'deletion_pending'`, `deleted_at` = now); the nightly purge
+/// hard-deletes it 30 days later unless a login cancels it.
+/// Idempotent: a second DELETE while already pending is a
+/// no-op 204 (no refreshed grace, no second mail). Success is
+/// 204 (no body — the client re-reads GET /v1/me, which shows
+/// `status` + `deleted_at`).
+#[utoipa::path(
+    delete,
+    path = "/v1/me",
+    responses(
+        (status = 204, description = "Deletion requested; 30-day grace started (or already pending)"),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem)
+    ),
+    tag = "auth",
+    security(("bearer_auth" = []))
+)]
+pub async fn delete_me(State(state): State<AppState>, auth: AuthContext) -> Response {
+    let Some(user) = auth.user else {
+        // The extractor guarantees a user for a verified context.
+        return ProblemResponse(AppError::Internal.to_problem(Profile::Production, None, None))
+            .into_response();
+    };
+    match request_account_deletion(&state, &user).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(DeletionError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, None, None))
                 .into_response()
         }
     }

@@ -195,3 +195,107 @@ pub async fn swap_email(
         other => RepoError::from_sqlx(other),
     })
 }
+
+/// The deletion grace (P1-007): 30 days from the deletion
+/// request until the nightly purge hard-deletes the account.
+/// A product-policy constant, not config — no doc specified a
+/// different value, and the purge, the api-spec, and the
+/// data-model doc all cite this one number.
+pub const DELETION_GRACE_DAYS: i64 = 30;
+
+/// Request account deletion (P1-007): the account enters the
+/// grace (`status = 'deletion_pending'`, `deleted_at = now()`).
+/// The caller owns idempotency: a second request for an
+/// already-pending account is a no-op at the service layer
+/// (this function would refresh `deleted_at` — the grace runs
+/// from the FIRST request, never restarted by re-requesting).
+pub async fn request_deletion(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> Result<User, RepoError> {
+    sqlx::query_as!(
+        User,
+        "UPDATE users SET
+             status = 'deletion_pending',
+             deleted_at = now(),
+             updated_at = now()
+         WHERE id = $1
+         RETURNING id, email, password_hash, email_verified_at, role, status,
+             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
+        id
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|err| match err {
+        sqlx::Error::RowNotFound => RepoError::NotFound,
+        other => RepoError::from_sqlx(other),
+    })
+}
+
+/// Cancel a pending deletion (P1-007 — the login hook): the
+/// account is active again, `deleted_at` cleared. Returns
+/// `None` when the account is not pending (already active, or
+/// a concurrent login cancelled it first) — that is not an
+/// error, it is the goal state already holding.
+pub async fn cancel_deletion(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> Result<Option<User>, RepoError> {
+    sqlx::query_as!(
+        User,
+        "UPDATE users SET
+             status = 'active',
+             deleted_at = NULL,
+             updated_at = now()
+         WHERE id = $1 AND status = 'deletion_pending'
+         RETURNING id, email, password_hash, email_verified_at, role, status,
+             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
+        id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
+/// The users the nightly purge may hard-delete (P1-007):
+/// `deletion_pending` with `deleted_at` before `cutoff`
+/// (usually now − 30 days). Oldest first, so a bounded purge
+/// run takes the longest-waiting accounts first.
+pub async fn purgeable(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    cutoff: DateTime<Utc>,
+) -> Result<Vec<Uuid>, RepoError> {
+    sqlx::query_scalar!(
+        "SELECT id FROM users
+         WHERE status = 'deletion_pending' AND deleted_at < $1
+         ORDER BY deleted_at ASC",
+        cutoff,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
+/// Hard-delete one user (P1-007, the purge's last step). The
+/// database cascades do the work: sessions, jobs (+ artifacts,
+/// job events, quality reports via jobs), uploads,
+/// subscriptions, usage counters, idempotency keys, and
+/// verification tokens are `ON DELETE CASCADE`; audit rows
+/// survive with `actor_user_id` intact (no FK on the actor —
+/// migration 20261113062352 dropped it: the actor is a
+/// historical fact, and the FK's ON DELETE SET NULL was an
+/// UPDATE the append-only trigger forbids, so the purge could
+/// never delete a user with audit rows); outbox rows survive
+/// (they are addressed by hash, not by user). Returns `false`
+/// when the user was already gone (a concurrent purge took it
+/// first).
+pub async fn delete_user(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> Result<bool, RepoError> {
+    let result = sqlx::query!("DELETE FROM users WHERE id = $1", id)
+        .execute(pool)
+        .await
+        .map_err(RepoError::from_sqlx)?;
+    Ok(result.rows_affected() > 0)
+}

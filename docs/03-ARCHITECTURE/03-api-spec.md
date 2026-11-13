@@ -253,6 +253,51 @@ The outbox accumulates one mail per mint — a superseded
 mail stays queued with a dead token (its link 401s), the
 same as the resend flow; only the token row is the live
 credential.
+
+Account deletion (P1-007, FR-A-01): `DELETE /v1/me` requests
+deletion — it does NOT delete the account. The account enters
+the 30-day grace (`status = 'deletion_pending'`, `deleted_at`
+= now; `GET /v1/me` shows both, so the client can display the
+grace), and the nightly purge hard-deletes it 30 days later
+unless a login cancels it. The request + the
+`account.delete_requested` audit + the confirmation mail
+(template `account-deletion`, payload `{user_id}`, to the
+address on record) are one transaction. A second DELETE while
+already pending is a no-op 204 — the grace runs from the FIRST
+request (no refreshed `deleted_at`, no second audit row, no
+second mail). A login during the grace cancels the deletion
+(`status` back to `active`, `deleted_at` cleared,
+`account.delete_cancelled` audited) in the same transaction as
+the new session — a second concurrent login that finds the
+account already active is not an error. The purge itself is
+the gc binary (`detag-gc --purge-users`, dry-run by default):
+one transaction per user (the `account.purged` audit row +
+the hard delete), the run continuing past per-user failures.
+The cascade is the data-model doc's: sessions, jobs (+
+artifacts, job events, quality reports via jobs), uploads,
+subscriptions, usage counters, idempotency keys and
+verification tokens are `ON DELETE CASCADE`; audit rows
+survive with `actor_user_id` intact (no FK on the actor —
+migration 20261113062352 dropped it: the actor is a
+historical fact, and the FK's `ON DELETE SET NULL` was an
+UPDATE the append-only trigger forbids, so the purge could
+never delete a user with audit rows); outbox rows survive
+(they are addressed by hash — a queued mail to a purged
+account is undeliverable, and its link 401s because the
+token row is gone with the user). The purge does NOT delete
+S3 objects itself: the row delete makes them orphans and the
+next gc sweep deletes them (rows first, objects after, via
+the sweep, is the safe order). The cascade needed two more
+corrections in the same migration: the `job_events` /
+`attestations` append-only triggers are UPDATE-only now
+(history can never be rewritten; DELETE is the purge's
+erasure path — keeping those rows would retain the user's
+data after erasure, and no app code deletes them directly),
+while the `audit_logs` trigger keeps its DELETE branch (the
+audit trail is never deleted). The purge test proved the
+conflict first (purge_one failed with "table audit_logs is
+append-only") — the migration is the fix, with its own live
+test (`migration_purge_cascade_triggers.rs`).
 | POST | `/v1/auth/login` | none | email, password → access_token, expires_in (+ sets refresh cookie) |
 | POST | `/v1/auth/refresh` | cookie | → new access token, rotated refresh (reuse ⇒ revoke all sessions PF-1007) |
 | POST | `/v1/auth/logout` | any | → 204, revoke presented session |
@@ -260,7 +305,7 @@ credential.
 | POST | `/v1/auth/reset-password` | none | token, new_password → 204, revoke all sessions |
 | GET | `/v1/me` | user | profile + plan + quota snapshot |
 | PATCH | `/v1/me` | user | email change / profile fields (email change re-verifies) |
-| DELETE | `/v1/me` | user | schedule deletion (30 d grace) |
+| DELETE | `/v1/me` | user | request deletion → 204 (30 d grace, purge deletes) |
 | GET | `/v1/me/sessions` | user | list sessions (device, created, last_seen) |
 | DELETE | `/v1/me/sessions/{id}` | user | revoke one |
 | POST | `/v1/me/export` | user | request data export (async, emailed link) |

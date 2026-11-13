@@ -49,7 +49,9 @@
 //! job-create guard). Verification gates job creation, not
 //! authentication. Session rotation, reuse revocation, and
 //! logout are P1-014 / P1-017; this ticket creates the session
-//! row and the cookie, nothing more.
+//! row and the cookie, nothing more. A login DOES cancel a
+//! pending account deletion (P1-007): the grace ends at the
+//! login, in the same transaction as the new session.
 
 use chrono::{Duration, Utc};
 use detag_core::{
@@ -77,6 +79,7 @@ use thiserror::Error;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
+use super::deletion::cancel_deletion_in_tx;
 use crate::rate_limit::RateLimitScope;
 use crate::AppState;
 
@@ -374,6 +377,16 @@ pub async fn login_user(
                 .map_err(LoginTxError::Db)?;
             if let Some(ip) = &ip_hash {
                 login_attempts::reset(&mut *conn, LockScope::Ip, ip)
+                    .await
+                    .map_err(LoginTxError::Db)?;
+            }
+            // A login during the deletion grace cancels the
+            // deletion (P1-007): the account is active again
+            // from this login on. The cancel commits with the
+            // new session; a concurrent login that cancelled
+            // first is not an error (already active).
+            if user.status == "deletion_pending" {
+                cancel_deletion_in_tx(&mut *conn, &user)
                     .await
                     .map_err(LoginTxError::Db)?;
             }

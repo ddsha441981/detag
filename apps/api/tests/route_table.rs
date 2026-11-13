@@ -23,9 +23,9 @@
 //!    answer with their real behavior for the empty-body probe
 //!    — 422 PF-2002, since `ValidatedJson` rejects the empty
 //!    body — and the probe asserts that instead of 501. P1-005
-//!    `GET` + `PATCH /v1/me` answer 401 PF-1001 for the probe
-//!    (no credential — the auth extractor rejects before the
-//!    handler runs).
+//!    `GET` + `PATCH /v1/me` and P1-007 `DELETE /v1/me` answer
+//!    401 PF-1001 for the probe (no credential — the auth
+//!    extractor rejects before the handler runs).
 //!
 //! The probes send a fixed `x-request-id` and assert the 501
 //! problem body echoes it — that proves the whole chain at
@@ -162,12 +162,13 @@ async fn every_table_entry_resolves_to_the_stub() {
             assert_eq!(json["request_id"], PROBE_ID, "POST {path}: {json}");
             continue;
         }
-        // P1-005 GET + PATCH /v1/me: real handlers behind the
-        // auth extractor — the probe sends no credential, so the
-        // extractor rejects with 401 PF-1001 (not 501) and echoes
-        // the probe id (the route exists; each handler's own test
-        // covers its success paths).
-        if (*method == "GET" || *method == "PATCH") && *path == "/v1/me" {
+        // P1-005 GET + PATCH /v1/me and P1-007 DELETE /v1/me:
+        // real handlers behind the auth extractor — the probe
+        // sends no credential, so the extractor rejects with
+        // 401 PF-1001 (not 501) and echoes the probe id (the
+        // route exists; each handler's own test covers its
+        // success paths).
+        if (*method == "GET" || *method == "PATCH" || *method == "DELETE") && *path == "/v1/me" {
             let req = Request::builder()
                 .method(Method::from_bytes(method.as_bytes()).expect("method parses"))
                 .uri(*path)

@@ -1503,7 +1503,11 @@ dependencies = [
  "chrono",
  "detag-core",
  "detag-storage",
+ "detag-testkit",
+ "serde_json",
+ "sqlx",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

@@ -27,11 +27,11 @@ feature_flags   idempotency_keys   email_outbox     plans (catalog)
 **usage_counters** — user_id, day (date), images_used, video_seconds_used, unique(user_id, day); Redis mirrors for hot path.
 **uploads** — id, user_id, kind, filename, bytes, sha256, phash, mime, width, height, duration_s?, metadata jsonb (exif summary, icc present, container atoms), status (pending_parts|ready|aborted), storage_key, parts int.
 **jobs** — id, user_id, upload_id, kind (image|video|batch), mode, params jsonb, status, stage, progress real, priority/lane, attempts int, idempotency_key unique, error jsonb, attestation_id, webhook_url?, started_at, finished_at.
-**job_events** — id, job_id, at, type (stage|progress|note|state_change), payload jsonb (append-only).
+**job_events** — id, job_id, at, type (stage|progress|note|state_change), payload jsonb (append-only: UPDATE-only trigger since P1-007 — DELETE is the purge cascade's erasure path).
 **artifacts** — id, job_id, type (output|mask|preview_before|preview_after|report|batch_zip), storage_key, bytes, sha256, expires_at.
 **quality_reports** — id, job_id, engine_version, models jsonb, metrics jsonb (ssim/psnr/vmaf…), encode jsonb, regions jsonb, gate (pass|fail), retried bool, seed text.
-**attestations** — id, user_id, upload_id, text_version, ip_hash, client (web|api_key), created_at (immutable).
-**audit_logs** — id, actor_user_id?, actor_client, action, target_type, target_id, before jsonb, after jsonb, reason, created_at. Append-only: no UPDATE/DELETE grants.
+**attestations** — id, user_id, upload_id, text_version, ip_hash, client (web|api_key), created_at (immutable: UPDATE-only trigger since P1-007 — DELETE is the purge cascade's erasure path).
+**audit_logs** — id, actor_user_id?, actor_client, action, target_type, target_id, before jsonb, after jsonb, reason, created_at. Append-only: no UPDATE/DELETE grants (the trigger keeps its DELETE branch — the audit trail is never deleted). `actor_user_id` is a plain UUID with NO foreign key (migration 20261113062352, P1-007): the actor is a historical fact, not a live reference — the FK's `ON DELETE SET NULL` was an UPDATE the trigger forbids, so the purge could never delete a user with audit rows; without it the purge leaves the actor id intact, a stronger trail than NULL.
 **webhook_endpoints** — id, user_id, url, secret_hash, events text[], disabled_at.
 **webhook_deliveries** — id, endpoint_id, event_id, event_type, payload jsonb, attempts int, last_status, last_response_code, next_retry_at.
 **abuse_reports** — id, reporter_contact?, job_id?, reason, status (open|reviewing|resolved), resolution, notes.
@@ -44,6 +44,7 @@ feature_flags   idempotency_keys   email_outbox     plans (catalog)
 
 - artifacts: `expires_at` = now + plan TTL → hard delete object + row (daily worker).
 - uploads: pending_parts > 24 h → abort + delete.
+- users (P1-007): `status = 'deletion_pending'` and `deleted_at` older than 30 d → hard delete via `detag-gc --purge-users` (nightly, dry-run by default). The cascade: sessions, jobs (+ artifacts, job events, quality reports via jobs), uploads, subscriptions, usage counters, idempotency keys, verification tokens and attestations are `ON DELETE CASCADE`; audit rows survive with `actor_user_id` intact (no FK); outbox rows survive (addressed by hash). S3 objects are NOT deleted by the purge — the row delete makes them orphans and the next gc sweep deletes them.
 - webhook_deliveries: 30 d. email_outbox sent rows: 30 d. audit_logs: 365 d. app logs: 90 d (log shipper/rotate).
 - usage_counters: keep 400 d.
 

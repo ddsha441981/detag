@@ -8,17 +8,17 @@
 //! committed spec drifts from the code — regenerate, never edit
 //! the JSON by hand.
 //!
-//! Coverage today is the nine real handlers (`/healthz`,
+//! Coverage today is the ten real handlers (`/healthz`,
 //! `/readyz`, `/v1/auth/register`, `/v1/auth/verify-email`,
 //! `/v1/auth/resend-verification`, `/v1/auth/login`, `GET /v1/me`,
-//! `PATCH /v1/me`, `POST /v1/auth/confirm-email-change`) plus
-//! the shared error schema (`Problem`). The 55
-//! stub routes are NOT
+//! `PATCH /v1/me`, `POST /v1/auth/confirm-email-change`,
+//! `DELETE /v1/me`) plus the shared error schema (`Problem`).
+//! The 54 stub routes are NOT
 //! in the spec yet: each endpoint ticket adds its
 //! `#[utoipa::path]` annotation and its path to this
 //! `#[openapi]` list when its handler becomes real (see the
 //! repo-layout doc: "New endpoint: routes/ + service + repo +
-//! OpenAPI derive + integration test"). A spec that listed 55
+//! OpenAPI derive + integration test"). A spec that listed 54
 //! stubs would document endpoints that do not exist.
 //!
 //! `/openapi.json` is public in every environment — the console
@@ -41,7 +41,7 @@ use crate::routes::auth::{
     __path_verify_email,
 };
 use crate::routes::meta::{__path_healthz, __path_readyz};
-use crate::routes::profile::{__path_get_me, __path_patch_me};
+use crate::routes::profile::{__path_delete_me, __path_get_me, __path_patch_me};
 use crate::services::login::{LoginRequest, LoginResponse};
 use crate::services::profile::{PatchProfileRequest, ProfileResponse};
 use crate::services::register::{RegisterRequest, UserResponse};
@@ -59,7 +59,7 @@ use crate::AppState;
         version = "1.0.0",
         description = "Detag — watermark removal for images and videos you own. All errors are RFC 7807 problem+json with a stable PF-code (see the Problem schema)."
     ),
-    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, get_me, patch_me),
+    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, get_me, patch_me, delete_me),
     components(schemas(
         Problem,
         Readiness,
