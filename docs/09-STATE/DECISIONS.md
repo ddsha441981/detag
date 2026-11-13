@@ -55,6 +55,11 @@
 **Decision:** Garage v2.5.0 (Deuxfleurs, Rust, AGPL-3.0, single static binary, dxflrs/garage on Docker Hub, pinned tag). Single node, replication_factor 1, S3 API on :9000 (endpoint unchanged from the MinIO days), s3_region us-east-1 (must match the api's signing region — Garage rejects a mismatched scope). Layout + deterministic key import (PF_S3_* from env) + bucket + RWO allow run in the garage entrypoint; the 72 h lifecycle ceiling is applied by a separate bootstrap-lifecycle service (amazon/aws-cli, S3 PutBucketLifecycleConfiguration). Buckets are private by default (Garage has no ACLs/policies — the old `mc anonymous set none` step has no equivalent and is not needed). Verified end-to-end locally with the real binary + boto3 before landing (all S3 ops + lifecycle + presigned URLs 200).
 **Consequences:** The dev/smoke S3 backend is Garage, not MinIO. The local-dev compose.minio.yml file and the testcontainers live legs still reference MinIO (TESTKIT-MINIO-001, follow-up). If Garage ever becomes unsuitable, the swap point is ops/compose.base.yml + ops/garage.toml + the entrypoint — the api/worker only see a standard S3 endpoint.
 
+## ADR-0020 — Garage RPC secret must be 32 bytes of random hex (2026-11-13, Phase 1)
+**Context:** CI #6/#7 smoke died with the garage container stuck unhealthy. Root cause (CI-FAIL-008): `.env.example` held `GARAGE_RPC_SECRET=<redacted>` — literally that string — and Garage refuses to start with anything but 32 bytes of random hex (`Error: Invalid RPC secret key: expected 32 bytes of random hex`, proven with the real v2.5.0 binary).
+**Decision:** The dev placeholders in `.env.example` are real 32-byte-hex values (dev-only, same standing as minioadmin; generate fresh ones for prod with `openssl rand -hex 32`). The admin token takes the same format. smoke.sh validates the RPC-secret format before `up` so a future bad placeholder fails fast with a clear message instead of a 120 s timeout, and prints the garage logs on failure.
+**Consequences:** Any future change to the GARAGE_* placeholders must keep the 64-hex-char format, or the smoke job (locally and in CI) fails at the guard. The guard does not validate the admin token (Garage accepts any non-empty bearer token there); both are hex here for uniformity.
+
 ## owner-input-needed queue
 
 | # | Date | Question | Temporary default in use | Owner answer |

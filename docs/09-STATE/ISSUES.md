@@ -47,6 +47,13 @@
 - Fix: install curl + ca-certificates in a RUN before `cargo chef cook` in both Dockerfiles; the later RUN keeps binutils only.
 - Status: fixed (0ae112f) — waits on CI #6.
 
+### CI-FAIL-008 [bug] CI #6/#7 smoke fails — Garage server never starts, container stays unhealthy
+- Date: 2026-11-13 · Ticket: P0-090 · Severity: S1 (CI red on main)
+- Symptom: CI runs #6 and #7, smoke step: all images build, postgres/redis/mailhog/web go healthy, but `detag-garage` stays `Up (unhealthy)` and compose aborts at ~55 s with `dependency failed to start: container detag-garage is unhealthy`; `smoke: FAILED — compose stack did not go healthy in 120s`. The pasted CI #6 log was truncated mid-build and showed no error; the CI #7 logs zip showed the same symptom with no garage logs (smoke.sh printed only api/worker logs).
+- Cause: `.env.example` carried `GARAGE_RPC_SECRET=<redacted>` and `GARAGE_ADMIN_TOKEN=<redacted>` — literally the string `<redacted>`, written that way in the CI-FAIL-004 fix (ce00f0c). Garage requires the RPC secret to be 32 bytes of random hex and refuses to start otherwise. Proven locally with the real v2.5.0 binary: `Error: Invalid RPC secret key: expected 32 bytes of random hex`. So in CI the bg server died instantly, the entrypoint's `garage status` loop ran its 60 s, the healthcheck (`garage health -q`) failed 10× in that window, and compose marked the container unhealthy at ~55 s. The healthcheck command itself is correct — proven locally: bare `garage health -q` exits 0 on a healthy cluster (default config path is /etc/garage.toml, which the compose mount provides).
+- Fix: real 32-byte-hex dev values for both GARAGE_* vars in .env.example (dev-only placeholders, same as minioadmin — generate fresh ones for prod); smoke.sh now fails fast with a clear message when GARAGE_RPC_SECRET is not 64 hex chars, and prints the garage logs on failure so the next smoke failure carries its own diagnosis.
+- Status: fixed (this commit) — waits on CI #8.
+
 ### TESTKIT-MINIO-001 [follow-up] testcontainers live legs + local-dev compose.minio.yml still reference dead MinIO images
 - Date: 2026-11-13 · Severity: S3 (not CI-blocking)
 - Cause: CI never sets PF_TEST_CONTAINERS/PF_TEST_LIVE_MINIO, so the live legs skip in CI; compose-minio-check only renders. But anyone running the live legs locally (or `docker compose -f ops/compose.minio.yml up`) hits the same dead MinIO pulls as CI-FAIL-004.
