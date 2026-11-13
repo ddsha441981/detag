@@ -112,6 +112,10 @@ services:
       context: .
       dockerfile: Dockerfile.garage
     image: detag-garage:latest
+    # CI #6 smoke log: compose tried to pull this local-only image
+    # first ("pull access denied") before falling back to the build.
+    # Same as api/worker — always build, never pull.
+    pull_policy: build
     container_name: detag-garage
     networks:
       - internal
