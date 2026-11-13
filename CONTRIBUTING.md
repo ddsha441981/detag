@@ -113,9 +113,12 @@ locally and CI runs it on every push/PR. The rules:
   `feat(auth): P1-014 refresh token rotation with reuse detection`
   Ticket id + FR/NFR trace go in the commit body.
 - Subject format (enforced by CI, `.github/workflows/commits.yml`):
-  `<type>(<scope>): P<phase>-<num> <description>`, subject ≤ 100 chars,
+  `<type>(<scope>): <id> <description>`, subject ≤ 100 chars,
   and the message must reference at least one requirement id
-  (`FR-<area>-<n>` or `NFR-<n>`).
+  (`FR-<area>-<n>` or `NFR-<n>`). The `<id>` is a ticket id
+  (`P<phase>-<num>`); work with no P-ticket (a CI-failure fix, a
+  schema-docs drift fix) uses its issue id instead — `CI-FAIL-<n>`
+  or `SCHEMA-DOC-<n>` — in the same position (COMMITS-LINT-001).
 - Types: `feat`, `fix`, `chore`, `docs`, `test`, `refactor`, `perf`,
   `ci`, `build`, `revert`.
 - Scope vocabulary — use the area the change belongs to:

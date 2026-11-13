@@ -29,7 +29,7 @@
 | Coverage (core/engine/api) | 96.8% / 99.1% / 92.6% (worker 83.8%) — all above NFR-50 floors (85/80/75/70); report-only until Phase 2 (`just coverage-gate` exists, OFF) — re-measured 2026-11-13 during P1-001 (`just coverage` green) |
 | Golden suite | — |
 | Bench snapshot (image 4K p95 / video factor) | full-job 4K mean 545 ms (scaffold chain — see Bench history; p95 not tracked yet, criterion mean/median in `crates/engine/benches/baselines/`) / video factor n/a (input-prep only; real factor needs the Phase 2 video pipeline) |
-| Open issues by severity | S1: 0 · S2: 1 (COMMITS-LINT-001 — commit linter rejects CI-FAIL-xxx subjects; fix next, before P1-027) · S3: 0 · S4: 3 (FLAKY-001 shutdown drain, FLAKY-002 pubsub slow-consumer, FLAKY-003 readyz storage-down port race — new in P0-093) |
+| Open issues by severity | S1: 0 · S2: 1 (DISK-QUOTA-001 — `target/` regrows toward the quota; `cargo clean` is the mitigation) · S3: 0 · S4: 3 (FLAKY-001 shutdown drain, FLAKY-002 pubsub slow-consumer, FLAKY-003 readyz storage-down port race — new in P0-093) |
 | owner-input-needed items | 0 |
 
 ## Notes
@@ -37,14 +37,15 @@
 - P1-006 verification (2026-11-13, 10th coordinator): the earlier "P1-006 ticked but no separate commit" note was a MISREAD — `f41354b feat(auth): P1-006 email change flow (token, alert, swap on verify)` exists as its own commit (26 files: verification service, email_change tests, `email_change_token_purpose` migration), directly followed by P1-007's own commit `a944c2b`. No history rewrite needed or done.
 - 10th VM reset (~19:35 IST 2026-11-13): services restored per ASSUMPTION-010 (see its update in ISSUES.md — incl. the `.env` password-extraction trap); `just`/`cargo` need `~/.local/bin` + `~/.cargo/bin` on PATH in every exec call.
 - 11th VM reset (~21:31 IST 2026-11-13): the 10th coordinator was runtime-interrupted mid-P1-025 with the whole ticket uncommitted; the 11th coordinator resumed, verified the tree, restored services the same way (binaries + data dir survived, `pf` role/db recreated, all migrations re-applied incl. the new `password_reset_token_purpose` one), and finished + committed P1-025 on main. Branch rule from P1-026: work on branch `phase-1`, merge each ticket into main locally (no rebase, no push).
+- P1-026 done 2026-11-13 (11th coordinator): password policy + pwned check, `just verify` green 654 passed; verify was blocked mid-ticket by DISK-QUOTA-001 (linker SIGBUS = disk quota; `cargo clean` freed 361.7 GiB). COMMITS-LINT-001 fixed right after (linter accepts CI-FAIL-xxx/SCHEMA-DOC-xxx ids; CI fixes must use scope `ops`, not `ci`). Main has since moved via the parent's CI fixes (b047d40 config table, dfe50a4 merge incl. CI-FAIL-007 ffmpeg + CI-FAIL-008 Garage secret); the P1-026 merge (a485ace) resolved one conflict (DECISIONS.md ADR-0020 vs ADR-0021 — both kept, mine renumbered).
 
 ## Next-up queue (top 5)
 
-1. COMMITS-LINT-001 — commit-linter fix (S2, before P1-027)
-2. P1-027 — Argon2 params config
-3. P1-028 — Mailer abstraction
-4. P1-029 — Email templates v1
-5. P1-030 — (next in E1.3/E1.4 order — see phase file)
+1. P1-027 — Argon2 params config
+2. P1-028 — Mailer abstraction
+3. P1-029 — Email templates v1
+4. P1-030 — (next in E1.3/E1.4 order — see phase file)
+5. CI #8 verdict (parent's thread — verify/smoke on dfe50a4; fixtures-check + smoke were red in CI #7, fixed by CI-FAIL-007/008)
 
 ## Bench history (append-only)
 

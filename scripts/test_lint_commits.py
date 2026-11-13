@@ -14,6 +14,17 @@ VALID = (
 )
 VALID_NFR_ONLY = "chore(repo): P0-005 justfile task runner (NFR-52)\n"
 VALID_FR_AREA = "feat(engine): P2-034 tiled LaMa inference with overlap blend (FR-D-05)\n"
+# Issue ids in the ticket position (COMMITS-LINT-001): a CI-fix or
+# schema-docs commit has no P-ticket, so it carries its issue id.
+# The FR/NFR trace is still required — the id form is not a free pass.
+VALID_CI_FAIL = (
+    "fix(ops): CI-FAIL-004 replace dead MinIO with Garage S3\n"
+    "\nMinIO's distribution is gone on every channel (NFR-52).\n"
+)
+VALID_SCHEMA_DOC = (
+    "fix(docs): SCHEMA-DOC-001 regenerate schema docs after the migration\n"
+    "\nThe drift check compares generated docs (NFR-52).\n"
+)
 
 
 class TestValidMessages(unittest.TestCase):
@@ -25,6 +36,30 @@ class TestValidMessages(unittest.TestCase):
 
     def test_fr_area_trace(self):
         self.assertEqual(check_message(VALID_FR_AREA), [])
+
+    def test_ci_fail_id_in_ticket_position(self):
+        self.assertEqual(check_message(VALID_CI_FAIL), [])
+
+    def test_schema_doc_id_in_ticket_position(self):
+        self.assertEqual(check_message(VALID_SCHEMA_DOC), [])
+
+    def test_ci_fail_id_still_needs_requirement_trace(self):
+        errors = check_message(
+            "fix(ops): CI-FAIL-004 replace dead MinIO with Garage S3\n"
+        )
+        self.assertTrue(any("requirement id" in e for e in errors))
+
+    def test_ci_fail_id_needs_a_number(self):
+        errors = check_message(
+            "fix(ops): CI-FAIL replace dead MinIO with Garage S3 (NFR-52)\n"
+        )
+        self.assertTrue(any("must match" in e for e in errors))
+
+    def test_wrong_issue_prefix_rejected(self):
+        errors = check_message(
+            "fix(ops): FAIL-004 replace dead MinIO with Garage S3 (NFR-52)\n"
+        )
+        self.assertTrue(any("must match" in e for e in errors))
 
 
 class TestInvalidMessages(unittest.TestCase):
