@@ -47,6 +47,8 @@ async fn login_app_with_limits(
     ip_refill: u64,
     account_burst: u64,
     account_refill: u64,
+    login_ip_burst: u64,
+    login_ip_refill: u64,
 ) -> TestApp {
     let fixtures = TestFixtures::from_env().await;
     let mut settings = fixtures.settings();
@@ -56,6 +58,8 @@ async fn login_app_with_limits(
     settings.rate_limit_ip_refill_per_min = ip_refill;
     settings.rate_limit_login_account_burst = account_burst;
     settings.rate_limit_login_account_refill_per_min = account_refill;
+    settings.rate_limit_login_ip_burst = login_ip_burst;
+    settings.rate_limit_login_ip_refill_per_min = login_ip_refill;
     TestApp::spawn_with_fixtures_and_settings(fixtures, settings).await
 }
 
@@ -336,7 +340,7 @@ async fn login_account_rate_limit_trips_before_password_check() {
     // Account bucket: 3 burst, 0 refill — three attempts, then
     // nothing until the key expires. The IP bucket stays at the
     // default (120), so only the account bucket can trip here.
-    let app = login_app_with_limits(120, 120, 3, 0).await;
+    let app = login_app_with_limits(120, 120, 3, 0, 20, 10).await;
     let email = unique_email();
     let user_id = register_user(&app, &email).await;
 
@@ -356,15 +360,97 @@ async fn login_account_rate_limit_trips_before_password_check() {
         res.headers.get("retry-after").is_some(),
         "429 carries Retry-After"
     );
-    assert!(
-        res.headers.get("x-ratelimit-limit").is_some(),
-        "429 carries the X-RateLimit trio"
+    let limit = res
+        .headers
+        .get("x-ratelimit-limit")
+        .and_then(|v| v.to_str().ok());
+    assert_eq!(
+        limit,
+        Some("3"),
+        "the Limit names the account bucket (burst 3) — the middleware must not overwrite a service denial's headers (P1-020)"
     );
     // And no session was created by the denied attempt.
     let rows = sessions::list_for_user(&app.state.pool, user_id)
         .await
         .unwrap();
     assert!(rows.is_empty(), "{rows:?}");
+}
+
+#[tokio::test]
+async fn login_ip_rate_limit_trips_across_accounts() {
+    // P1-020: the per-IP login bucket (3 burst / 0 refill
+    // here) bounds a credential-stuffing run from ONE IP
+    // against MANY accounts — each account is under its own
+    // account bucket (100 burst here, so it cannot trip), and
+    // the middleware IP bucket is 120, so only the login-IP
+    // bucket can deny. A per-run UUID XFF: a refill-0 bucket
+    // never refills, and its Redis key survives across runs
+    // (the P1-003 lesson — a fixed address would start the
+    // next run already drained).
+    let xff = Uuid::now_v7().to_string();
+    let app = login_app_with_limits(120, 120, 100, 60_000, 3, 0).await;
+    // Three different accounts, one wrong-password login
+    // each: each is 401 (the account bucket admits, the IP
+    // bucket admits), and no session is created. Three
+    // failures from one IP is below the lockout threshold
+    // (5), so no lock interferes.
+    for _ in 0..3 {
+        let email = unique_email();
+        register_user(&app, &email).await;
+        let res = app
+            .request(post_login_with_headers(
+                &email,
+                "wrong password here",
+                None,
+                Some(xff.as_str()),
+            ))
+            .await;
+        assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
+    }
+    // The fourth login — a FOURTH account, with the CORRECT
+    // password — is denied by the IP bucket before the
+    // password is ever checked.
+    let email = unique_email();
+    let user_id = register_user(&app, &email).await;
+    let res = app
+        .request(post_login_with_headers(
+            &email,
+            PASSWORD,
+            None,
+            Some(xff.as_str()),
+        ))
+        .await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.text());
+    let json = res.json();
+    assert_eq!(json["code"], "PF-3007", "{json}");
+    assert_eq!(json["request_id"], REQUEST_ID, "{json}");
+    assert!(
+        res.headers.get("retry-after").is_some(),
+        "429 carries Retry-After"
+    );
+    let limit = res
+        .headers
+        .get("x-ratelimit-limit")
+        .and_then(|v| v.to_str().ok());
+    assert_eq!(
+        limit,
+        Some("3"),
+        "the Limit names the login-IP bucket (burst 3), not the middleware IP bucket (120)"
+    );
+    let remaining = res
+        .headers
+        .get("x-ratelimit-remaining")
+        .and_then(|v| v.to_str().ok());
+    assert_eq!(remaining, Some("0"));
+    assert!(
+        res.headers.get("x-ratelimit-reset").is_some(),
+        "429 carries the X-RateLimit trio"
+    );
+    // And no session was created by the denied attempt.
+    let rows = sessions::list_for_user(&app.state.pool, user_id)
+        .await
+        .expect("sessions list");
+    assert!(rows.is_empty(), "denied login creates no session");
 }
 
 #[tokio::test]
@@ -381,7 +467,7 @@ async fn login_ip_rate_limit_trips() {
     // The account bucket stays at the default (10), so only the
     // IP bucket can trip here.
     let xff = format!("203.0.113.{}", Uuid::now_v7());
-    let app = login_app_with_limits(5, 0, 10, 1).await;
+    let app = login_app_with_limits(5, 0, 10, 1, 20, 10).await;
     let email = unique_email();
     register_user(&app, &email).await;
     // The register above did NOT send XFF (it used the shared

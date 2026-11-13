@@ -29,10 +29,11 @@ P0-106/107/108 (Phase 0 ticket work done, 105/108); updated
 ~17:03 IST 13 Nov after P1-019 (Phase 1, 19/111). Resumed
 from the 8th coordinator's interruption (~23:21 IST, P0-092 in
 progress with uncommitted work). Local HEAD at this update:
-`75a353c` (P1-019). No push (local-only by rule; parent handles
+`dbf4f4e` (P1-020). No push (local-only by rule; parent handles
 GitHub pushes).
+~17:34 IST 13 Nov after P1-020 (Phase 1, 20/111).
 
-## Tickets done (31)
+## Tickets done (32)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -999,6 +1000,38 @@ GitHub pushes).
   FLAKY-001 `sigterm_drains_in_flight_request_and_exits_zero`,
   then green on re-run; no other flakes).
 
+- **P1-020 — Brute-force limiter wiring** (`dbf4f4e`): scope
+  settled from the docs — login already had the per-account
+  bucket (P1-003), so this ticket adds the per-IP login bucket
+  (20/10) + the per-email register bucket (5/1) + the
+  per-account reset bucket (10/1, policy only — no reset
+  endpoint exists yet, P1-025 wires the check). Config: 6 new
+  `PF_RATE_LIMIT_*` vars + validation + `.env.example` +
+  runbook + regenerated config table. `RateLimitScope::{LoginIp,
+  RegisterEmail, ResetAccount}` + three buckets in
+  `RateLimitPolicy` — one bucket, one key (the Lua script takes
+  capacity as an arg, so two buckets sharing a key corrupt each
+  other). Login: lockout check moved FIRST (a locked login
+  answers 423 and never spends a bucket token), then the account
+  bucket, then the new login-IP bucket (sha256 of the client IP,
+  skipped for `"unknown"`); `LoginError::RateLimited` now carries
+  the denying bucket's burst. Register: `register_user` now takes
+  `&AppState`; the register-email bucket is checked FIRST
+  (before policy checks, hash, audit); duplicate attempts spend
+  it too. **Bug found by the login-IP test:** the middleware
+  unconditionally overwrote the `X-RateLimit-*` trio on every
+  response, so a service denial's 429 carried the middleware IP
+  bucket's numbers (Limit 120) instead of the denying bucket's
+  (Limit 3) — the middleware now stamps only when the handler
+  has not already. Tests: login-IP trips across accounts (429,
+  Limit "3", no session), register trips per email (201 + 4×409
+  then 429, Limit "5"), service-bucket race (50 concurrent
+  spends admit exactly the burst: 10/20/5/10), account-limit
+  test strengthened to assert Limit "3". Docs: api-spec,
+  security-testing, threat model T17 extended + update-log row.
+  `just verify` green 603 passed, 0 failed, attempt 2 (attempt
+  1 failed on fmt, fixed; no flakes).
+
 ## Tickets partially done
 
 - **P0-034 / P0-046 / P0-083**: implemented but unverified —
@@ -1116,7 +1149,8 @@ GitHub pushes).
   → **578 passed, 0 failed** (P1-016; +7: 6 dual-auth + 1 auth unit)
   → **585 passed, 0 failed** (P1-017; +7 logout)
   → **588 passed, 0 failed** (P1-018; +3 password-sessions)
-  → **600 passed, 0 failed** (P1-019; +12: 6 sessions-list + 6 user-agent unit).
+  → **600 passed, 0 failed** (P1-019; +12: 6 sessions-list + 6 user-agent unit)
+  → **603 passed, 0 failed** (P1-020; +3: 1 login-IP + 1 register + 1 service-bucket race).
   Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
@@ -1196,6 +1230,9 @@ GitHub pushes).
   green on re-run; the green run took ~6.5 min — the
   binaries were already built, so it was faster than the
   usual ~13 min).
+  P1-020: 2 (attempt 1 failed on fmt — three files needed
+  rustfmt after hand-edits; attempt 2 green, ~11.5 min, no
+  flakes).
   Every red run was a known flake, a lint fix, or a
   test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
@@ -1215,11 +1252,11 @@ GitHub pushes).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-020 — Brute-force limiter wiring.
-2. P1-021 — Token revocation cache.
-3. P1-022 — JWT verification extractor.
-4. P1-023 — Auth integration suite.
-5. P1-024 — Auth design notes.
+1. P1-021 — Token revocation cache.
+2. P1-022 — JWT verification extractor.
+3. P1-023 — Auth integration suite.
+4. P1-024 — Auth design notes.
+5. P1-025 — Forgot/reset flow.
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never

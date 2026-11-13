@@ -36,6 +36,20 @@ async fn register_app() -> TestApp {
     TestApp::spawn_with_fixtures_and_settings(fixtures, settings).await
 }
 
+/// App with the per-email register bucket at 5 burst / 0
+/// refill (P1-020): six attempts for one email trip it
+/// exactly. The burst is the production default (5) — the
+/// refill is 0 so the trip is deterministic.
+async fn register_app_with_email_limit() -> TestApp {
+    let fixtures = TestFixtures::from_env().await;
+    let mut settings = fixtures.settings();
+    settings.disposable_email_domains = "mailinator.com, tempmail.com".to_string();
+    settings.tos_current_version = "v1".to_string();
+    settings.rate_limit_register_email_burst = 5;
+    settings.rate_limit_register_email_refill_per_min = 0;
+    TestApp::spawn_with_fixtures_and_settings(fixtures, settings).await
+}
+
 fn post_register(email: &str, password: &str, tos: &str) -> Request<axum::body::Body> {
     let body = json!({
         "email": email,
@@ -303,4 +317,67 @@ async fn settings_defaults_are_the_owasp_values() {
     assert_eq!(settings.argon2_t_cost, 2);
     assert_eq!(settings.argon2_p_cost, 1);
     assert_eq!(settings.tos_current_version, "v1");
+}
+
+#[tokio::test]
+async fn register_email_rate_limit_trips_with_headers() {
+    // P1-020: the per-email bucket (5 burst / 0 refill here)
+    // bounds creation spam per address. Six attempts for the
+    // same email: the first creates the user (201), the next
+    // four are duplicates (409 — a duplicate IS a registration
+    // attempt and spends the bucket), and the sixth is denied
+    // 429 PF-3007 with Retry-After and the trio, the Limit
+    // naming the register-email bucket (5). A denied attempt
+    // creates no user — there is only the one from the first
+    // attempt.
+    let app = register_app_with_email_limit().await;
+    let email = unique_email();
+    let res = app
+        .request(post_register(&email, "correct horse battery staple", "v1"))
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    for i in 1..=4 {
+        let res = app
+            .request(post_register(&email, "correct horse battery staple", "v1"))
+            .await;
+        assert_eq!(
+            res.status,
+            StatusCode::CONFLICT,
+            "duplicate {i} must be 409: {}",
+            res.text()
+        );
+    }
+    let res = app
+        .request(post_register(&email, "correct horse battery staple", "v1"))
+        .await;
+    assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.text());
+    let json = res.json();
+    assert_eq!(json["code"], "PF-3007", "{json}");
+    assert_eq!(json["request_id"], REQUEST_ID, "{json}");
+    assert!(
+        res.headers.get("retry-after").is_some(),
+        "429 carries Retry-After"
+    );
+    let limit = res
+        .headers
+        .get("x-ratelimit-limit")
+        .and_then(|v| v.to_str().ok());
+    assert_eq!(
+        limit,
+        Some("5"),
+        "the Limit names the register-email bucket (burst 5)"
+    );
+    let remaining = res
+        .headers
+        .get("x-ratelimit-remaining")
+        .and_then(|v| v.to_str().ok());
+    assert_eq!(remaining, Some("0"));
+    assert!(
+        res.headers.get("x-ratelimit-reset").is_some(),
+        "429 carries the X-RateLimit trio"
+    );
+    let users = users::by_email(&app.state.pool, &email)
+        .await
+        .expect("user lookup");
+    assert!(users.is_some(), "the first attempt created the user");
 }

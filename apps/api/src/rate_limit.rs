@@ -17,6 +17,18 @@
 //! | `route` | `METHOD:/v1/<segment>` | enforced (this ticket) |
 //! | `user` | user id — or, pre-auth, the sha256 of the login email | enforced for login (P1-003, by the login service); the middleware still skips it (it cannot resolve an account from a request) |
 //! | `api-key` | key prefix | Phase 1 (no auth yet — unresolvable) |
+//! | `login-ip` | sha256 of the client IP | enforced for login (P1-020, by the login service) |
+//! | `register-email` | sha256 of the normalized email | enforced for register (P1-020, by the register service) |
+//! | `reset-account` | sha256 of the normalized email | P1-025 wires it (no reset endpoint yet — the bucket exists, nothing spends from it) |
+//!
+//! ONE BUCKET, ONE KEY (P1-020): the Lua script takes the
+//! capacity as an argument, so two buckets that share a Redis
+//! key corrupt each other — the script would refill both at
+//! different rates and admit against the wrong capacity. Every
+//! scope therefore has its own key segment, and a service
+//! bucket never shares a segment with the middleware buckets
+//! or with another service bucket. A new bucket gets a new
+//! segment, never a reused one — this table is the registry.
 //!
 //! The `api-key` scope exists in [`RateLimitScope`] so the key
 //! shape is settled, but the middleware cannot resolve it until
@@ -59,7 +71,11 @@
 //! same trio comes from the denying bucket, plus
 //! `Retry-After: <seconds until one token>` (at least 1).
 //! The allowed response carries the IP bucket's numbers — the
-//! per-client limit is the one the caller can act on.
+//! per-client limit is the one the caller can act on. The
+//! middleware stamps the trio only when the handler has not
+//! already (P1-020): a service-level denial carries the
+//! DENYING bucket's numbers, and the middleware must never
+//! overwrite them with the IP bucket's.
 
 use crate::problem::ProblemResponse;
 use crate::routes::extractors::RequestId;
@@ -89,6 +105,21 @@ pub enum RateLimitScope {
     ApiKey,
     /// Per route template (`METHOD:/v1/<segment>`).
     Route,
+    /// Per client IP, for login attempts (P1-020): the same
+    /// identity as `Ip`, but a SEPARATE bucket — the login
+    /// bucket's capacity (20/10) differs from the middleware's
+    /// (120/120), and two buckets must never share a Redis key
+    /// (see the module docs). Keyed by the sha256 of the IP,
+    /// like the lockout's IP counter.
+    LoginIp,
+    /// Per email, for registration attempts (P1-020): keyed by
+    /// the sha256 of the normalized email, pre-auth.
+    RegisterEmail,
+    /// Per account, for password-reset attempts (P1-020): keyed
+    /// by the sha256 of the normalized email, pre-auth. The
+    /// reset flow (P1-025) wires the check; nothing spends from
+    /// it until then.
+    ResetAccount,
 }
 
 impl RateLimitScope {
@@ -99,14 +130,22 @@ impl RateLimitScope {
             RateLimitScope::User => "user",
             RateLimitScope::ApiKey => "api-key",
             RateLimitScope::Route => "route",
+            RateLimitScope::LoginIp => "login-ip",
+            RateLimitScope::RegisterEmail => "register-email",
+            RateLimitScope::ResetAccount => "reset-account",
         }
     }
 }
 
-/// The two enforced buckets, built once from [`Settings`] and
+/// The enforced buckets, built once from [`Settings`] and
 /// carried in [`AppState`](crate::AppState). The per-plan tiers
 /// are open question #17 (tuned in Phase 5); these are the
-/// global skeleton defaults.
+/// global skeleton defaults. The middleware spends from `ip`
+/// and `route`; the services spend from the rest (the
+/// middleware cannot resolve an account from a request, so
+/// service buckets are checked by the service that knows the
+/// identity). Every bucket has its own key segment — see the
+/// module docs ("ONE BUCKET, ONE KEY").
 #[derive(Debug, Clone, Copy)]
 pub struct RateLimitPolicy {
     /// Per-IP bucket: burst + refill from the settings.
@@ -119,6 +158,24 @@ pub struct RateLimitPolicy {
     /// account from a request; the service keys it by the sha256
     /// of the normalized email, pre-auth).
     pub login_account: TokenBucket,
+    /// Per-IP login-attempt bucket (P1-020): burst + refill
+    /// from the settings. Checked by the login service after
+    /// the account bucket, keyed by the sha256 of the client
+    /// IP. Bounds credential-stuffing runs from one IP against
+    /// many accounts; the account bucket bounds the reverse
+    /// (one account from many IPs).
+    pub login_ip: TokenBucket,
+    /// Per-email registration bucket (P1-020): burst + refill
+    /// from the settings. Checked by the register service
+    /// before the Argon2id hash, keyed by the sha256 of the
+    /// normalized email, pre-auth. Duplicate attempts spend it
+    /// too — a duplicate registration IS a registration
+    /// attempt.
+    pub register_email: TokenBucket,
+    /// Per-account password-reset bucket (P1-020): burst +
+    /// refill from the settings. The reset flow (P1-025) wires
+    /// the check; nothing spends from it until then.
+    pub reset_account: TokenBucket,
 }
 
 impl RateLimitPolicy {
@@ -143,10 +200,28 @@ impl RateLimitPolicy {
             settings.rate_limit_login_account_refill_per_min as f64 / 60.0,
         )
         .expect("settings validation guarantees a valid login-account bucket");
+        let login_ip = TokenBucket::new(
+            settings.rate_limit_login_ip_burst as f64,
+            settings.rate_limit_login_ip_refill_per_min as f64 / 60.0,
+        )
+        .expect("settings validation guarantees a valid login-IP bucket");
+        let register_email = TokenBucket::new(
+            settings.rate_limit_register_email_burst as f64,
+            settings.rate_limit_register_email_refill_per_min as f64 / 60.0,
+        )
+        .expect("settings validation guarantees a valid register-email bucket");
+        let reset_account = TokenBucket::new(
+            settings.rate_limit_reset_account_burst as f64,
+            settings.rate_limit_reset_account_refill_per_min as f64 / 60.0,
+        )
+        .expect("settings validation guarantees a valid reset-account bucket");
         RateLimitPolicy {
             ip,
             route,
             login_account,
+            login_ip,
+            register_email,
+            reset_account,
         }
     }
 
@@ -167,6 +242,21 @@ impl RateLimitPolicy {
     /// The burst capacity of the per-account login bucket.
     pub fn login_account_burst(&self) -> u64 {
         self.login_account.capacity() as u64
+    }
+
+    /// The burst capacity of the per-IP login bucket.
+    pub fn login_ip_burst(&self) -> u64 {
+        self.login_ip.capacity() as u64
+    }
+
+    /// The burst capacity of the per-email registration bucket.
+    pub fn register_email_burst(&self) -> u64 {
+        self.register_email.capacity() as u64
+    }
+
+    /// The burst capacity of the per-account reset bucket.
+    pub fn reset_account_burst(&self) -> u64 {
+        self.reset_account.capacity() as u64
     }
 }
 
@@ -267,15 +357,24 @@ pub async fn rate_limit_middleware(
         return denied_response(route_result, policy.route_burst(), request_id.as_deref());
     }
     let mut res = next.run(req).await;
-    stamp_ratelimit_headers(&mut res, ip_result, policy.ip_burst());
+    // A downstream handler may have already stamped the trio:
+    // a service-level denial (login account / login-IP /
+    // register-email bucket, P1-003/P1-020) carries the
+    // DENYING bucket's numbers, and those must reach the
+    // caller intact — the middleware's IP numbers are the
+    // wrong bucket. Stamp only when the handler left the
+    // headers absent (every non-denial response).
+    if !res.headers().contains_key("x-ratelimit-limit") {
+        stamp_ratelimit_headers(&mut res, ip_result, policy.ip_burst());
+    }
     res
 }
 
 /// The 429 answer: the PF-3007 problem body (rendered exactly
 /// like the error mapper renders it) plus `Retry-After` and the
 /// denying bucket's `X-RateLimit-*` trio. Shared with the login
-/// handler (P1-003), whose per-account denial is rendered the
-/// same way.
+/// and register handlers (P1-003, P1-020), whose per-account /
+/// per-IP / per-email denials are rendered the same way.
 pub(crate) fn denied_response(result: RateLimit, limit: u64, request_id: Option<&str>) -> Response {
     let problem = AppError::RateLimited.to_problem(Profile::Production, request_id, None);
     let mut res = ProblemResponse(problem).into_response();

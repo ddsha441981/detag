@@ -17,7 +17,7 @@ use axum::{
     http::{Method, Request, StatusCode},
 };
 use common::TestApp;
-use detag_api::rate_limit::{client_ip, route_key};
+use detag_api::rate_limit::{client_ip, route_key, RateLimitScope};
 use detag_core::config::Settings;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -46,6 +46,25 @@ fn test_settings(
         rate_limit_route_refill_per_min: route_refill_per_min,
         ..Settings::default()
     }
+}
+
+/// Settings for the service-bucket race test (P1-020): the
+/// four service buckets at their production bursts
+/// (login-account 10, login-ip 20, register-email 5,
+/// reset-account 10), refill 0 — the exactness device (a
+/// live refill could admit one more token mid-race). The
+/// middleware buckets are generous, so they never interfere.
+fn service_settings() -> Settings {
+    let mut settings = test_settings(1000, 60_000, 1000, 60_000);
+    settings.rate_limit_login_account_burst = 10;
+    settings.rate_limit_login_account_refill_per_min = 0;
+    settings.rate_limit_login_ip_burst = 20;
+    settings.rate_limit_login_ip_refill_per_min = 0;
+    settings.rate_limit_register_email_burst = 5;
+    settings.rate_limit_register_email_refill_per_min = 0;
+    settings.rate_limit_reset_account_burst = 10;
+    settings.rate_limit_reset_account_refill_per_min = 0;
+    settings
 }
 
 fn request(method: Method, uri: &str, xff: &str) -> Request<Body> {
@@ -133,6 +152,76 @@ async fn no_over_admission_under_race() {
     }
     assert_eq!(admitted, 5, "exactly the burst is admitted, got {admitted}");
     assert_eq!(denied, 15, "the rest are denied, got {denied}");
+}
+
+/// P1-020 AC: the service buckets are concurrency-safe. The
+/// four buckets the services spend from (login-account,
+/// login-ip, register-email, reset-account) are the same
+/// `TokenBucket` the middleware uses — one Lua script per
+/// spend, so the atomicity is the same — and this test is the
+/// proof the POLICY actually wires them that way: 50
+/// concurrent spends per bucket admit exactly the bucket's
+/// burst (10 / 20 / 5 / 10, the production defaults), no
+/// more. The buckets race one at a time (50 tasks each);
+/// the race is per-bucket, so serializing the buckets does
+/// not weaken it.
+#[tokio::test]
+async fn service_buckets_race_admits_exactly_their_capacities() {
+    let app = TestApp::spawn_with(service_settings()).await;
+    let policy = app.state.rate_limit;
+    let cases = [
+        (
+            "login-account",
+            policy.login_account,
+            RateLimitScope::User.key(),
+            10u64,
+        ),
+        (
+            "login-ip",
+            policy.login_ip,
+            RateLimitScope::LoginIp.key(),
+            20u64,
+        ),
+        (
+            "register-email",
+            policy.register_email,
+            RateLimitScope::RegisterEmail.key(),
+            5u64,
+        ),
+        (
+            "reset-account",
+            policy.reset_account,
+            RateLimitScope::ResetAccount.key(),
+            10u64,
+        ),
+    ];
+    for (name, bucket, scope, burst) in cases {
+        // A fresh key per bucket: a uuid the bucket has never
+        // seen, so no earlier run's spends can leak in.
+        let key = Uuid::now_v7().to_string();
+        let mut tasks = Vec::new();
+        for _ in 0..50 {
+            let pool = app.state.redis.clone();
+            let key = key.clone();
+            tasks.push(tokio::spawn(async move {
+                bucket.check(&pool, scope, &key, 1.0).await
+            }));
+        }
+        let mut allowed = 0;
+        for task in tasks {
+            let check = task
+                .await
+                .expect("bucket task must finish")
+                .expect("bucket check must succeed");
+            if check.allowed {
+                allowed += 1;
+            }
+        }
+        assert_eq!(
+            allowed, burst,
+            "{name}: exactly the burst of {burst} must be admitted under a 50-way race, got {allowed}"
+        );
+    }
 }
 
 /// The route bucket is independent of the IP bucket: four

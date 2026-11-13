@@ -213,6 +213,9 @@ in a real inbox.
 | `PF_DISPOSABLE_EMAIL_DOMAINS` | api | mailinator.com, guerrillamail.com, 10minutemail.com, tempmail.com, yopmail.com | comma-separated disposable domains rejected at registration (P1-001); empty = no denylist |
 | `PF_RATE_LIMIT_IP_BURST`, `PF_RATE_LIMIT_IP_REFILL_PER_MIN`, `PF_RATE_LIMIT_ROUTE_BURST`, `PF_RATE_LIMIT_ROUTE_REFILL_PER_MIN` | api | 120 / 120 / 600 / 600 | token-bucket caps, per-IP + per-route (P0-103); refill 0 = never refills |
 | `PF_RATE_LIMIT_LOGIN_ACCOUNT_BURST`, `PF_RATE_LIMIT_LOGIN_ACCOUNT_REFILL_PER_MIN` | api | 10 / 1 | per-account login-attempt bucket (P1-003): burst 10, then 1/min; keyed by the sha256 of the email; P1-004 lockout is the durable backstop |
+| `PF_RATE_LIMIT_LOGIN_IP_BURST`, `PF_RATE_LIMIT_LOGIN_IP_REFILL_PER_MIN` | api | 20 / 10 | per-IP login-attempt bucket (P1-020): burst 20, then 10/min, across all accounts from one IP — bounds credential-stuffing runs; keyed by the sha256 of the client IP |
+| `PF_RATE_LIMIT_REGISTER_EMAIL_BURST`, `PF_RATE_LIMIT_REGISTER_EMAIL_REFILL_PER_MIN` | api | 5 / 1 | per-email registration bucket (P1-020): burst 5, then 1/min; keyed by the sha256 of the email; duplicate attempts spend it too |
+| `PF_RATE_LIMIT_RESET_ACCOUNT_BURST`, `PF_RATE_LIMIT_RESET_ACCOUNT_REFILL_PER_MIN` | api | 10 / 1 | per-account password-reset bucket (P1-020): the bucket exists for the reset flow (P1-025); no reset endpoint exists yet, so nothing spends from it today |
 | `PF_PUBLIC_BASE_URL` | api | http://localhost:8080 | used in signed URLs |
 | `PF_DOMAIN` | caddy (compose) | localhost | public domain caddy serves (P0-087): localhost = plain HTTP; a public DNS name gets auto-HTTPS; prod sets the real domain and PF_PUBLIC_BASE_URL to match |
 | `PF_API_PORT` | api | 8080 | port the api binds on PF_API_HOST |

@@ -1,12 +1,15 @@
 //! Login service (P1-003, FR-A-01): `POST /v1/auth/login`.
 //!
-//! Flow: normalize the email → per-account rate limit (the
-//! `user` bucket, keyed by the sha256 of the email — pre-auth,
-//! so there is no user id yet) → audit `login.attempt` → load
-//! the user → Argon2id verify → on success one transaction
-//! (session row + `login.success` audit) + issue the access
-//! token. The handler sets the refresh cookie from the
-//! returned raw token.
+//! Flow: normalize the email → lockout check (P1-004, durable
+//! 423 — FIRST, so a locked login never spends a rate-limit
+//! token) → per-account rate limit (the `user` bucket, keyed
+//! by the sha256 of the email — pre-auth, so there is no user
+//! id yet) → per-IP rate limit (P1-020, the `login-ip` bucket,
+//! keyed by the sha256 of the client IP) → audit
+//! `login.attempt` → load the user → Argon2id verify → on
+//! success one transaction (session row + `login.success`
+//! audit) + issue the access token. The handler sets the
+//! refresh cookie from the returned raw token.
 //!
 //! # No enumeration — two mechanisms, both load-bearing
 //!
@@ -30,17 +33,60 @@
 //!
 //! Per-IP is the middleware's job (P0-103): every `/v1`
 //! request — login included — spends from the IP bucket
-//! before the handler runs. Per-account is this service's
-//! job: the `login_account` bucket (10 burst / 1 per min by
-//! default), checked BEFORE the password verify, so a
-//! brute-force against one account is bounded even from many
-//! IPs. A denial is a 429 `PF-3007` with `Retry-After` —
-//! rendered by the same `denied_response` as the middleware,
-//! with the denying bucket's numbers. Redis down fails OPEN
-//! (warn logged), the P0-103 decision: the login endpoint
-//! must not go down on a cache outage. P1-004's lockout is
-//! the durable, DB-backed backstop that survives a Redis
-//! outage — this bucket is the cheap first line.
+//! before the handler runs. Per-account + per-IP-login are
+//! this service's job, checked BEFORE the password verify,
+//! in this order:
+//!
+//! 1. **Lockout first (P1-004, P1-020).** The durable,
+//!    DB-backed lock is checked before either bucket: a locked
+//!    login answers 423 and never spends a rate-limit token —
+//!    the lock is the authoritative answer for that account/IP,
+//!    and a 429 must not mask it (a 423 also tells the caller
+//!    WHEN the login is usable again; a 429 would hide that
+//!    behind a refill estimate). A locked attempt is not
+//!    audited and not recorded (P1-004).
+//! 2. **Per-account bucket** (`login_account`, 10 burst /
+//!    1 per min by default), keyed by the sha256 of the
+//!    normalized email: bounds a brute-force against ONE
+//!    account even from many IPs.
+//! 3. **Per-IP bucket** (`login_ip`, 20 burst / 10 per min
+//!    by default, P1-020), keyed by the sha256 of the client
+//!    IP: bounds a credential-stuffing run from ONE IP against
+//!    many accounts. The two buckets are complementary — the
+//!    account bucket alone cannot stop a run that tries one
+//!    password per account, and the IP bucket alone cannot stop
+//!    a distributed run against one account. Skipped when the
+//!    client is `"unknown"` (no IP identity — the same skip
+//!    rule as the lockout's IP counter).
+//!
+//! A denial is a 429 `PF-3007` with `Retry-After` and the
+//! denying bucket's `X-RateLimit-*` trio — rendered by the
+//! same `denied_response` as the middleware. The service
+//! carries the denying bucket's burst in the error
+//! (`RateLimited(result, limit)`) so the handler stamps the
+//! right `X-RateLimit-Limit` — the account and IP buckets have
+//! different capacities, and the header must name the bucket
+//! that actually denied. The middleware stamps its own IP
+//! numbers on allowed responses only: it must never overwrite
+//! a service denial's trio (P1-020 — a bug the login-IP test
+//! caught: the middleware stamped over the handler's 429 and
+//! the caller saw the wrong bucket's numbers). Redis down
+//! fails OPEN (warn logged), the P0-103 decision: the login
+//! endpoint must not go down on a cache outage. P1-004's
+//! lockout is the durable, DB-backed backstop that survives
+//! a Redis outage — these buckets are the cheap first line.
+//!
+//! Lockout vs buckets (P1-020): the lockout is checked first,
+//! so a locked attempt never reaches either bucket — it spends
+//! no token, and the two denials can never coincide: a locked
+//! account always answers 423, by construction. Conversely a
+//! bucket denial never records a lockout failure (the attempt
+//! never reaches the verify), so a bucket burst smaller than
+//! the lockout threshold (5) delays the lock: after the burst
+//! is spent, each refill (1/min) admits one attempt, which
+//! fails and increments the counter — the lock still engages,
+//! a few minutes late. With the defaults (burst 10 ≥ 5) the
+//! lock engages on the 5th consecutive failure with no delay.
 //!
 //! # What login does NOT do
 //!
@@ -178,6 +224,10 @@ pub struct LoginOutcome {
 /// the lockout: the account (or the client IP) is temporarily
 /// locked after too many failures — 423 `PF-1008`, with
 /// `Retry-After` carrying the seconds until the lock lifts.
+/// `RateLimited` carries the denying bucket's burst alongside
+/// the check result, so the handler stamps the right
+/// `X-RateLimit-Limit` (the account and IP buckets have
+/// different capacities — P1-020).
 #[derive(Debug, Error)]
 pub enum LoginError {
     #[error("invalid email or password")]
@@ -191,8 +241,8 @@ pub enum LoginError {
         /// when both have expired).
         retry_after_secs: u64,
     },
-    #[error("too many login attempts for this account")]
-    RateLimited(RateLimit),
+    #[error("too many login attempts")]
+    RateLimited(RateLimit, u64),
     #[error("login failed")]
     Internal,
 }
@@ -226,30 +276,14 @@ pub async fn login_user(
         Some(sha256_hex(client_ip.as_bytes()))
     };
 
-    // Per-account rate limit, BEFORE the password verify (so a
-    // brute-force against one account is bounded even from many
-    // IPs). Fail open on a Redis error (P0-103): warn and
-    // continue — the login endpoint must not go down on a cache
-    // outage; P1-004's lockout is the durable backstop.
-    let account_check = state
-        .rate_limit
-        .login_account
-        .check(&state.redis, RateLimitScope::User.key(), &email_hash, 1.0)
-        .await;
-    match account_check {
-        Ok(result) if !result.allowed => {
-            return Err(LoginError::RateLimited(result));
-        }
-        Ok(_) => {}
-        Err(err) => {
-            tracing::warn!(scope = "login-account", error = %err, "rate limiter failing open: redis unavailable");
-        }
-    }
-
-    // Lockout (P1-004): the account and the client IP are
-    // checked BEFORE the password verify — a locked login
-    // never reaches the verify, so it cannot extend the lock
-    // by hammering and its timing reveals nothing. The check
+    // Lockout FIRST (P1-004, order settled P1-020): the
+    // account and the client IP are checked BEFORE the
+    // password verify — and before either rate-limit bucket.
+    // A locked login never reaches the verify, so it cannot
+    // extend the lock by hammering and its timing reveals
+    // nothing — and it never spends a bucket token, so a 429
+    // cannot mask the authoritative 423 (which also tells
+    // the caller WHEN the login is usable again). The check
     // is a plain read; the record happens on failure below.
     // A locked attempt is not audited (no attempt row, no
     // failure row): an attacker hammering a locked account
@@ -286,6 +320,61 @@ pub async fn login_user(
         return Err(LoginError::Locked {
             retry_after_secs: secs.max(1) as u64,
         });
+    }
+
+    // Per-account rate limit, BEFORE the password verify (so a
+    // brute-force against one account is bounded even from many
+    // IPs). Fail open on a Redis error (P0-103): warn and
+    // continue — the login endpoint must not go down on a cache
+    // outage; P1-004's lockout is the durable backstop. The
+    // error carries the denying bucket's burst, so the handler
+    // stamps the right `X-RateLimit-Limit`.
+    let account_check = state
+        .rate_limit
+        .login_account
+        .check(&state.redis, RateLimitScope::User.key(), &email_hash, 1.0)
+        .await;
+    match account_check {
+        Ok(result) if !result.allowed => {
+            return Err(LoginError::RateLimited(
+                result,
+                state.rate_limit.login_account_burst(),
+            ));
+        }
+        Ok(_) => {}
+        Err(err) => {
+            tracing::warn!(scope = "login-account", error = %err, "rate limiter failing open: redis unavailable");
+        }
+    }
+
+    // Per-IP rate limit (P1-020), after the account bucket:
+    // bounds a credential-stuffing run from one IP against
+    // many accounts (the account bucket cannot stop a run
+    // that tries one password per account). Same fail-open
+    // rule; skipped when the client is "unknown" (no IP
+    // identity to bound — the same skip rule as the lockout's
+    // IP counter). The account bucket is checked first: a
+    // brute-force against one account answers with the
+    // account's numbers, and the IP bucket is only spent when
+    // the account bucket admitted.
+    if let Some(ip) = &ip_hash {
+        let ip_check = state
+            .rate_limit
+            .login_ip
+            .check(&state.redis, RateLimitScope::LoginIp.key(), ip, 1.0)
+            .await;
+        match ip_check {
+            Ok(result) if !result.allowed => {
+                return Err(LoginError::RateLimited(
+                    result,
+                    state.rate_limit.login_ip_burst(),
+                ));
+            }
+            Ok(_) => {}
+            Err(err) => {
+                tracing::warn!(scope = "login-ip", error = %err, "rate limiter failing open: redis unavailable");
+            }
+        }
     }
 
     // The attempt is audited outside the transaction: it

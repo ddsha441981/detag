@@ -27,7 +27,7 @@ Conventions first; endpoint tables are the contract. OpenAPI is generated from c
   (email shape, filename sanitize, public-only URL); handlers take
   `ValidatedJson<T>` (see `04-ENGINEERING/04-adding-an-endpoint.md`).
 - Error code ranges: PF-1xxx auth/session, PF-2xxx upload/media, PF-3xxx quota/billing, PF-4xxx engine/quality/compliance, PF-5xxx system.
-- Rate limits: headers `X-RateLimit-Limit` (burst), `-Remaining`, `-Reset` (unix time when one token is available again). Overage = 429 + problem+json (PF-3007) + `Retry-After` (seconds until one token). Scopes (P0-103): per-IP and per-route (`METHOD:/v1/<segment>`) token buckets; per-user / per-API-key scopes land with Phase 1 auth. Health/meta routes are exempt. Defaults: IP 120 burst / 120 per min, route 600 burst / 600 per min (`PF_RATE_LIMIT_*`).
+- Rate limits: headers `X-RateLimit-Limit` (burst), `-Remaining`, `-Reset` (unix time when one token is available again). Overage = 429 + problem+json (PF-3007) + `Retry-After` (seconds until one token). The trio on a denial names the DENYING bucket — the middleware stamps its IP numbers on allowed responses only and never overwrites a service denial's trio (P1-020). Scopes (P0-103): per-IP and per-route (`METHOD:/v1/<segment>`) token buckets; per-account login (`login_account`, P1-003) + per-IP login (`login-ip`, P1-020) + per-email register (`register-email`, P1-020) + per-account reset (`reset-account`, P1-020 — the bucket exists, the reset flow P1-025 wires the check) are service buckets with their own key segments (one bucket, one key — two buckets never share a Redis key, P1-020). Per-API-key scope lands with Phase 1 auth (E1.4). Health/meta routes are exempt. Defaults: IP 120 burst / 120 per min, route 600 burst / 600 per min, login-account 10 / 1, login-IP 20 / 10, register-email 5 / 1, reset-account 10 / 1 (`PF_RATE_LIMIT_*`).
 - Body caps per route class (P0-104): auth + meta 64 KiB, jobs + admin 1 MiB, billing (webhooks) 256 KiB; over-cap = 413 + problem+json (PF-2003). Uploads are exempt — bytes never transit the api (presigned S3 PUTs).
 - Dimension caps at job-create (P0-104, FR-U-04): each side at most 8000 px, total at most 64 MP; over-cap = 413 + problem+json (PF-2005). The job-create handler checks the upload row's probed dimensions before queuing any work (Phase 2 hook; the guard lives in `detag-core::media::validate_dimensions`).
 - Idempotency: `Idempotency-Key` header honored on `POST /v1/jobs`, `POST /v1/uploads`, payment endpoints (24 h window).
@@ -117,8 +117,15 @@ same transaction as the new session. Rate limits:
 per-IP via the middleware bucket (P0-103) + per-account via
 the `login_account` bucket (10 burst / 1 per min,
 `PF_RATE_LIMIT_LOGIN_ACCOUNT_*`, keyed by the sha256 of the
-normalized email), checked BEFORE the password verify — a
-denial is 429 `PF-3007` with `Retry-After`. Redis down fails
+normalized email) + per-IP via the `login_ip` bucket (P1-020:
+20 burst / 10 per min, `PF_RATE_LIMIT_LOGIN_IP_*`, keyed by
+the sha256 of the client IP — bounds credential-stuffing runs
+from one IP against many accounts), checked in that order
+AFTER the lockout check (P1-020: the lockout is checked
+first, so a locked login answers 423 and never spends a
+bucket token — a 429 must not mask the 423) and BEFORE the
+password verify — a denial is 429 `PF-3007` with
+`Retry-After` and the denying bucket's trio. Redis down fails
 open (warn logged, P0-103); the durable lockout is P1-004.
 Lockout (P1-004, FR-A-01): `login_attempt_counters` is the
 durable lockout of record — one row per (scope, key), scope
@@ -293,7 +300,13 @@ the current version (`PF_TOS_CURRENT_VERSION`, default "v1") and
 is recorded on the user row. A disposable-email domain (config
 `PF_DISPOSABLE_EMAIL_DOMAINS`) is a 422 field error
 (`disposable_email`); a wrong ToS version is a 422 field error
-(`tos_version_mismatch`). A duplicate email is 409 `PF-2011`
+(`tos_version_mismatch`). Rate limit (P1-020): the
+`register_email` bucket (5 burst / 1 per min,
+`PF_RATE_LIMIT_REGISTER_EMAIL_*`, keyed by the sha256 of the
+normalized email), checked FIRST — before the policy checks,
+the hash, and the audit, so a denied request does no work at
+all; a denial is 429 `PF-3007` with `Retry-After` and the
+bucket's trio, and duplicate attempts spend the bucket too. A duplicate email is 409 `PF-2011`
 Conflict with the generic `conflict` body — the body never names
 the email (no enumeration detail), though the status itself
 distinguishes duplicate (409) from new (201). The verification

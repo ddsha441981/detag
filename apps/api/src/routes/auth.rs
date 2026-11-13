@@ -67,7 +67,8 @@ use crate::routes::extractors::{MaybeConnectInfo, ValidatedJson};
     responses(
         (status = 201, description = "User created; verification email queued", body = UserResponse),
         (status = 409, description = "Email already registered (generic body — no enumeration detail)", body = Problem),
-        (status = 422, description = "Validation failed (email shape, password length, ToS version, disposable domain)", body = Problem)
+        (status = 422, description = "Validation failed (email shape, password length, ToS version, disposable domain)", body = Problem),
+        (status = 429, description = "Too many registration attempts for this email (PF-3007, Retry-After + X-RateLimit-* trio)", body = Problem)
     ),
     tag = "auth"
 )]
@@ -77,11 +78,16 @@ pub async fn register(
     ValidatedJson(req): ValidatedJson<RegisterRequest>,
 ) -> Response {
     let request_id = Some(id.0.as_str());
-    match register_user(&state.pool, &state.settings, &req).await {
+    match register_user(&state, &req).await {
         Ok(user) => (StatusCode::CREATED, Json(UserResponse::from(user))).into_response(),
         Err(RegisterError::Duplicate) => {
             ProblemResponse(AppError::Conflict.to_problem(Profile::Production, request_id, None))
                 .into_response()
+        }
+        Err(RegisterError::RateLimited(result, limit)) => {
+            // The service carries the bucket's burst, so the
+            // header names the bucket that denied (P1-020).
+            denied_response(result, limit, request_id)
         }
         Err(RegisterError::Invalid(errors)) => {
             ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
@@ -305,8 +311,12 @@ pub async fn login(
                 .insert(header::RETRY_AFTER, HeaderValue::from(retry_after_secs));
             res
         }
-        Err(LoginError::RateLimited(result)) => {
-            denied_response(result, state.rate_limit.login_account_burst(), request_id)
+        Err(LoginError::RateLimited(result, limit)) => {
+            // The service carries the denying bucket's burst —
+            // the account and IP buckets have different
+            // capacities, and the header must name the bucket
+            // that actually denied (P1-020).
+            denied_response(result, limit, request_id)
         }
         Err(LoginError::Internal) => {
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))

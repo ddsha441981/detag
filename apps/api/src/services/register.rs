@@ -1,16 +1,30 @@
 //! Register service (P1-001, FR-A-01): `POST /v1/auth/register`.
 //!
-//! Flow: normalize the email → policy checks (disposable
-//! domain, ToS version — both need `Settings`, so they live
-//! here, not in the DTO's structural validation) → Argon2id
-//! hash (params from config) → audit `register.attempt` → one
-//! transaction: create the user (recording the accepted ToS
-//! version) + audit `register.success` + mint the verification
-//! token and queue its mail (P1-002's `issue_verification` —
-//! the outbox payload carries `{user_id, token}`). The
-//! transaction is the atomicity: no user without its
-//! verification mail queued, and no mail for a user that was
-//! not created.
+//! Flow: normalize the email → per-email rate limit (P1-020,
+//! the `register-email` bucket, keyed by the sha256 of the
+//! email — pre-auth, before the Argon2id hash, so a spam run
+//! burns no CPU) → policy checks (disposable domain, ToS
+//! version — both need `Settings`, so they live here, not in
+//! the DTO's structural validation) → Argon2id hash (params
+//! from config) → audit `register.attempt` → one transaction:
+//! create the user (recording the accepted ToS version) +
+//! audit `register.success` + mint the verification token and
+//! queue its mail (P1-002's `issue_verification` — the outbox
+//! payload carries `{user_id, token}`). The transaction is the
+//! atomicity: no user without its verification mail queued,
+//! and no mail for a user that was not created.
+//!
+//! Rate limit (P1-020): the `register-email` bucket (5 burst
+//! / 1 per min by default). A denial is a 429 `PF-3007` with
+//! `Retry-After` and the bucket's `X-RateLimit-*` trio — the
+//! error carries the bucket's burst so the handler stamps the
+//! right `X-RateLimit-Limit`. Duplicate attempts spend the
+//! bucket too: a duplicate registration IS a registration
+//! attempt, and the bucket bounds creation spam per address
+//! including duplicates. A denied attempt is not audited (the
+//! same rule as login's bucket denial — the attempt audit is
+//! the record of an attempt that reached the policy checks).
+//! Redis down fails OPEN (warn logged), the P0-103 decision.
 //!
 //! No enumeration, by the taxonomy's design: a duplicate email
 //! is `409 PF-2011 Conflict` with the generic `conflict` body —
@@ -39,10 +53,10 @@
 use chrono::{DateTime, Utc};
 use detag_core::{
     checksum::sha256_hex,
-    config::Settings,
-    db::{DbPool, PoolConfig},
+    db::PoolConfig,
     error::FieldError,
     password::{hash_password, Argon2Params, PasswordError},
+    redis::ratelimit::RateLimit,
     repos::{
         audit_logs::{self, NewAuditLog},
         login_attempts::{self, LockScope},
@@ -56,6 +70,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use utoipa::ToSchema;
 use uuid::Uuid;
+
+use crate::rate_limit::RateLimitScope;
+use crate::AppState;
 
 /// The register request body (api-spec: email, password,
 /// accept_tos_version → 201 user + verification email sent).
@@ -151,6 +168,8 @@ pub enum RegisterError {
     Duplicate,
     #[error("registration invalid")]
     Invalid(ValidationErrors),
+    #[error("too many registration attempts for this email")]
+    RateLimited(RateLimit, u64),
     #[error("registration failed")]
     Internal,
 }
@@ -181,13 +200,40 @@ pub(crate) fn is_disposable(email: &str, denylist: &str) -> bool {
 
 /// Register a user. See the module docs for the flow, the
 /// no-enumeration design, and the privacy rules.
-pub async fn register_user(
-    pool: &DbPool,
-    settings: &Settings,
-    req: &RegisterRequest,
-) -> Result<User, RegisterError> {
+pub async fn register_user(state: &AppState, req: &RegisterRequest) -> Result<User, RegisterError> {
+    let pool = &state.pool;
+    let settings = &state.settings;
     let email = req.normalized_email();
     let tos_version = req.accept_tos_version.trim().to_string();
+
+    // Per-email rate limit (P1-020), FIRST — before the policy
+    // checks, the hash, and the audit: a denied request does
+    // no work at all. Keyed by the sha256 of the normalized
+    // email (pre-auth, so there is no user id yet). Fail open
+    // on a Redis error (P0-103): warn and continue.
+    let email_hash = sha256_hex(email.as_bytes());
+    let bucket_check = state
+        .rate_limit
+        .register_email
+        .check(
+            &state.redis,
+            RateLimitScope::RegisterEmail.key(),
+            &email_hash,
+            1.0,
+        )
+        .await;
+    match bucket_check {
+        Ok(result) if !result.allowed => {
+            return Err(RegisterError::RateLimited(
+                result,
+                state.rate_limit.register_email_burst(),
+            ));
+        }
+        Ok(_) => {}
+        Err(err) => {
+            tracing::warn!(scope = "register-email", error = %err, "rate limiter failing open: redis unavailable");
+        }
+    }
 
     // Policy checks (settings-dependent).
     let mut errors = ValidationErrors::default();
@@ -218,8 +264,9 @@ pub async fn register_user(
 
     // Audit the attempt outside the transaction: it must survive
     // a duplicate (409) or a rollback — it is the record that
-    // someone tried.
-    let email_hash = sha256_hex(email.as_bytes());
+    // someone tried. The email hash was computed above (the
+    // bucket check keys on it); it is reused here, never the
+    // raw email.
     audit_logs::insert(
         pool,
         &NewAuditLog {

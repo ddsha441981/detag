@@ -219,6 +219,50 @@ pub struct Settings {
     /// per minute. Default 1. 0 = never refills (a fixed
     /// allowance until the key expires).
     pub rate_limit_login_account_refill_per_min: u64,
+    /// Env: PF_RATE_LIMIT_LOGIN_IP_BURST — per-IP login-attempt
+    /// bucket burst (P1-020): how many login attempts one
+    /// client IP may make in a burst, across ALL accounts.
+    /// Default 20. Must be >= 1. The account bucket (10/1)
+    /// bounds a brute-force against ONE account even from many
+    /// IPs; this bucket bounds a credential-stuffing run from
+    /// ONE IP against many accounts. A shared office NAT or a
+    /// family legitimately logs into a few accounts a minute —
+    /// 20 burst / 10 per min is generous for humans, tight for
+    /// a bot trying hundreds. Keyed by the sha256 of the client
+    /// IP (never the raw IP — the middleware's generic IP
+    /// bucket uses the raw IP as its key; this service bucket
+    /// uses the hash, like the lockout's IP counter).
+    pub rate_limit_login_ip_burst: u64,
+    /// Env: PF_RATE_LIMIT_LOGIN_IP_REFILL_PER_MIN — per-IP
+    /// login-attempt bucket refill (P1-020): tokens per minute.
+    /// Default 10. 0 = never refills.
+    pub rate_limit_login_ip_refill_per_min: u64,
+    /// Env: PF_RATE_LIMIT_REGISTER_EMAIL_BURST — per-email
+    /// registration bucket burst (P1-020): how many registration
+    /// attempts one email address (keyed by its sha256,
+    /// pre-auth) may make in a burst. Default 5. Must be >= 1.
+    /// Creating accounts is rarer than logging in — 5 burst /
+    /// 1 per min bounds creation spam (including duplicate
+    /// attempts, which spend the bucket too: a duplicate
+    /// registration IS a registration attempt) while letting a
+    /// real user retry a mistyped form a few times.
+    pub rate_limit_register_email_burst: u64,
+    /// Env: PF_RATE_LIMIT_REGISTER_EMAIL_REFILL_PER_MIN —
+    /// per-email registration bucket refill (P1-020): tokens
+    /// per minute. Default 1. 0 = never refills.
+    pub rate_limit_register_email_refill_per_min: u64,
+    /// Env: PF_RATE_LIMIT_RESET_ACCOUNT_BURST — per-account
+    /// password-reset bucket burst (P1-020 — the bucket exists
+    /// so the reset flow (P1-025) wires its check in one line;
+    /// no reset endpoint exists yet, so nothing spends from it
+    /// today). Default 10 (same as the login-account bucket —
+    /// the reset flow is also a per-account pre-auth attempt).
+    /// Must be >= 1.
+    pub rate_limit_reset_account_burst: u64,
+    /// Env: PF_RATE_LIMIT_RESET_ACCOUNT_REFILL_PER_MIN —
+    /// per-account password-reset bucket refill (P1-020).
+    /// Default 1. 0 = never refills.
+    pub rate_limit_reset_account_refill_per_min: u64,
     /// Env: PF_WORKER_CONCURRENCY — apalis workers per queue. Each
     /// of the four queues (pipeline, cleanup, email, reconciliation)
     /// runs this many workers (P0-075). Default 4. Must be >= 1.
@@ -316,6 +360,12 @@ impl Default for Settings {
             rate_limit_route_refill_per_min: 600,
             rate_limit_login_account_burst: 10,
             rate_limit_login_account_refill_per_min: 1,
+            rate_limit_login_ip_burst: 20,
+            rate_limit_login_ip_refill_per_min: 10,
+            rate_limit_register_email_burst: 5,
+            rate_limit_register_email_refill_per_min: 1,
+            rate_limit_reset_account_burst: 10,
+            rate_limit_reset_account_refill_per_min: 1,
             worker_concurrency: 4,
             worker_metrics_port: 9092,
             worker_heartbeat_interval_secs: 15,
@@ -387,6 +437,27 @@ const FIELD_VARS: &[(&str, &str)] = &[
     (
         "rate_limit_login_account_refill_per_min",
         "PF_RATE_LIMIT_LOGIN_ACCOUNT_REFILL_PER_MIN",
+    ),
+    ("rate_limit_login_ip_burst", "PF_RATE_LIMIT_LOGIN_IP_BURST"),
+    (
+        "rate_limit_login_ip_refill_per_min",
+        "PF_RATE_LIMIT_LOGIN_IP_REFILL_PER_MIN",
+    ),
+    (
+        "rate_limit_register_email_burst",
+        "PF_RATE_LIMIT_REGISTER_EMAIL_BURST",
+    ),
+    (
+        "rate_limit_register_email_refill_per_min",
+        "PF_RATE_LIMIT_REGISTER_EMAIL_REFILL_PER_MIN",
+    ),
+    (
+        "rate_limit_reset_account_burst",
+        "PF_RATE_LIMIT_RESET_ACCOUNT_BURST",
+    ),
+    (
+        "rate_limit_reset_account_refill_per_min",
+        "PF_RATE_LIMIT_RESET_ACCOUNT_REFILL_PER_MIN",
     ),
     ("worker_concurrency", "PF_WORKER_CONCURRENCY"),
     ("worker_metrics_port", "PF_WORKER_METRICS_PORT"),
@@ -499,6 +570,18 @@ impl Settings {
             rate_limit_login_account_burst: field!(rate_limit_login_account_burst, u64),
             rate_limit_login_account_refill_per_min: field!(
                 rate_limit_login_account_refill_per_min,
+                u64
+            ),
+            rate_limit_login_ip_burst: field!(rate_limit_login_ip_burst, u64),
+            rate_limit_login_ip_refill_per_min: field!(rate_limit_login_ip_refill_per_min, u64),
+            rate_limit_register_email_burst: field!(rate_limit_register_email_burst, u64),
+            rate_limit_register_email_refill_per_min: field!(
+                rate_limit_register_email_refill_per_min,
+                u64
+            ),
+            rate_limit_reset_account_burst: field!(rate_limit_reset_account_burst, u64),
+            rate_limit_reset_account_refill_per_min: field!(
+                rate_limit_reset_account_refill_per_min,
                 u64
             ),
             worker_concurrency: field!(worker_concurrency, usize),
@@ -617,6 +700,21 @@ impl Settings {
         if self.rate_limit_login_account_burst == 0 {
             invalid(
                 "PF_RATE_LIMIT_LOGIN_ACCOUNT_BURST",
+                "must be >= 1".to_string(),
+            );
+        }
+        if self.rate_limit_login_ip_burst == 0 {
+            invalid("PF_RATE_LIMIT_LOGIN_IP_BURST", "must be >= 1".to_string());
+        }
+        if self.rate_limit_register_email_burst == 0 {
+            invalid(
+                "PF_RATE_LIMIT_REGISTER_EMAIL_BURST",
+                "must be >= 1".to_string(),
+            );
+        }
+        if self.rate_limit_reset_account_burst == 0 {
+            invalid(
+                "PF_RATE_LIMIT_RESET_ACCOUNT_BURST",
                 "must be >= 1".to_string(),
             );
         }
@@ -847,7 +945,7 @@ mod tests {
         }
     }
 
-    /// All 40 vars, so a test can start from a clean env.
+    /// All 59 vars, so a test can start from a clean env.
     /// Keep this in sync with FIELD_VARS: a var missing here
     /// leaks between tests (P0-081 — a test that leaves an
     /// invalid value behind breaks the next test's defaults).
@@ -874,6 +972,12 @@ mod tests {
         "PF_RATE_LIMIT_ROUTE_REFILL_PER_MIN",
         "PF_RATE_LIMIT_LOGIN_ACCOUNT_BURST",
         "PF_RATE_LIMIT_LOGIN_ACCOUNT_REFILL_PER_MIN",
+        "PF_RATE_LIMIT_LOGIN_IP_BURST",
+        "PF_RATE_LIMIT_LOGIN_IP_REFILL_PER_MIN",
+        "PF_RATE_LIMIT_REGISTER_EMAIL_BURST",
+        "PF_RATE_LIMIT_REGISTER_EMAIL_REFILL_PER_MIN",
+        "PF_RATE_LIMIT_RESET_ACCOUNT_BURST",
+        "PF_RATE_LIMIT_RESET_ACCOUNT_REFILL_PER_MIN",
         "PF_METRICS_PORT",
         "PF_METRICS_HOST",
         "PF_STRIPE_SECRET_KEY",
@@ -1103,6 +1207,10 @@ mod tests {
     /// naming the var (a zero refill is legal — a fixed allowance).
     /// P1-003: the per-account login bucket defaults to 10 burst
     /// / 1 per min, and its zero burst fails the same way.
+    /// P1-020: the per-IP login bucket defaults to 20 burst /
+    /// 10 per min, the per-email register bucket to 5 burst /
+    /// 1 per min, the per-account reset bucket to 10 burst /
+    /// 1 per min; each zero burst fails naming its var.
     #[test]
     fn rate_limit_defaults_and_zero_burst_fails() {
         let _env = clean_env();
@@ -1113,6 +1221,12 @@ mod tests {
         assert_eq!(settings.rate_limit_route_refill_per_min, 600);
         assert_eq!(settings.rate_limit_login_account_burst, 10);
         assert_eq!(settings.rate_limit_login_account_refill_per_min, 1);
+        assert_eq!(settings.rate_limit_login_ip_burst, 20);
+        assert_eq!(settings.rate_limit_login_ip_refill_per_min, 10);
+        assert_eq!(settings.rate_limit_register_email_burst, 5);
+        assert_eq!(settings.rate_limit_register_email_refill_per_min, 1);
+        assert_eq!(settings.rate_limit_reset_account_burst, 10);
+        assert_eq!(settings.rate_limit_reset_account_refill_per_min, 1);
         env::set_var("PF_RATE_LIMIT_IP_BURST", "0");
         let err = Settings::load_from(None).expect_err("0 burst must fail");
         assert!(
@@ -1135,12 +1249,38 @@ mod tests {
             "error must name the var, got: {err}"
         );
         env::set_var("PF_RATE_LIMIT_LOGIN_ACCOUNT_BURST", "2");
+        env::set_var("PF_RATE_LIMIT_LOGIN_IP_BURST", "0");
+        let err = Settings::load_from(None).expect_err("0 login-IP burst must fail");
+        assert!(
+            err.to_string().contains("PF_RATE_LIMIT_LOGIN_IP_BURST"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_RATE_LIMIT_LOGIN_IP_BURST", "7");
+        env::set_var("PF_RATE_LIMIT_REGISTER_EMAIL_BURST", "0");
+        let err = Settings::load_from(None).expect_err("0 register burst must fail");
+        assert!(
+            err.to_string()
+                .contains("PF_RATE_LIMIT_REGISTER_EMAIL_BURST"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_RATE_LIMIT_REGISTER_EMAIL_BURST", "4");
+        env::set_var("PF_RATE_LIMIT_RESET_ACCOUNT_BURST", "0");
+        let err = Settings::load_from(None).expect_err("0 reset burst must fail");
+        assert!(
+            err.to_string()
+                .contains("PF_RATE_LIMIT_RESET_ACCOUNT_BURST"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_RATE_LIMIT_RESET_ACCOUNT_BURST", "9");
         env::set_var("PF_RATE_LIMIT_IP_REFILL_PER_MIN", "0");
         let settings = Settings::load_from(None).expect("0 refill must load");
         assert_eq!(settings.rate_limit_ip_burst, 5);
         assert_eq!(settings.rate_limit_route_burst, 3);
         assert_eq!(settings.rate_limit_ip_refill_per_min, 0);
         assert_eq!(settings.rate_limit_login_account_burst, 2);
+        assert_eq!(settings.rate_limit_login_ip_burst, 7);
+        assert_eq!(settings.rate_limit_register_email_burst, 4);
+        assert_eq!(settings.rate_limit_reset_account_burst, 9);
     }
 
     /// P1-001: auth hashing + registration policy defaults
