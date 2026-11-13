@@ -3,6 +3,8 @@ name = "detag-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+# Benches are explicit ([[bench]] below).
+autobenches = false
 
 [dependencies]
 tokio.workspace = true
@@ -34,3 +36,9 @@ utoipa.workspace = true
 tokio.workspace = true
 insta.workspace = true
 proptest.workspace = true
+criterion.workspace = true
+
+# Criterion benches (P1-027): custom harness, one file.
+[[bench]]
+name = "argon2"
+harness = false

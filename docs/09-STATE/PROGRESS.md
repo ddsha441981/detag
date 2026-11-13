@@ -5,7 +5,7 @@
 ## Where we are
 
 - **Current phase:** 1 — Identity & Billing
-- **Current ticket:** P1-027 — Argon2 params config
+- **Current ticket:** P1-028 — Mailer abstraction
 - **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007). P0-083 size gate likewise deferred to CI (DOCKER-001, no docker daemon here); Dockerfile.api + gate implemented, AC unticked until CI runs green. P0-088 AC ("smoke enforces health") and P0-090 AC ("smoke green in CI") likewise unticked until the smoke job goes green in CI — `just smoke` + the CI job are implemented, but the workflow files can't reach GitHub yet (CI-WORKFLOWS-001). Remote CI runs the STALE workflow — local checks added since ~09:20 IST never ran remotely.
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
@@ -14,7 +14,7 @@
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
 | 0 | Foundation & Platform Baseline | 105 / 108 | P0-034/046/083 implemented but unverified (DOCKER-001) — live ACs + exit gates for `just dev`/`just smoke`/CI deferred to docker-capable CI |
-| 1 | Identity & Billing | 26 / 111 | — |
+| 1 | Identity & Billing | 27 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
 | 4 | Console & Admin | 0 / 102 | — |
@@ -25,7 +25,7 @@
 
 | Signal | Value |
 | --- | --- |
-| `just verify` | green (fmt + clippy -D warnings + tests; smoke excluded per ADR-0017 — `just smoke` exists now, still excluded: no docker daemon here) — 654 passed, 0 failed (P1-026; 634 + 20 new; cold run after `cargo clean` freed 361.7 GiB — see DISK-QUOTA-001) — `just openapi-check` + `just route-table-check` green |
+| `just verify` | green (fmt + clippy -D warnings + tests; smoke excluded per ADR-0017 — `just smoke` exists now, still excluded: no docker daemon here) — 659 passed, 0 failed (P1-027; 654 + 5 new: 3 `needs_rehash` unit tests + 2 login rehash tests; full run ~31 min — the heavier Argon2 defaults slow the auth suite) — `just openapi-check` + `just route-table-check` + `just config-table-check` + `just env-check` green |
 | Coverage (core/engine/api) | 96.8% / 99.1% / 92.6% (worker 83.8%) — all above NFR-50 floors (85/80/75/70); report-only until Phase 2 (`just coverage-gate` exists, OFF) — re-measured 2026-11-13 during P1-001 (`just coverage` green) |
 | Golden suite | — |
 | Bench snapshot (image 4K p95 / video factor) | full-job 4K mean 545 ms (scaffold chain — see Bench history; p95 not tracked yet, criterion mean/median in `crates/engine/benches/baselines/`) / video factor n/a (input-prep only; real factor needs the Phase 2 video pipeline) |
@@ -38,13 +38,14 @@
 - 10th VM reset (~19:35 IST 2026-11-13): services restored per ASSUMPTION-010 (see its update in ISSUES.md — incl. the `.env` password-extraction trap); `just`/`cargo` need `~/.local/bin` + `~/.cargo/bin` on PATH in every exec call.
 - 11th VM reset (~21:31 IST 2026-11-13): the 10th coordinator was runtime-interrupted mid-P1-025 with the whole ticket uncommitted; the 11th coordinator resumed, verified the tree, restored services the same way (binaries + data dir survived, `pf` role/db recreated, all migrations re-applied incl. the new `password_reset_token_purpose` one), and finished + committed P1-025 on main. Branch rule from P1-026: work on branch `phase-1`, merge each ticket into main locally (no rebase, no push).
 - P1-026 done 2026-11-13 (11th coordinator): password policy + pwned check, `just verify` green 654 passed; verify was blocked mid-ticket by DISK-QUOTA-001 (linker SIGBUS = disk quota; `cargo clean` freed 361.7 GiB). COMMITS-LINT-001 fixed right after (linter accepts CI-FAIL-xxx/SCHEMA-DOC-xxx ids; CI fixes must use scope `ops`, not `ci`). Main has since moved via the parent's CI fixes (b047d40 config table, dfe50a4 merge incl. CI-FAIL-007 ffmpeg + CI-FAIL-008 Garage secret); the P1-026 merge (a485ace) resolved one conflict (DECISIONS.md ADR-0020 vs ADR-0021 — both kept, mine renumbered).
+- P1-027 done 2026-11-13 (12th coordinator): Argon2 defaults m=64 MiB/t=3/p=4 + rehash-on-login, `just verify` green 659 passed; the first verify attempt failed on ONE test (`settings_defaults_are_the_owasp_values` in `apps/api/tests/register.rs` — asserted the old defaults as `19_456`, which the `19456` grep missed; renamed to `settings_defaults_are_the_p1_027_values` + fixed the register module doc's "~50 ms" hash-cost note). Bench: hash ~195 ms / verify ~192 ms at new defaults (criterion, 10 samples, build VM). Note for the next coordinator: full `just verify` now takes ~31 min (heavier hashing); run targeted binaries first when iterating.
 
 ## Next-up queue (top 5)
 
-1. P1-027 — Argon2 params config
-2. P1-028 — Mailer abstraction
-3. P1-029 — Email templates v1
-4. P1-030 — (next in E1.3/E1.4 order — see phase file)
+1. P1-028 — Mailer abstraction
+2. P1-029 — Email templates v1
+3. P1-030 — Email flow tests
+4. P1-031 — Email send rate limits
 5. CI #8 verdict (parent's thread — verify/smoke on dfe50a4; fixtures-check + smoke were red in CI #7, fixed by CI-FAIL-007/008)
 
 ## Bench history (append-only)

@@ -109,6 +109,36 @@ docker compose -f ops/compose.base.yml -f ops/compose.prod.yml --profile prod --
   `PF_ENVIRONMENT: prod`, and the worker's 2g cap). Live `up` waits
   for CI/E0.9's smoke (P0-090, DOCKER-001).
 
+### Argon2 cost on the target VPS (P1-027)
+
+Password hashing runs at m = 64 MiB, t = 3, p = 4
+(`PF_ARGON2_*`, P1-027 — raised from the P1-001 OWASP
+defaults m = 19 MiB, t = 2, p = 1). Measured with
+`cargo bench -p detag-core --bench argon2` (criterion, 10
+samples) on 2026-11-13, on the build VM (1.5-CPU share —
+slower than the 4-vCPU / 8 GB target VPS, so treat these as
+upper bounds):
+
+| Operation | Current (65536/3/4) | Previous (19456/2/1) |
+| --- | --- | --- |
+| `hash_password` (register, rehash) | ~195 ms | ~26 ms |
+| `verify_password` (login) | ~192 ms | ~29 ms |
+
+What this means in practice: every login and registration
+pays ~0.2 s of Argon2id (was ~0.03 s) — a deliberate
+trade, ~7× the old cost for a ~3.4× memory + extra
+iteration + 4 lanes. A user whose hash predates P1-027 pays
+one extra ~0.2 s hash on their first login after the
+upgrade (rehash-on-login), then never again. The 64 MiB per
+hash is the sizing note: a burst of concurrent logins holds
+64 MiB × lanes in flight — the api's 1 g mem cap (above)
+absorbs it, and the per-account login bucket (10 burst)
+bounds one account's burst. If login latency ever needs
+cutting, lower `PF_ARGON2_*` in the deployment env (no code
+change) — but a lower setting only affects NEW hashes; old
+hashes upgrade on next login, so the fleet converges
+without a migration.
+
 ### Healthchecks (P0-088)
 
 Every service except the one-shot bootstrap has a healthcheck, and
@@ -208,7 +238,7 @@ in a real inbox.
 | `PF_REDIS_URL` | api, worker | redis://localhost:6379 | |
 | `PF_S3_ENDPOINT`, `PF_S3_BUCKET`, `PF_S3_ACCESS_KEY`, `PF_S3_SECRET_KEY`, `PF_S3_REGION` | storage | MinIO localhost:9000 | private bucket required |
 | `PF_JWT_SECRET` | api | dev-fixed | 64B in prod; rotation = dual-verify window |
-| `PF_ARGON2_M_COST_KIB`, `PF_ARGON2_T_COST`, `PF_ARGON2_P_COST` | api | 19456 / 2 / 1 | Argon2id password-hashing costs, OWASP first choice (P1-001); m 4096..=1048576 KiB, t/p 1..=16 |
+| `PF_ARGON2_M_COST_KIB`, `PF_ARGON2_T_COST`, `PF_ARGON2_P_COST` | api | 65536 / 3 / 4 | Argon2id password-hashing costs (P1-001; defaults raised P1-027 — m=64 MiB, t=3, p=4; old hashes rehashed on login); m 4096..=1048576 KiB, t/p 1..=16 |
 | `PF_PASSWORD_PWNED_CHECK`, `PF_PASSWORD_PWNED_URL` | api | off, https://api.pwnedpasswords.com | HIBP k-anonymity check on register + reset (P1-026); off by default (third-party call per registration/reset); fails open on transport error |
 | `PF_TOS_CURRENT_VERSION` | api | v1 | ToS version a registration must accept (P1-001); any other `accept_tos_version` is a 422 |
 | `PF_DISPOSABLE_EMAIL_DOMAINS` | api | mailinator.com, guerrillamail.com, 10minutemail.com, tempmail.com, yopmail.com | comma-separated disposable domains rejected at registration (P1-001); empty = no denylist |
