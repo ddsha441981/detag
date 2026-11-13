@@ -9,6 +9,7 @@ pub mod db;
 pub mod error;
 pub mod flags;
 pub mod jwt;
+pub mod lockout;
 pub mod media;
 pub mod metrics;
 pub mod migrate;

@@ -1,0 +1,125 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT scope, key, attempts, first_failed_at, last_failed_at,\n                  locked_until, notified_at, created_at, updated_at\n           FROM login_attempt_counters WHERE scope = $1 AND key = $2\n           FOR UPDATE",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "scope",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "login_attempt_counters",
+            "name": "scope"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "key",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "login_attempt_counters",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "attempts",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "login_attempt_counters",
+            "name": "attempts"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "first_failed_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "login_attempt_counters",
+            "name": "first_failed_at"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "last_failed_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "login_attempt_counters",
+            "name": "last_failed_at"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "locked_until",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "login_attempt_counters",
+            "name": "locked_until"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "notified_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "login_attempt_counters",
+            "name": "notified_at"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "login_attempt_counters",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "login_attempt_counters",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "cbce68ca0cf9bcfd2bf61c6022918f856594d28cdb4bb772cbd32ae69abda616"
+}

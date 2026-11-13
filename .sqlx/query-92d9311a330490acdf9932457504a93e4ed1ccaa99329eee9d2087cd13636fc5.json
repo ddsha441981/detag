@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE login_attempt_counters SET notified_at = $3, updated_at = $3\n           WHERE scope = $1 AND key = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "92d9311a330490acdf9932457504a93e4ed1ccaa99329eee9d2087cd13636fc5"
+}

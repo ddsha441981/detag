@@ -57,10 +57,13 @@ use detag_core::{
     db::PoolConfig,
     error::FieldError,
     jwt::{issue_access_token, ACCESS_TOKEN_TTL_SECS, REFRESH_TOKEN_TTL_SECS},
+    lockout::LOCKOUT_THRESHOLD,
     password::{verify_password, PasswordError},
     redis::ratelimit::RateLimit,
     repos::{
         audit_logs::{self, NewAuditLog},
+        email_outbox::{self, NewOutboxMail},
+        login_attempts::{self, LockScope},
         sessions::{self, NewSession},
         users::{self},
         RepoError,
@@ -119,6 +122,14 @@ impl LoginRequest {
     }
 }
 
+/// The outbox template for the lockout notification mail
+/// (P1-004): queued once per lock episode, when the account
+/// first locks. The mailer is not in Phase 1 yet (see
+/// `docs/03-ARCHITECTURE/03-api-spec.md` — the register flow
+/// has the same pending note), so the mail is only queued; the
+/// queue row is the evidence the mailer will send.
+pub const LOCKOUT_NOTICE_TEMPLATE: &str = "lockout-notice";
+
 /// The login response body: the access token + its lifetime.
 /// The refresh token is NOT in the body — it travels as the
 /// httpOnly `detag_refresh` cookie (set by the handler).
@@ -153,12 +164,22 @@ pub struct LoginOutcome {
 }
 
 /// What login can fail with. `Invalid` is the ONLY client
-/// failure: unknown email and wrong password are the same
-/// error, by design (no enumeration).
+/// failure for a bad password: unknown email and wrong password
+/// are the same error, by design (no enumeration). `Locked` is
+/// the lockout: the account (or the client IP) is temporarily
+/// locked after too many failures — 423 `PF-1008`, with
+/// `Retry-After` carrying the seconds until the lock lifts.
 #[derive(Debug, Error)]
 pub enum LoginError {
     #[error("invalid email or password")]
     Invalid,
+    #[error("account locked")]
+    Locked {
+        /// Seconds until the lock lifts (the later of the
+        /// account and IP locks — the login is usable again
+        /// when both have expired).
+        retry_after_secs: u64,
+    },
     #[error("too many login attempts for this account")]
     RateLimited(RateLimit),
     #[error("login failed")]
@@ -174,14 +195,25 @@ enum LoginTxError {
 
 /// Log a user in. `state` carries the pool, settings, redis,
 /// rate-limit policy, and the dummy password hash (see
-/// [`AppState`](crate::AppState)).
+/// [`AppState`](crate::AppState)). `client_ip` is the abuse
+/// identity for the per-IP lockout counter: the XFF-first
+/// address (see `crate::rate_limit::client_ip_from`), or
+/// `"unknown"` when neither source had an address — the IP
+/// counter is skipped for `"unknown"` (there is no IP
+/// identity to lock).
 pub async fn login_user(
     state: &AppState,
     req: &LoginRequest,
     device: &DeviceInfo,
+    client_ip: &str,
 ) -> Result<LoginOutcome, LoginError> {
     let email = req.normalized_email();
     let email_hash = sha256_hex(email.as_bytes());
+    let ip_hash = if client_ip == "unknown" {
+        None
+    } else {
+        Some(sha256_hex(client_ip.as_bytes()))
+    };
 
     // Per-account rate limit, BEFORE the password verify (so a
     // brute-force against one account is bounded even from many
@@ -201,6 +233,48 @@ pub async fn login_user(
         Err(err) => {
             tracing::warn!(scope = "login-account", error = %err, "rate limiter failing open: redis unavailable");
         }
+    }
+
+    // Lockout (P1-004): the account and the client IP are
+    // checked BEFORE the password verify — a locked login
+    // never reaches the verify, so it cannot extend the lock
+    // by hammering and its timing reveals nothing. The check
+    // is a plain read; the record happens on failure below.
+    // A locked attempt is not audited (no attempt row, no
+    // failure row): an attacker hammering a locked account
+    // must not flood the audit log — the lock itself was
+    // audited when it was set (`login.locked`).
+    let now = Utc::now();
+    let mut locked_for: Option<i64> = None;
+    for (scope, key) in [
+        (LockScope::Account, email_hash.as_str()),
+        (LockScope::Ip, ip_hash.as_deref().unwrap_or_default()),
+    ] {
+        if scope == LockScope::Ip && ip_hash.is_none() {
+            continue;
+        }
+        let row = login_attempts::get(&state.pool, scope, key)
+            .await
+            .map_err(|err| {
+                tracing::error!(error = ?err, "login: lockout lookup failed");
+                LoginError::Internal
+            })?;
+        if let Some(row) = row {
+            if let Some(until) = row.locked_until {
+                if until > now {
+                    let secs = (until - now).num_seconds();
+                    locked_for = Some(match locked_for {
+                        Some(prev) => prev.max(secs),
+                        None => secs,
+                    });
+                }
+            }
+        }
+    }
+    if let Some(secs) = locked_for {
+        return Err(LoginError::Locked {
+            retry_after_secs: secs.max(1) as u64,
+        });
     }
 
     // The attempt is audited outside the transaction: it
@@ -236,7 +310,14 @@ pub async fn login_user(
     };
     let Some(user) = user else {
         let _ignored = verify_password(&req.password, &state.dummy_password_hash);
-        audit_failure(&state.pool, &email_hash, "unknown_email").await?;
+        record_login_failure(
+            state,
+            &email_hash,
+            ip_hash.as_deref(),
+            None,
+            "unknown_email",
+        )
+        .await?;
         return Err(LoginError::Invalid);
     };
 
@@ -245,7 +326,14 @@ pub async fn login_user(
     match verify_password(&req.password, &user.password_hash) {
         Ok(true) => {}
         Ok(false) => {
-            audit_failure(&state.pool, &email_hash, "wrong_password").await?;
+            record_login_failure(
+                state,
+                &email_hash,
+                ip_hash.as_deref(),
+                Some(user.id),
+                "wrong_password",
+            )
+            .await?;
             return Err(LoginError::Invalid);
         }
         Err(PasswordError::MalformedHash) => {
@@ -258,7 +346,8 @@ pub async fn login_user(
         }
     }
 
-    // One transaction: the session row + the success audit.
+    // One transaction: reset both counters (a success clears
+    // the lockout state) + the session row + the success audit.
     // The refresh token is generated here, inside the service
     // (not the handler): it must exist before the row is
     // written, and only its hash is stored.
@@ -275,7 +364,19 @@ pub async fn login_user(
         let refresh_hash = refresh_hash.clone();
         let device_json = device_json.clone();
         let user = user.clone();
+        let email_hash = email_hash.clone();
+        let ip_hash = ip_hash.clone();
         Box::pin(async move {
+            // A success clears the lockout state for both the
+            // account and the client IP (P1-004).
+            login_attempts::reset(&mut *conn, LockScope::Account, &email_hash)
+                .await
+                .map_err(LoginTxError::Db)?;
+            if let Some(ip) = &ip_hash {
+                login_attempts::reset(&mut *conn, LockScope::Ip, ip)
+                    .await
+                    .map_err(LoginTxError::Db)?;
+            }
             let session = sessions::create(
                 &mut *conn,
                 &NewSession {
@@ -339,33 +440,109 @@ pub async fn login_user(
     })
 }
 
-/// Audit a failed login (internal record only — the `reason`
-/// distinguishes unknown-email from wrong-password for abuse
-/// analysis; it never reaches a response body).
-async fn audit_failure(
-    pool: &detag_core::db::DbPool,
+/// Record a failed login: both counters (account + IP — the
+/// IP one skipped when the client is "unknown"), the failure
+/// audit, and — on the first account lock — the lockout
+/// notification mail + the `login.locked` audit. One
+/// transaction: the counters, the audit rows, and the mail
+/// commit or roll back together. The `reason` distinguishes
+/// unknown-email from wrong-password for abuse analysis; it
+/// never reaches a response body.
+async fn record_login_failure(
+    state: &AppState,
     email_hash: &str,
+    ip_hash: Option<&str>,
+    user_id: Option<Uuid>,
     reason: &str,
 ) -> Result<(), LoginError> {
-    audit_logs::insert(
-        pool,
-        &NewAuditLog {
-            actor_user_id: None,
-            actor_client: None,
-            action: "login.failure".to_string(),
-            target_type: "user".to_string(),
-            target_id: None,
-            before: None,
-            after: Some(serde_json::json!({ "email_hash": email_hash, "reason": reason })),
-            reason: None,
-        },
-    )
+    let now = Utc::now();
+    let timeout = PoolConfig::default().transaction_timeout;
+    tx::with_tx(&state.pool, timeout, |conn| {
+        let email_hash = email_hash.to_string();
+        let ip_hash = ip_hash.map(str::to_string);
+        let reason = reason.to_string();
+        Box::pin(async move {
+            let (account, newly_locked) =
+                login_attempts::record_failure(&mut *conn, LockScope::Account, &email_hash, now)
+                    .await
+                    .map_err(LoginTxError::Db)?;
+            if let Some(ip) = &ip_hash {
+                login_attempts::record_failure(&mut *conn, LockScope::Ip, ip, now)
+                    .await
+                    .map_err(LoginTxError::Db)?;
+            }
+            audit_logs::insert(
+                &mut *conn,
+                &NewAuditLog {
+                    actor_user_id: user_id,
+                    actor_client: None,
+                    action: "login.failure".to_string(),
+                    target_type: "user".to_string(),
+                    target_id: user_id.map(|id| id.to_string()),
+                    before: None,
+                    after: Some(serde_json::json!({ "email_hash": email_hash, "reason": reason })),
+                    reason: None,
+                },
+            )
+            .await
+            .map_err(LoginTxError::Db)?;
+            // First lock only: the count just reached the
+            // threshold, the account exists, and the mail has
+            // not been queued for this lock yet. Extensions of
+            // an existing lock do not re-notify — the user
+            // already knows — and a later failure after a
+            // window reset starts a new episode (attempts
+            // returns to 1, so the next first lock notifies
+            // again).
+            if newly_locked && i64::from(account.attempts) == LOCKOUT_THRESHOLD {
+                if let Some(id) = user_id {
+                    email_outbox::enqueue(
+                        &mut *conn,
+                        &NewOutboxMail {
+                            to_hash: email_hash.clone(),
+                            template: LOCKOUT_NOTICE_TEMPLATE.to_string(),
+                            payload: serde_json::json!({ "user_id": id }),
+                            scheduled_at: None,
+                        },
+                    )
+                    .await
+                    .map_err(LoginTxError::Db)?;
+                    login_attempts::mark_notified(&mut *conn, LockScope::Account, &email_hash, now)
+                        .await
+                        .map_err(LoginTxError::Db)?;
+                    audit_logs::insert(
+                        &mut *conn,
+                        &NewAuditLog {
+                            actor_user_id: Some(id),
+                            actor_client: None,
+                            action: "login.locked".to_string(),
+                            target_type: "user".to_string(),
+                            target_id: Some(id.to_string()),
+                            before: None,
+                            after: Some(
+                                serde_json::json!({ "locked_until": account.locked_until }),
+                            ),
+                            reason: None,
+                        },
+                    )
+                    .await
+                    .map_err(LoginTxError::Db)?;
+                }
+            }
+            Ok(())
+        })
+    })
     .await
-    .map_err(|err| {
-        tracing::error!(error = ?err, "login: failure audit failed");
-        LoginError::Internal
-    })?;
-    Ok(())
+    .map_err(|err| match err {
+        TxError::Inner(LoginTxError::Db(db_err)) => {
+            tracing::error!(error = ?db_err, "login: failure transaction failed (db)");
+            LoginError::Internal
+        }
+        other => {
+            tracing::error!(error = ?other, "login: failure transaction failed");
+            LoginError::Internal
+        }
+    })
 }
 
 #[cfg(test)]

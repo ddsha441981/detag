@@ -11,7 +11,7 @@ use super::extractors::RequestId;
 use super::stub;
 use crate::{
     problem::ProblemResponse,
-    rate_limit::denied_response,
+    rate_limit::{client_ip_from, denied_response},
     services::{
         login::{
             login_user, DeviceInfo, LoginError, LoginRequest, LoginResponse, REFRESH_COOKIE_NAME,
@@ -199,7 +199,7 @@ pub async fn login(
             .map(|socket| socket.ip().to_string())
             .unwrap_or_else(|| "unknown".to_string()),
     };
-    match login_user(&state, &req, &device).await {
+    match login_user(&state, &req, &device, &client_ip_from(&headers, addr)).await {
         Ok(outcome) => {
             let cookie = format!(
                 "{REFRESH_COOKIE_NAME}={}; HttpOnly; Secure; SameSite=Lax; Path=/v1/auth; Max-Age={REFRESH_TOKEN_TTL_SECS}",
@@ -217,6 +217,20 @@ pub async fn login(
             None,
         ))
         .into_response(),
+        Err(LoginError::Locked { retry_after_secs }) => {
+            // 423 PF-1008 (P1-004). Same problem+json envelope
+            // as every error, plus Retry-After — the client
+            // knows exactly how long to wait before retrying.
+            let mut res = ProblemResponse(AppError::AccountLocked.to_problem(
+                Profile::Production,
+                request_id,
+                None,
+            ))
+            .into_response();
+            res.headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from(retry_after_secs));
+            res
+        }
         Err(LoginError::RateLimited(result)) => {
             denied_response(result, state.rate_limit.login_account_burst(), request_id)
         }

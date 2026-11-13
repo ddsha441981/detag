@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM login_attempt_counters WHERE scope = $1 AND key = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b1504b5012ca76ab72ba22c570787893e3f6dd5a1ebd7b7f07c0a87050a6d68f"
+}

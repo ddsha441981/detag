@@ -99,10 +99,41 @@ the `login_account` bucket (10 burst / 1 per min,
 normalized email), checked BEFORE the password verify — a
 denial is 429 `PF-3007` with `Retry-After`. Redis down fails
 open (warn logged, P0-103); the durable lockout is P1-004.
+Lockout (P1-004, FR-A-01): `login_attempt_counters` is the
+durable lockout of record — one row per (scope, key), scope
+`account` (sha256 of the normalized email) or `ip` (sha256
+of the client IP, the same XFF-first identity the rate
+limiter uses). Five failures inside a 15-minute window lock
+the account AND the IP: the first lock is 60 s, then the
+duration doubles per further failure (120, 240, 480, 960,
+1920), capped at 3600 s. The lock is checked BEFORE the
+password verify — a locked login is 423 `PF-1008`
+`account_locked` with `Retry-After` (the later of the
+account and IP locks) and is NOT recorded, so hammering a
+locked account cannot extend the lock (the race window is
+real: attempts that passed the check before the lock was set
+still record, and extend it — they were genuine attempts).
+Failures record in one transaction: both counters (atomic
+`SELECT ... FOR UPDATE`, so concurrent failures serialize
+and no increment is lost) + the `login.failure` audit. On
+the first lock the notification mail is queued in the outbox
+(template `lockout-notice`, payload `{user_id}`, recipient
+as sha256 only) + `login.locked` is audited — once per lock
+episode; extensions do not re-notify. A success resets both
+counters (the reset is in the session transaction); a
+password reset clears the account counter (the hook exists —
+the reset-password ticket wires the call); registering an
+email clears any counter the address accumulated before it
+existed (an attacker cannot pre-lock an address the owner
+registers later). The counters live in Postgres, not Redis —
+a Redis flush never silently unlocks an account under
+attack. The IP counter is skipped when the client is
+`"unknown"` (no IP identity to lock — oneshot tests).
 Audit: `login.attempt` (anonymous, email hash) +
 `login.success` (in the session transaction) +
 `login.failure` (anonymous, email hash + `reason`:
-`unknown_email` / `wrong_password` — internal only).
+`unknown_email` / `wrong_password` — internal only) +
+`login.locked` (on the first lock, with `locked_until`).
 
 Register behavior (P1-001, FR-A-01): the email is trimmed +
 lowercased before storage (the column is citext, so the match

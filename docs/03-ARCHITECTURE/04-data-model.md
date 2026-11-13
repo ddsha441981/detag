@@ -10,6 +10,7 @@ users 1─* uploads 1─1 jobs 1─* job_events          plans 1─* subscriptio
 jobs 1─* artifacts        jobs 1─1 quality_reports  users 1─* usage_counters(daily)
 users 1─* attestations    users 1─* webhook_endpoints 1─* webhook_deliveries
 users 1─* email_verification_tokens (single-use, 24h)
+users 1─* login_attempt_counters (lockout, P1-004)
 audit_logs (actor: users, action, target)           abuse_reports ─ jobs
 feature_flags   idempotency_keys   email_outbox     plans (catalog)
 ```
@@ -18,6 +19,7 @@ feature_flags   idempotency_keys   email_outbox     plans (catalog)
 
 **users** — id, email (citext, unique), password_hash (argon2id), email_verified_at, role (user|support|admin), status (active|suspended|deletion_pending), tos_version, deleted_at (grace), settings jsonb.
 **email_verification_tokens** (P1-002) — id, user_id, token_hash (sha256, unique — the raw token lives only in the outbox payload + the email), expires_at (24h), used_at (set on consume; single-use), created_at. Minting deletes the user's previous unused tokens (one live token per user). The resend rate limit (3/hour) counts `email_outbox` rows for the user + template, not token rows — minting deletes token history, but every mint enqueues exactly one outbox row in the same transaction.
+**login_attempt_counters** (P1-004) — scope (`account`|`ip`), key (sha256 of the email / of the client IP), attempts (since the last success or window reset), first_failed_at, last_failed_at, locked_until, notified_at (when the lockout mail was queued), created_at, updated_at. PK (scope, key). The lockout of record: 5 failures in a 15-min window lock (60 s, doubling per further failure, capped at 3600 s — the curve is `detag_core::lockout`); a success deletes the row; registering the email deletes the account row. While locked, attempts are not recorded (a locked account cannot be kept locked by hammering); the lock is set with GREATEST against the existing value, so concurrent failures can only extend it. `notified_at` is set once per lock episode, in the same transaction as the `lockout-notice` outbox enqueue.
 **sessions** — id, user_id, refresh_hash (sha256), family_id (rotation lineage), device (ua, ip-hashed), expires_at, revoked_at, replaced_by.
 **api_keys** — id, user_id, name, prefix, secret_hash, scopes text[], last_used_at, revoked_at, rate_limit_tier.
 **plans** — id, code (free|pro|business), stripe_price_id, currency, amount, entitlements jsonb (daily_images, daily_video_seconds, max_bytes, result_ttl_hours, concurrency, lane, features jsonb).

@@ -45,6 +45,7 @@ use detag_core::{
     password::{hash_password, Argon2Params, PasswordError},
     repos::{
         audit_logs::{self, NewAuditLog},
+        login_attempts::{self, LockScope},
         users::{self, User},
         RepoError,
     },
@@ -250,6 +251,13 @@ pub async fn register_user(
                     RepoError::UniqueViolation { .. } => RegisterTxError::Duplicate,
                     other => RegisterTxError::Db(other),
                 })?;
+            // A fresh account has no failed logins: clear any
+            // counter the address accumulated before it
+            // existed (P1-004 — an attacker cannot pre-lock
+            // an address the owner registers later).
+            login_attempts::reset(&mut *conn, LockScope::Account, &email_hash)
+                .await
+                .map_err(RegisterTxError::Db)?;
             audit_logs::insert(
                 &mut *conn,
                 &NewAuditLog {

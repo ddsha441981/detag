@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO login_attempt_counters\n               (scope, key, attempts, first_failed_at, last_failed_at)\n           VALUES ($1, $2, 0, $3, $3)\n           ON CONFLICT (scope, key) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5c05a89e39ce6105c23b4b69bb01f39cb566b6c1de670f8e93f0da574747fdc8"
+}

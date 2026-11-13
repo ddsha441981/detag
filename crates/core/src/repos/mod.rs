@@ -29,6 +29,7 @@ pub mod email_verification_tokens;
 pub mod error;
 pub mod job_events;
 pub mod jobs;
+pub mod login_attempts;
 pub mod plans;
 pub mod sessions;
 pub mod uploads;

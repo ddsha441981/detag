@@ -132,6 +132,13 @@ pub enum AppError {
     /// Kit: refresh-token reuse detected; all sessions revoked. PF-1007, 401.
     #[error("refresh token reuse detected; all sessions revoked")]
     RefreshReuse,
+    /// P1-004: too many failed logins — the account (or the
+    /// client IP) is temporarily locked. PF-1008, 423. The
+    /// code is assigned here (the PF-1008 slot was free); the
+    /// lockout response also carries `Retry-After` with the
+    /// seconds until the lock lifts (like the 429s).
+    #[error("account locked")]
+    AccountLocked,
     /// Kit: email verification required before job creation. PF-1009, 403.
     #[error("email not verified")]
     EmailNotVerified,
@@ -264,6 +271,7 @@ impl AppError {
             Unauthenticated => "PF-1001",
             Forbidden => "PF-1002",
             RefreshReuse => "PF-1007",
+            AccountLocked => "PF-1008",
             EmailNotVerified => "PF-1009",
             InvalidToken => "PF-1010",
             ExpiredToken => "PF-1011",
@@ -306,6 +314,7 @@ impl AppError {
             Unauthenticated => 401,
             Forbidden => 403,
             RefreshReuse => 401,
+            AccountLocked => 423,
             EmailNotVerified => 403,
             InvalidToken => 401,
             ExpiredToken => 401,
@@ -348,6 +357,7 @@ impl AppError {
             Unauthenticated => "unauthenticated",
             Forbidden => "forbidden",
             RefreshReuse => "refresh_token_reused",
+            AccountLocked => "account_locked",
             EmailNotVerified => "email_not_verified",
             InvalidToken => "invalid_token",
             ExpiredToken => "expired_token",
@@ -392,6 +402,9 @@ impl AppError {
             Unauthenticated => "authentication is required for this resource",
             Forbidden => "you do not have permission for this resource",
             RefreshReuse => "refresh token reuse detected; all sessions have been revoked",
+            AccountLocked => {
+                "this account is temporarily locked after too many failed login attempts"
+            }
             EmailNotVerified => "email verification is required before creating jobs",
             InvalidToken => "the access token is invalid",
             ExpiredToken => "the access token has expired",
@@ -534,6 +547,7 @@ mod tests {
             Unauthenticated,
             Forbidden,
             RefreshReuse,
+            AccountLocked,
             EmailNotVerified,
             InvalidToken,
             ExpiredToken,
@@ -575,7 +589,7 @@ mod tests {
     #[test]
     fn every_variant_maps_to_status_code_title() {
         let variants = all_variants();
-        assert_eq!(variants.len(), 35, "a variant was added without a test");
+        assert_eq!(variants.len(), 36, "a variant was added without a test");
         for err in &variants {
             let code = err.code();
             let status = err.status();
@@ -595,6 +609,7 @@ mod tests {
                 AppError::Unauthenticated
                 | AppError::Forbidden
                 | AppError::RefreshReuse
+                | AppError::AccountLocked
                 | AppError::EmailNotVerified
                 | AppError::InvalidToken
                 | AppError::ExpiredToken => assert!((1000..2000).contains(&n)),
@@ -774,6 +789,13 @@ mod tests {
                 401,
                 "refresh_token_reused",
                 "refresh token reuse detected; all sessions have been revoked",
+            ),
+            (
+                AccountLocked,
+                "PF-1008",
+                423,
+                "account_locked",
+                "this account is temporarily locked after too many failed login attempts",
             ),
             (
                 EmailNotVerified,
@@ -1008,7 +1030,7 @@ mod tests {
     #[test]
     fn variant_to_response_table() {
         let table = response_table();
-        assert_eq!(table.len(), 35, "a variant is missing from the table");
+        assert_eq!(table.len(), 36, "a variant is missing from the table");
         assert_eq!(
             table.len(),
             all_variants().len(),
@@ -1017,7 +1039,7 @@ mod tests {
         let mut codes: Vec<&str> = table.iter().map(|(_, c, _, _, _)| *c).collect();
         codes.sort_unstable();
         codes.dedup();
-        assert_eq!(codes.len(), 35, "two variants share a code");
+        assert_eq!(codes.len(), 36, "two variants share a code");
 
         for (err, code, status, title, detail) in &table {
             assert_eq!(err.code(), *code, "{code}");

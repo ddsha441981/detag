@@ -66,7 +66,7 @@ use crate::routes::extractors::RequestId;
 use axum::{
     body::Body,
     extract::{ConnectInfo, State},
-    http::{header, HeaderValue, Request, StatusCode},
+    http::{header, HeaderMap, HeaderName, HeaderValue, Request, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -174,10 +174,23 @@ impl RateLimitPolicy {
 /// entry, else the socket address, else `"unknown"` (one shared
 /// bucket — an unidentifiable client is still bounded).
 pub fn client_ip(req: &Request<Body>) -> String {
-    if let Some(xff) = req
-        .headers()
-        .get(header::HeaderName::from_static("x-forwarded-for"))
-    {
+    let addr = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(addr)| *addr);
+    client_ip_from(req.headers(), addr)
+}
+
+/// The same identity, from the pieces a handler has: the
+/// request headers + the (optional) socket address. The login
+/// handler (P1-004) uses it for the per-IP lockout counter —
+/// the same identity the rate limiter uses, so the two agree
+/// on who "the client" is. `"unknown"` means neither source
+/// had an address (oneshot tests); the lockout skips the IP
+/// counter for it (there is no IP identity to lock — see the
+/// login service).
+pub fn client_ip_from(headers: &HeaderMap, addr: Option<SocketAddr>) -> String {
+    if let Some(xff) = headers.get(HeaderName::from_static("x-forwarded-for")) {
         if let Ok(xff) = xff.to_str() {
             if let Some(first) = xff.split(',').next() {
                 let first = first.trim();
@@ -187,7 +200,7 @@ pub fn client_ip(req: &Request<Body>) -> String {
             }
         }
     }
-    if let Some(ConnectInfo(addr)) = req.extensions().get::<ConnectInfo<SocketAddr>>() {
+    if let Some(addr) = addr {
         return addr.ip().to_string();
     }
     "unknown".to_string()
