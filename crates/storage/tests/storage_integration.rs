@@ -393,7 +393,7 @@ async fn live_minio_testcontainers() {
         return;
     }
 
-    let container = GenericImage::new("minio/minio", "latest")
+    let container = GenericImage::new("quay.io/minio/minio", "latest")
         .with_exposed_port(9000.tcp())
         .with_wait_for(testcontainers::core::WaitFor::message_on_stdout(
             "API: http://",

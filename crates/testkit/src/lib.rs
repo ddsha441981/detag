@@ -14,7 +14,7 @@
 //!   is the bucketed proof here; CI's containers leg proves it
 //!   end to end).
 //! - [`TestCtx::containers()`] — the same, but postgres:16, redis:7
-//!   and minio/minio start in testcontainers first (docker only;
+//!   and quay.io/minio/minio start in testcontainers first (docker only;
 //!   callers env-gate it on `PF_TEST_CONTAINERS=1`, CI does). The
 //!   bucket IS created here, so `s3_ready()` is true.
 //!
@@ -224,7 +224,7 @@ pub struct Containers {
     pub s3_endpoint: String,
 }
 
-/// Start postgres:16, redis:7 and minio/minio in testcontainers.
+/// Start postgres:16, redis:7 and quay.io/minio/minio in testcontainers.
 /// Docker only — callers env-gate it (`PF_TEST_CONTAINERS=1`).
 /// Same images + wait conditions as the api harness used to carry
 /// inline; the definitions now live here, once.
@@ -251,7 +251,7 @@ pub async fn start_containers() -> Result<Containers, testcontainers::Testcontai
         .await?;
     let redis_port = redis.get_host_port_ipv4(6379).await?;
 
-    let minio = GenericImage::new("minio/minio", "latest")
+    let minio = GenericImage::new("quay.io/quay.io/minio/minio", "latest")
         .with_exposed_port(9000.tcp())
         .with_wait_for(WaitFor::message_on_stdout("API: http://"))
         .with_env_var("MINIO_ROOT_USER", "minioadmin")
@@ -376,7 +376,7 @@ impl TestCtx {
     }
 
     /// Context from testcontainers: postgres:16, redis:7 and
-    /// minio/minio start first (docker only — callers env-gate it
+    /// quay.io/minio/minio start first (docker only — callers env-gate it
     /// on `PF_TEST_CONTAINERS=1`). The bucket IS created here, so
     /// `s3_ready` is true; a failure to create it panics (in this
     /// mode MinIO is promised).

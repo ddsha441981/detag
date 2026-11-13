@@ -176,7 +176,7 @@ impl TestFixtures {
     }
 
     /// Fixtures from testcontainers: postgres:16, redis:7 and
-    /// minio/minio, each on a random host port. Docker only — call
+    /// quay.io/minio/minio, each on a random host port. Docker only — call
     /// it only when `PF_TEST_CONTAINERS=1` (CI does); on this VM it
     /// fails to start containers (DOCKER-001).
     ///
@@ -207,7 +207,7 @@ impl TestFixtures {
             .await?;
         let redis_port = redis.get_host_port_ipv4(6379).await?;
 
-        let minio = GenericImage::new("minio/minio", "latest")
+        let minio = GenericImage::new("quay.io/quay.io/minio/minio", "latest")
             .with_exposed_port(9000.tcp())
             .with_wait_for(WaitFor::message_on_stdout("API: http://"))
             .with_env_var("MINIO_ROOT_USER", "minioadmin")

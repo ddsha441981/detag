@@ -103,7 +103,7 @@ services:
     # found" for the minio namespace from this VM. Pin both images to
     # a dated RELEASE tag once CI can pull (see the ticket status in
     # PHASE-0-foundation.md).
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     container_name: detag-minio
     networks:
       - internal
@@ -125,7 +125,7 @@ services:
   # instead of looping forever. Re-running `up` re-runs it, and
   # `mb --ignore-existing` makes that a no-op for an existing bucket.
   bootstrap:
-    image: minio/mc:latest
+    image: quay.io/minio/mc:latest
     container_name: detag-minio-bootstrap
     networks:
       - internal
