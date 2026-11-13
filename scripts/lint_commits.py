@@ -2,12 +2,15 @@
 """Lint commit messages for Detag's conventional-commit policy (P0-006, NFR-52).
 
 Rules enforced per commit (merge commits are skipped):
-  1. Subject matches: <type>(<scope>): P<phase>-<num> <description>
+  1. Subject matches: <type>(<scope>): <id> <description>
      - type: feat | fix | chore | docs | test | refactor | perf | ci | build | revert
      - scope: one of the vocabulary in CONTRIBUTING.md ("Commits" section)
        (auth, engine, api, worker, web, ops, core, storage, billing,
        mailer, docs, repo)
-     - ticket id: P<phase>-<num> (e.g. P0-006, P1-014)
+     - id: a ticket id P<phase>-<num> (e.g. P0-006, P1-014) — or, for
+       work that has no P-ticket, an issue id CI-FAIL-<n> (a CI failure
+       fix, COMMITS-LINT-001) or SCHEMA-DOC-<n> (a schema-docs drift
+       fix) in the same position.
   2. The full message (subject + body) references at least one requirement
      id: FR-<area>-<n> (e.g. FR-D-05) or NFR-<n> (e.g. NFR-52).
   3. Subject is at most 100 characters.
@@ -65,12 +68,17 @@ SCOPES = {
     "repo",
 }
 
+# The id in the ticket position: a P-ticket, or an issue id for work
+# that has no P-ticket (COMMITS-LINT-001 — a CI-fix or schema-docs
+# commit cannot name a P-ticket it does not belong to).
+ID_RE = r"(?:P\d+-\d+|CI-FAIL-\d+|SCHEMA-DOC-\d+)"
+
 SUBJECT_RE = re.compile(
     r"^(?P<type>[a-z]+)"
     r"\((?P<scope>[a-z][a-z0-9-]*)\)"
-    r": (?P<ticket>P\d+-\d+) (?P<desc>\S.*)$"
+    rf": (?P<ticket>{ID_RE}) (?P<desc>\S.*)$"
 )
-TICKET_RE = re.compile(r"P\d+-\d+")
+TICKET_RE = re.compile(ID_RE)
 REQUIREMENT_RE = re.compile(r"\b(?:FR(?:-[A-Z]+)?-\d+|NFR-\d+)\b")
 MAX_SUBJECT_LEN = 100
 
@@ -89,8 +97,10 @@ def check_message(message: str) -> list[str]:
     match = SUBJECT_RE.match(subject)
     if not match:
         errors.append(
-            "subject must match '<type>(<scope>): P<phase>-<num> <description>' "
-            "(e.g. 'feat(auth): P1-014 refresh token rotation')"
+            "subject must match '<type>(<scope>): <id> <description>' "
+            "(id: P<phase>-<num>, CI-FAIL-<n> or SCHEMA-DOC-<n>) "
+            "(e.g. 'feat(auth): P1-014 refresh token rotation' or "
+            "'fix(ops): CI-FAIL-004 replace dead MinIO with Garage S3')"
         )
         return errors  # Without a parseable subject the rest is noise.
 
@@ -106,7 +116,10 @@ def check_message(message: str) -> list[str]:
         )
 
     if not TICKET_RE.search(subject):
-        errors.append("subject must contain a ticket id (e.g. P0-006)")
+        errors.append(
+            "subject must contain a ticket id "
+            "(P<phase>-<num>, CI-FAIL-<n> or SCHEMA-DOC-<n>)"
+        )
 
     if not REQUIREMENT_RE.search(message):
         errors.append(
