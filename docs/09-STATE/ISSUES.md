@@ -9,21 +9,21 @@
 - Symptom: CI run #3 (commit 3a8528c), verify job stopped at step 13 `openapi-check`: `openapi-check: docs/api/openapi.json is stale — run 'just openapi' and commit it`. Steps 5–12 passed (fmt, clippy -D warnings, env-check, config-table-check, schema-docs-check, dashboards-check, prometheus-check, just). Steps 14+ (route-table-check, fixtures-check, migrate, sqlx prepare --check, nextest, coverage) never ran — their status on CI is still unknown.
 - Cause (proven by JSON deep-diff of the log's committed vs generated blobs): exactly one difference — ADDED `/paths//v1/auth/register/post/responses/429`. P1-020 added the per-email register brute-force bucket (429 Too Many Requests) to the route but never regenerated the spec (`just openapi`).
 - Fix: run `just openapi` and commit the regenerated `docs/api/openapi.json`. TIMING CONSTRAINT: do NOT regenerate while P1-022 is uncommitted (coordinator has uncommitted auth.rs/jwt.rs changes) — regenerating now would bake half-done P1-022 into the spec. Regenerate immediately after P1-022 commits (or as part of its commit). Also: `just verify` locally does NOT run openapi-check, so this drift was invisible here — consider adding the drift checks to the per-ticket verify or a pre-push check.
-- Status: open
+- Status: fixed (5304cb2) — regenerated after P1-022 committed; JSON deep-diff confirms exactly one addition (the 429); `just openapi-check` green. Note: the run that fixed it also restored the VM-reset-wiped services per ASSUMPTION-010 (10th reset: `just` binary gone from PATH, postgres/redis down, `pf` role/db gone; recreated role/db — the `.env` password is `pf`, NOT the 50-char whole-line string an unanchored `sed 's|^postgres://pf:...'` extraction returns, because the line starts with `PF_DATABASE_URL=`).
 
 ### CI-FAIL-002 [bug] CI #3 smoke job fails — compose pulls dead image minio/minio:latest (pull access denied)
 - Date: 2026-11-13 · Ticket: P0-090 (smoke) · Severity: S1 (CI red on main)
 - Symptom: CI run #3, smoke job step 5: `Error response from daemon: pull access denied for minio/minio, repository does not exist or may require 'docker login'` — the compose stack never started (`smoke: FAILED — compose stack did not go healthy in 120s`). This is NOT a VM issue (DOCKER-001): the image name is dead on Docker Hub itself — MinIO moved to Quay.
 - Cause: `ops/compose.minio.yml:47` and `ops/compose.base.yml:106` use `image: minio/minio:latest`; lines 68/128 use `image: minio/mc:latest`.
 - Fix: change to `quay.io/minio/minio:latest` and `quay.io/minio/mc:latest` in both files, then re-run CI. (Also check any other `minio/minio` references in docs/scripts.)
-- Status: open
+- Status: fixed (65826b4) — both compose files + the same dead image in the three testcontainers live legs (`crates/storage/tests/storage_integration.rs`, `crates/testkit/src/lib.rs`, `apps/api/tests/common/mod.rs`, incl. doc comments). `scripts/test_*.py` fixtures keep the old name (validator test data, not image pulls). Static checks green (minio policy + lifecycle + YAML parse + script unit tests); `docker compose config` + live pull still wait on CI (DOCKER-001).
 
 ### CI-FAIL-003 [bug] CI #3 image-size job fails — Dockerfile.api build breaks: utoipa-swagger-ui needs curl, builder has none
 - Date: 2026-11-13 · Ticket: P0-083/P0-084 · Severity: S1 (CI red on main)
 - Symptom: CI run #3, image-size job step 4 (`just image-size-check`): `cargo chef cook` fails — `utoipa-swagger-ui-10.0.2/build.rs: failed to download Swagger UI: "curl command not found"`. The API image never built, so the size gate never ran (NOT a size-ceiling failure — no image existed to measure).
 - Cause: `Dockerfile.api` builder stage installs only `binutils` (curl is installed only in the runtime stage, line ~55); the `utoipa-swagger-ui` build script downloads the Swagger UI zip at build time and falls back to the `curl` binary. `Dockerfile.worker` already installs curl in its builder, so only the API builder is affected.
 - Fix: add `curl` (and `ca-certificates` for https) to the builder-stage `apt-get install` in `Dockerfile.api`, next to `binutils`. Longer-term alternative: vendor the Swagger UI zip so the build needs no download.
-- Status: open
+- Status: fixed (0f0abbc) — api builder fixed as specified. Correction to the note above: `Dockerfile.worker` did NOT already install curl in its builder (only binutils) — the same pair was added there too, since the worker build never ran in CI #3 (the job died at the api build first) and a curl-needing worker build script is unproven; builder layer is discarded either way. Live docker build still waits on CI (DOCKER-001); gate script unit tests pass here.
 
 ### PERF-001 [hardening] Synchronous Argon2id verify blocks tokio workers — a burst of concurrent logins 500s on pool timeout (P1-004)
 - Date: 2026-11-13 · Ticket: P1-004
@@ -58,6 +58,7 @@
 - Update 2026-11-13 (P1-008, 7th reset): recurred again ~12:57 IST — the runtime restarted mid-verify (attempt 3, partway through the api login tests; the log ends mid-binary, no result). This time NO os-intent replay was running and the binaries were gone (`pg_isready`/`redis-cli` not found, no `/etc/redis`, no `/var/lib/postgresql`) — a full `sudo apt-get update` (6m43s, 71.1 MB through the proxy) + `sudo apt-get install -y redis-server postgresql-16` was needed. `just` survived in `~/.local/bin`; cargo survived. Same start steps after (setsid redis, `pg_ctlcluster 16 main start`, recreate `pf` role/db via `sudo -u postgres psql`, `cargo sqlx migrate run` on the `pf` DB — all migrations re-applied cleanly).
 - Update 2026-11-13 (P1-014, 8th reset): recurred again ~14:50 IST — the runtime restarted mid-`cargo check` (a duplicated exec call coincided with the restart; the P1-014 code + `.sqlx/` data survived intact — the check was re-run clean afterwards). No os-intent replay was running, binaries gone again. This time `apt-get update` took only 36 s (package lists cached) + install; same start steps (setsid redis, `pg_ctlcluster 16 main start`, recreate `pf` role/db via `sudo -u postgres psql`, `cargo sqlx migrate run`).
 - Update 2026-11-13 (P1-019, 9th reset): recurred again ~16:48 IST — the runtime restarted mid-`just verify` (attempt 1 of P1-019, partway through the admin_search binary; the log ends mid-binary, no result). No os-intent replay was running, binaries gone again; `apt-get update` + install took ~75 s (lists cached); same start steps (setsid redis, `pg_ctlcluster 16 main start`, recreate `pf` role/db, `cargo sqlx migrate run` — the fresh cluster needed ALL migrations, including the new `sessions_last_seen` one, applied cleanly). The P1-019 working tree survived intact (uncommitted); the verify was re-run from scratch.
+- Update 2026-11-13 (CI-FAIL-001 fix, 10th reset): recurred again ~19:35 IST — `just` binary gone from PATH (`~/.local/bin/just` still exists on disk; the exec PATH just doesn't include `~/.local/bin` or `~/.cargo/bin` — export both in every command), postgres/redis down but binaries + data dir survived (`/var/lib/postgresql/16`, `/etc/redis` intact), `pf` role/db gone. No os-intent replay running. Restored with `pg_ctlcluster 16 main start` + `setsid redis-server ... --daemonize yes` (no reinstall needed this time), recreated `pf` role/db, `cargo sqlx migrate run` applied cleanly. TRAP: extracting the password from `.env` with `sed 's|^postgres://pf:([^@]*)@...'` FAILS — the line starts with `PF_DATABASE_URL=`, so the pattern never matches and sed prints the whole 50-char line; the role was briefly created with that whole line as its password. Anchor the pattern on the `PF_DATABASE_URL=` prefix (`sed -E 's/^PF_DATABASE_URL=postgres:\/\/pf:([^@]*)@.*$/\1/'`) — the real dev password is `pf` (2 chars, same as `.env.example`).
 - Status: open
 
 ### ASSUMPTION-009 [assumption] P0-051 runs its integration suite against native Redis, not testcontainers (P0-051)
@@ -149,6 +150,12 @@
 - Status: open
 
 ## Closed issues (keep for history; prune to last 50)
+
+### SCHEMA-DOC-001 [bug] `just test-lint-commits` red — schema-docs drift test hardcoded 20 tables, repo has 22 — FIXED
+- Date: 2026-11-13 · Ticket: (found during CI-FAIL-002 verification) · Severity: S3 (script unit-test suite red on main; `just verify` does not run it, CI does not run it either — see note)
+- Symptom: `test_migrations_and_doc_agree` failed: `AssertionError: 22 != 20`. The doc and the migrations agree at 22 tables in both directions — only the hardcoded count was stale (Phase 0's 20 + `worker_heartbeats` 20261112133104 + `login_attempt_counters` P1-004).
+- Fix: bump the count 20 → 22 in `scripts/test_check_schema_docs.py` (cd68615). Pre-existing at HEAD 4dbdc95 — none of the CI-FAIL commits touched migrations, the doc, or the checker.
+- Status: fixed (cd68615) — script unit tests green again (143 tests; the full discover run took 210 s once, 9.6 s on re-run — timing variance from test_repeat sleeps, not a flake).
 
 ### SHUTDOWN-001 [bug] api + worker self-terminate ~30 s after startup with no signal (P0-090) — FIXED
 - Date: 2026-11-12 · Ticket: P0-090 · Severity: S2 (would restart-loop both services in production)
