@@ -8,5 +8,6 @@ pub mod deletion;
 pub mod entitlements;
 pub mod login;
 pub mod profile;
+pub mod refresh;
 pub mod register;
 pub mod verification;

@@ -20,13 +20,14 @@ P0-106/107/108 (Phase 0 ticket work done, 105/108); updated
 ~13:58 IST 13 Nov after P1-010 (Phase 1, 10/111); updated
 ~14:10 IST 13 Nov after P1-011 (Phase 1, 11/111); updated
 ~14:19 IST 13 Nov after P1-012 (Phase 1, 12/111); updated
-~14:44 IST 13 Nov after P1-013 (Phase 1, 13/111). Resumed
+~14:44 IST 13 Nov after P1-013 (Phase 1, 13/111); updated
+~15:30 IST 13 Nov after P1-014 (Phase 1, 14/111). Resumed
 from the 8th coordinator's interruption (~23:21 IST, P0-092 in
 progress with uncommitted work). Local HEAD at this update:
-`958b27b` (P1-013). No push (local-only by rule; parent handles
+`f9ce823` (P1-014). No push (local-only by rule; parent handles
 GitHub pushes).
 
-## Tickets done (25)
+## Tickets done (26)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -788,6 +789,38 @@ GitHub pushes).
   green 561 passed, 0 failed, attempt 3 (attempts 1–2:
   FLAKY-002 `slow_consumer_drops_safely` streak of 2, green
   after a 60 s settle — the same streak shape as P1-006).
+- **P1-014 — Refresh rotation** (`f9ce823`):
+  `POST /v1/auth/refresh`: token from the `detag_refresh`
+  cookie only (no body — a client that lost the cookie logs
+  in again). A live token rotates in the same family (new
+  access token + new refresh token, old row `revoked_at` +
+  `replaced_by` = the new row) in one tx with the
+  `session.refreshed` audit. Presenting an already-replaced
+  token is reuse: 401 PF-1007, the whole family revoked, a
+  `session.refresh_reused` audit, and the
+  `refresh-reuse-alert` security mail queued via the outbox.
+  Unknown / revoked / expired tokens are the generic 401
+  PF-1001 (the hash lookup never distinguishes "never
+  existed" from "dead"); the replacement mark is conditional
+  (`replaced_by IS NULL`) so a concurrent double-present
+  runs the reuse path instead of minting a second live
+  session. An impersonation token can never refresh (no
+  session row); a suspended user's token cannot refresh
+  (the suspend revoked every session). Route table 65
+  routes, 15 live / 50 stubs; OpenAPI gains the refresh
+  path (13 paths). Tests: 8 new in `tests/refresh.rs`
+  (rotation in the same family, rotation chains A → B →
+  C, reuse → PF-1007 + family revoked + audit + mail + the
+  new token then dead (PF-1001, no second reuse audit),
+  unknown / missing-cookie / expired / revoked → PF-1001,
+  impersonation token → PF-1001). Docs: api-spec refresh
+  paragraph, security-testing refresh bullets, threat model
+  T22 (refresh-token theft + reuse — LIVE), ISSUES.md
+  ASSUMPTION-010 8th VM reset (~14:50 IST 13 Nov 2026:
+  runtime restarted mid-check; no replay, binaries gone;
+  apt update only 36 s — lists cached; same restore
+  steps). `just verify` green 569 passed, 0 failed,
+  attempt 1 (no flakes).
 
 ## Tickets partially done
 
@@ -900,7 +933,8 @@ GitHub pushes).
   display-name unit) → **498 passed, 0 failed** (P1-006; +12
   email-change integration) → **507 passed, 0 failed**
   (P1-007; +9: 5 api deletion + 3 gc purge + 1 migration)
-  → **561 passed, 0 failed** (P1-013; +4 new core jwt).
+  → **561 passed, 0 failed** (P1-013; +4 new core jwt)
+  → **569 passed, 0 failed** (P1-014; +8 refresh integration).
   Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
@@ -963,6 +997,9 @@ GitHub pushes).
   P1-013: 3 (attempts 1–2: FLAKY-002
   `slow_consumer_drops_safely` streak of 2, green after a
   60 s settle — the same streak shape as P1-006).
+  P1-014: 1 (no flakes — the refresh binary ran green on
+  its first run before the full verify; the full verify
+  took ~13 min at load ~2, just slow, not stuck).
   Every red run was a known flake, a lint fix, or a
   test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
@@ -982,11 +1019,11 @@ GitHub pushes).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-014 — Refresh rotation.
-2. P1-015 — Sessions table + repo.
-3. P1-016 — Cookie + bearer <redacted> auth.
-4. P1-017 — Logout endpoints.
-5. P1-018 — Revoke on password change.
+1. P1-015 — Sessions table + repo.
+2. P1-016 — Cookie + bearer dual auth.
+3. P1-017 — Logout endpoints.
+4. P1-018 — Revoke on password change.
+5. P1-019 — Session listing.
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never

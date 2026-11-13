@@ -7,6 +7,7 @@
 //! `/v1/auth/verify-email` + `/v1/auth/resend-verification`,
 //! real since P1-002, `/v1/auth/login`, real since P1-003,
 //! `POST /v1/auth/confirm-email-change`, real since P1-006,
+//! `POST /v1/auth/refresh`, real since P1-014,
 //! and `GET`/`PATCH`/`DELETE /v1/me`, real since P1-005 (GET +
 //! PATCH) and P1-007 (DELETE) — in `routes/profile.rs`, the
 //! handlers live there, the nest lives here.
@@ -14,12 +15,14 @@
 use super::extractors::RequestId;
 use super::stub;
 use crate::{
+    auth::{parse_session_cookie, Credential},
     problem::ProblemResponse,
     rate_limit::{client_ip_from, denied_response},
     services::{
         login::{
             login_user, DeviceInfo, LoginError, LoginRequest, LoginResponse, REFRESH_COOKIE_NAME,
         },
+        refresh::{refresh_session, RefreshError},
         register::{register_user, RegisterError, RegisterRequest, UserResponse},
         verification::{
             confirm_email_change as confirm_email_change_service,
@@ -306,6 +309,91 @@ pub async fn login(
     }
 }
 
+/// Refresh the access token (P1-014, FR-A-01). Thin handler:
+/// the service owns the flow; this maps its errors to the
+/// problem+json envelope and sets the new refresh cookie.
+/// The refresh token comes from the `detag_refresh` cookie
+/// only — there is no body (a client that lost the cookie
+/// logs in again). The device info is built the same way as
+/// login (the `User-Agent` header + the socket address;
+/// oneshot tests have no socket, so the IP is `"unknown"`
+/// there). An impersonation token in the cookie is not a
+/// refresh token — there is no session row behind it, so the
+/// hash lookup fails with the same generic 401 (P1-010's
+/// promise: P1-014's refresh rejects it).
+#[utoipa::path(
+    post,
+    path = "/v1/auth/refresh",
+    responses(
+        (status = 200, description = "Rotated; new access token in the body, new refresh token in the httpOnly cookie", body = LoginResponse),
+        (status = 401, description = "No cookie, or unknown / revoked / expired refresh token (PF-1001, generic); a rotated token reused is PF-1007 (whole family revoked)", body = Problem)
+    ),
+    tag = "auth"
+)]
+pub async fn refresh(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    headers: HeaderMap,
+    MaybeConnectInfo(addr): MaybeConnectInfo,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let token = match parse_session_cookie(&headers) {
+        Some(Credential::Session(token)) => token,
+        // No cookie (or a cookie that is not a session
+        // cookie): no credential — the generic 401.
+        _ => {
+            return ProblemResponse(AppError::Unauthenticated.to_problem(
+                Profile::Production,
+                request_id,
+                None,
+            ))
+            .into_response();
+        }
+    };
+    let device = DeviceInfo {
+        user_agent: headers
+            .get(header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string),
+        ip: addr
+            .map(|socket| socket.ip().to_string())
+            .unwrap_or_else(|| "unknown".to_string()),
+    };
+    match refresh_session(&state, &token, &device).await {
+        Ok(outcome) => {
+            let cookie = format!(
+                "{REFRESH_COOKIE_NAME}={}; HttpOnly; Secure; SameSite=Lax; Path=/v1/auth; Max-Age={REFRESH_TOKEN_TTL_SECS}",
+                outcome.refresh_token
+            );
+            let mut res = (StatusCode::OK, Json(outcome.response)).into_response();
+            if let Ok(value) = HeaderValue::from_str(&cookie) {
+                res.headers_mut().insert(header::SET_COOKIE, value);
+            }
+            res
+        }
+        // 401 PF-1007 (P1-014): a rotated token presented
+        // again — the family is revoked, the audit + security
+        // email are queued. The code is the signal: PF-1001
+        // means "dead token", PF-1007 means "stolen token".
+        Err(RefreshError::Reuse) => ProblemResponse(AppError::RefreshReuse.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response(),
+        Err(RefreshError::Invalid) => ProblemResponse(AppError::Unauthenticated.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response(),
+        Err(RefreshError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// The auth nests: registration/login/session management under
 /// `/v1/auth`, the profile + sessions under `/v1/me`, API keys
 /// under `/v1/api-keys`.
@@ -319,7 +407,7 @@ pub fn router() -> Router<AppState> {
                 .route("/resend-verification", post(resend_verification))
                 .route("/confirm-email-change", post(confirm_email_change))
                 .route("/login", post(login))
-                .route("/refresh", post(stub))
+                .route("/refresh", post(refresh))
                 .route("/logout", post(stub))
                 .route("/forgot-password", post(stub))
                 .route("/reset-password", post(stub)),

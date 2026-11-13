@@ -27,7 +27,9 @@
 //!    admin suspend/restore, P1-009 `GET /v1/admin/users`, and
 //!    P1-010 admin impersonate answer 401 PF-1001 for the probe
 //!    (no credential — the auth extractor rejects before the
-//!    handler runs).
+//!    handler runs). P1-014 `POST /v1/auth/refresh` also
+//!    answers 401 PF-1001 (no cookie — the handler reads the
+//!    refresh token from the cookie, not the body).
 //!
 //! The probes send a fixed `x-request-id` and assert the 501
 //! problem body echoes it — that proves the whole chain at
@@ -118,6 +120,40 @@ async fn every_table_entry_resolves_to_the_stub() {
                 "/readyz must be 200 or 503, got {}",
                 res.status()
             );
+            continue;
+        }
+        // P1-014 POST /v1/auth/refresh: a real handler that
+        // reads the refresh token from the cookie, not the
+        // body — the probe sends no cookie, so the handler
+        // answers 401 PF-1001 (not 501, not 422) and echoes
+        // the probe id (the route exists; the refresh tests
+        // cover the success paths).
+        if *method == "POST" && *path == "/v1/auth/refresh" {
+            let req = Request::builder()
+                .method(Method::POST)
+                .uri(*path)
+                .header("x-request-id", PROBE_ID)
+                .header("x-forwarded-for", xff.as_str())
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let res = router
+                .clone()
+                .oneshot(req)
+                .await
+                .unwrap_or_else(|err| panic!("oneshot {method} {path} failed: {err:?}"));
+            assert_eq!(
+                res.status(),
+                StatusCode::UNAUTHORIZED,
+                "{method} {path} without a cookie must be 401, got {}",
+                res.status()
+            );
+            let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .expect("read body");
+            let json: serde_json::Value =
+                serde_json::from_slice(&body).expect("real-handler body is JSON");
+            assert_eq!(json["code"], "PF-1001", "POST {path}: {json}");
+            assert_eq!(json["request_id"], PROBE_ID, "POST {path}: {json}");
             continue;
         }
         // Real handlers (not stubs) answer with their real

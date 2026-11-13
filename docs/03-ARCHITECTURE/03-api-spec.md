@@ -156,6 +156,40 @@ Audit: `login.attempt` (anonymous, email hash) +
 `unknown_email` / `wrong_password` — internal only) +
 `login.locked` (on the first lock, with `locked_until`).
 
+Refresh rotation (P1-014, FR-A-01): `POST /v1/auth/refresh`
+takes no body — the refresh token comes from the
+`detag_refresh` cookie only (a client that lost the cookie
+logs in again). Presenting a live refresh token mints a new
+access token (15 min, the same `LoginResponse` shape) + a
+new refresh token in the SAME family, sets the new cookie
+(same attrs as login), and marks the old row replaced
+(`revoked_at` + `replaced_by` = the new row's id) — one
+transaction (new session row + replacement mark +
+`session.refreshed` audit). The new session row carries
+this request's device (`{ua, ip_hash}`) and a fresh 30-day
+expiry. **Reuse:** presenting an already-replaced token is
+401 `PF-1007` (`RefreshReuse`) — the whole family is
+revoked, a `session.refresh_reused` audit is written
+(`after` carries `{family_id, sessions_revoked}`), and a
+security email is queued (`refresh-reuse-alert`, payload
+`{user_id}` — the mailer does not exist yet, the outbox row
+is the queue). A rotated row carries BOTH marks; a merely
+revoked row (suspend, logout, family revocation) carries
+`revoked_at` only — that difference is what distinguishes
+reuse (PF-1007) from a dead token. A dead token — unknown
+hash, revoked row, expired session — is the generic 401
+`PF-1001` (the hash lookup must not distinguish "never
+existed" from "dead"). Two concurrent presents of the same
+token race: the replacement mark is conditional
+(`replaced_by IS NULL`), so the loser runs the reuse path
+instead of minting a second live session in the family. An
+impersonation token can never refresh (no session row
+behind it — the hash lookup fails with the generic 401). A
+suspended user's token cannot refresh either (the suspend
+revoked every session — no separate suspended check is
+needed). The refresh token itself is never stored — only
+its sha256 lives in the session row.
+
 Register behavior (P1-001, FR-A-01): the email is trimmed +
 lowercased before storage (the column is citext, so the match
 is case-insensitive either way); the password is Argon2id-hashed

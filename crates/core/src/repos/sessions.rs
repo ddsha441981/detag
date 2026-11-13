@@ -12,11 +12,10 @@
 //! session list (P1-007) can show the device without storing
 //! the raw IP.
 //!
-//! P1-003 needs only `create` (login). Lookup by hash,
-//! rotation, and reuse land with P1-014/P1-017 — they are
-//! not invented here. Revocation (`revoke_all_for_user`)
-//! landed early with P1-008: suspend revokes every live
-//! session, and that cannot wait for P1-014.
+//! Lookup by hash, rotation, and reuse landed with P1-014.
+//! Revocation (`revoke_all_for_user`) landed early with
+//! P1-008: suspend revokes every live session, and that
+//! cannot wait for P1-014.
 
 use super::error::RepoError;
 use chrono::{DateTime, Utc};
@@ -110,6 +109,75 @@ pub async fn revoke_all_for_user(
     let result = sqlx::query!(
         "UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL",
         user_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(result.rows_affected())
+}
+
+/// Look a session up by its refresh token's hash (P1-014 —
+/// the refresh endpoint). `None` when no session carries the
+/// hash — the caller treats that as an unknown token (401
+/// `PF-1001`, the generic unauthenticated error; the hash
+/// lookup must not distinguish "never existed" from "dead").
+pub async fn by_refresh_hash(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    refresh_hash: &str,
+) -> Result<Option<Session>, RepoError> {
+    sqlx::query_as!(
+        Session,
+        r#"SELECT id, user_id, refresh_hash, family_id, device,
+                  expires_at, revoked_at, replaced_by, created_at
+           FROM sessions WHERE refresh_hash = $1"#,
+        refresh_hash,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
+/// Mark a session replaced by a new one (P1-014 — rotation).
+/// Sets `revoked_at = now()` AND `replaced_by = new_id`, but
+/// only where the row has not been replaced already
+/// (`replaced_by IS NULL`). Returns `true` when the row was
+/// marked, `false` when it was already replaced — the caller
+/// treats that as a concurrent rotation (the token was
+/// presented twice at once) and runs the reuse path instead
+/// of minting a second live session in the family. A rotated
+/// row carries BOTH marks; a merely revoked row (suspend,
+/// logout, family revocation) carries `revoked_at` only —
+/// that difference is what distinguishes reuse (PF-1007)
+/// from a dead token (PF-1001).
+pub async fn mark_replaced(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    old_id: Uuid,
+    new_id: Uuid,
+) -> Result<bool, RepoError> {
+    let result = sqlx::query!(
+        "UPDATE sessions SET revoked_at = now(), replaced_by = $2
+         WHERE id = $1 AND replaced_by IS NULL",
+        old_id,
+        new_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Revoke every live session in a family (P1-014 — the reuse
+/// path). Sets `revoked_at = now()` where it is still NULL
+/// and returns how many sessions were revoked. A row the
+/// rotation already marked is not counted twice (its
+/// `revoked_at` is already set).
+pub async fn revoke_family(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    family_id: Uuid,
+) -> Result<u64, RepoError> {
+    let result = sqlx::query!(
+        "UPDATE sessions SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL",
+        family_id,
     )
     .execute(pool)
     .await

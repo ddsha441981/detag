@@ -225,8 +225,10 @@ fn parse_bearer(headers: &HeaderMap) -> Option<Credential> {
 /// The `detag_refresh` cookie → [`Credential::Session`]. Parses
 /// `Cookie` headers by hand (`;`-separated `name=value` pairs,
 /// split on the FIRST `=` so base64 padding survives) instead of
-/// adding a cookie crate for one lookup.
-fn parse_session_cookie(headers: &HeaderMap) -> Option<Credential> {
+/// adding a cookie crate for one lookup. `pub(crate)`: the
+/// refresh handler (P1-014) reads the cookie the same way the
+/// extractor does.
+pub(crate) fn parse_session_cookie(headers: &HeaderMap) -> Option<Credential> {
     for cookie_header in headers.get_all(header::COOKIE).iter() {
         let text = cookie_header.to_str().ok()?;
         for pair in text.split(';') {
