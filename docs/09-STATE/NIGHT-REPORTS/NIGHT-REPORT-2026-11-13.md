@@ -97,3 +97,101 @@ merge each ticket into `main` locally (no rebase, no push — the driver syncs).
   Mailer abstraction, P1-029 Email templates v1.
 - Open issues: S1 0 · S2 1 (DISK-QUOTA-001) · S3 0 · S4 3 (FLAKY-001/002/003).
 - No owner input needed from this run. No push performed (driver's job).
+
+---
+
+# NIGHT REPORT — 2026-11-13 (12th coordinator, appended)
+
+Run: started 2026-11-13 ~23:32 IST (resumed cleanly from the 11th
+coordinator — P1-026 done, tree clean, main = remote = `adc71b9`).
+Ended 2026-11-14 ~01:07 IST (run spanned midnight). Branch rule in
+force: work on `phase-1`, merge each ticket into `main` locally (no
+rebase, no push — the driver syncs). No VM reset hit this run;
+postgres/redis were up at start, no service restore needed.
+`phase-1` was behind `main` at start (parent's CI fixes) — fast-forwarded
+it to `adc71b9` before starting the ticket.
+
+## Tickets completed
+
+### P1-027 — Argon2 params config (DONE, `e561d79`, merged as `a6e57cf`)
+- Defaults raised to m = 64 MiB, t = 3, p = 4 (spec) in `Settings`
+  (`crates/core/src/config.rs`), `.env.example`, the runbook env table,
+  and the regenerated config table (`just gen-config-table`).
+  `Argon2Params::defaults()` is now the P1-027 values;
+  `previous_defaults()` keeps the P1-001 OWASP values (m = 19 MiB,
+  t = 2, p = 1) for the rehash tests. Validated ranges unchanged
+  (m 4096..=1048576 KiB, t/p 1..=16).
+- `needs_rehash()` (`crates/core/src/password.rs`): parses the stored
+  PHC string and compares algorithm (Argon2id), version (V0x13), and
+  m/t/p against the current policy; `Err` only on a malformed hash.
+  (Two compile fixes while landing it: `PasswordHash.params` is a
+  `ParamsString`, not `Params` — use `Params::try_from(&parsed)`; and
+  `version` is `Option<u32>` (`Decimal` is a u32 alias), `algorithm`
+  is an `Ident` — compare via `as_str()` / `as u32`.)
+- Rehash-on-login (`apps/api/src/services/login.rs`): after a
+  successful verify (and after the suspended check), a stale hash is
+  rehashed with the just-verified password and written in the same tx
+  as the session row. The hash runs BEFORE the tx (CPU-heavy — must
+  not hold a pool connection); opportunistic — a hash failure logs a
+  warn and the login still succeeds on the old hash. Uses the existing
+  `users::set_password_hash` (same call shape as password_reset).
+- Tests: 3 new `needs_rehash` unit tests (old params → true, current
+  → false, single-param diff + Argon2i → true, malformed → error);
+  2 new login integration tests (stale hash upgraded to
+  `m=65536,t=3,p=4` and still verifies; current hash byte-identical
+  after login). `just verify` green — **659 passed, 0 failed**
+  (654 + 5 new).
+- Bench: new criterion bench `crates/core/benches/argon2.rs` (10
+  samples, 20 s window per bench — a full run takes ~9 min on this
+  VM). Measured 2026-11-13: hash ~195 ms / verify ~192 ms at the new
+  defaults vs ~26 ms / ~29 ms at the old ones. Runbook benchmark note
+  added (### Argon2 cost on the target VPS) + ADR-0022.
+- Docs: api-spec register paragraph, runbook env table, config
+  reference regenerated, DECISIONS.md ADR-0022, phase file ticked,
+  PROGRESS.md updated (27/111, current P1-028).
+
+## Commits this run (all on `phase-1`, merged to `main`)
+- `e561d79` feat(auth): P1-027 Argon2 params config (FR-A-01)
+- `a6e57cf` Merge branch 'phase-1' (P1-027) — `--no-ff`: the plain
+  merge fast-forwarded (phase-1 had been fast-forwarded to main
+  first), so it was redone with `--no-ff` to keep the per-ticket
+  merge commit the branch rule calls for. Both commits pass
+  `scripts/lint_commits.py` (`--single` + `--range`).
+
+## Verification
+- `just verify` green on the final tree: fmt + clippy -D warnings +
+  659 tests, 0 failed (~31 min — the heavier Argon2 defaults slow
+  the auth suite; the first attempt failed on ONE test, see below).
+  `just openapi-check` + `just route-table-check` +
+  `just config-table-check` + `just env-check` green
+  (example=67 code=63 runbook=67). Gitleaks clean on the commit.
+- Per-binary evidence: password lib 9 passed; login 11 passed
+  (incl. the 2 new rehash tests); register 12 passed.
+
+## Blockers / issues filed or hit
+- **Missed-test catch (fixed in-ticket, no ISSUES.md entry — it was
+  my own grep miss, not a product bug)**: the first `just verify`
+  failed on `settings_defaults_are_the_owasp_values`
+  (`apps/api/tests/register.rs:316`) — it asserts the old defaults
+  written as `19_456`, which the `19456` grep missed. Renamed to
+  `settings_defaults_are_the_p1_027_values`, values updated, and the
+  register module doc's "~50 ms" hash-cost note corrected to ~200 ms.
+  Lesson: when a numeric default changes, grep BOTH `19456` and
+  `19_456` spellings (and the `t=2`/`p=1` literals).
+- **Verify is now slow (~31 min)**: the new Argon2 defaults add
+  ~0.17 s per hash/verify across every auth test binary (login alone
+  took ~105 s). Recorded in PROGRESS.md: run targeted binaries first
+  when iterating; the full verify is the pre-commit gate, not the
+  edit loop.
+- No new S1/S2. No owner input needed from this run. No push performed
+  (driver's job). CI #8 verdict still pending in the parent's thread
+  (not chased — per handoff).
+
+## State at end of run
+- Phase 1: **27 / 111**. Phase 0: 105 / 108 (unchanged).
+- `main` = `a6e57cf`, `phase-1` = `e561d79` (merged; tree clean).
+- Next up: **P1-028 Mailer abstraction** (crates/mailer: lettre SMTP
+  + outbox drain worker; retries with backoff; MailHog dev; tera
+  templates), then P1-029 Email templates v1, P1-030 Email flow tests.
+- Open issues: S1 0 · S2 1 (DISK-QUOTA-001) · S3 0 · S4 3 (FLAKY-001/002/003).
+- `target/` is ~34 GiB (no quota pressure this run); disk 132 GiB free.
