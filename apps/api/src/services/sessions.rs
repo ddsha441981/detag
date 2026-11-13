@@ -111,7 +111,7 @@ pub async fn list_sessions(
     state: &AppState,
     user: &User,
 ) -> Result<Vec<SessionItem>, SessionError> {
-    let rows = sessions::list_live_for_user(&state.pool, user.id, Utc::now())
+    let rows = sessions::list_live_for_user(&state.pool, user.id, state.clock.now())
         .await
         .map_err(|err| {
             tracing::error!(error = ?err, "sessions: list failed");

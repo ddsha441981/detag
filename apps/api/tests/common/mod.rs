@@ -40,6 +40,7 @@ use axum::{
 };
 use detag_api::{build_router, AppState};
 use detag_core::{
+    clock::Clock,
     config::Settings,
     db::{connect_lazy, DbPool, PoolConfig},
     metrics::Metrics,
@@ -47,6 +48,7 @@ use detag_core::{
     repos::users::{self, User},
 };
 use std::path::PathBuf;
+use std::sync::Arc;
 use testcontainers::{runners::AsyncRunner, ContainerAsync, GenericImage, ImageExt};
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -280,14 +282,14 @@ impl TestApp {
     /// App from explicit fixtures (e.g. testcontainers).
     pub async fn spawn_with_fixtures(fixtures: TestFixtures) -> Self {
         let settings = fixtures.settings();
-        Self::spawn_with_settings(settings, Some(fixtures)).await
+        Self::spawn_with_settings(settings, Some(fixtures), None).await
     }
 
     /// App from explicit settings. The caller owns the database the
     /// settings point at — use it when the test only needs the
     /// router (e.g. the prod docs test), not a migrated scratch DB.
     pub async fn spawn_with(settings: Settings) -> Self {
-        Self::spawn_with_settings(settings, None).await
+        Self::spawn_with_settings(settings, None, None).await
     }
 
     /// App from explicit settings AND explicit fixtures (P1-001):
@@ -299,13 +301,35 @@ impl TestApp {
         fixtures: TestFixtures,
         settings: Settings,
     ) -> Self {
-        Self::spawn_with_settings(settings, Some(fixtures)).await
+        Self::spawn_with_settings(settings, Some(fixtures), None).await
     }
 
-    async fn spawn_with_settings(settings: Settings, fixtures: Option<TestFixtures>) -> Self {
+    /// App from explicit fixtures + settings + clock (P1-023):
+    /// like [`spawn_with_fixtures_and_settings`](Self::spawn_with_fixtures_and_settings)
+    /// but the app runs on the caller's clock — a frozen
+    /// [`ManualClock`](detag_core::clock::ManualClock) makes
+    /// token/session expiry testable without waiting out the
+    /// TTLs. The clock is shared (`Arc`): the test advances
+    /// it while the app under test reads it.
+    pub async fn spawn_with_fixtures_settings_and_clock(
+        fixtures: TestFixtures,
+        settings: Settings,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
+        Self::spawn_with_settings(settings, Some(fixtures), Some(clock)).await
+    }
+
+    async fn spawn_with_settings(
+        settings: Settings,
+        fixtures: Option<TestFixtures>,
+        clock: Option<Arc<dyn Clock>>,
+    ) -> Self {
         let pool = connect_lazy(&settings.database_url, &PoolConfig::default())
             .expect("harness: seed pool builds");
-        let state = AppState::from_settings(&settings).expect("harness: AppState builds");
+        let mut state = AppState::from_settings(&settings).expect("harness: AppState builds");
+        if let Some(clock) = clock {
+            state = state.with_clock(clock);
+        }
         let router = build_router(state.clone(), Metrics::new());
         Self {
             settings,

@@ -85,7 +85,7 @@
 //! guard is proven by its own tests (verified passes,
 //! unverified 403s), not by a live job endpoint.
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use detag_core::{
     checksum::sha256_hex,
     db::DbPool,
@@ -212,11 +212,21 @@ enum VerifyTxError {
 /// token + mail + audit). Returns the RAW token — the caller
 /// must not log it, store it anywhere except the outbox
 /// payload, or return it to a client.
-pub async fn issue_verification(conn: &mut PgConnection, user: &User) -> Result<String, RepoError> {
+///
+/// P1-023: `now` is the caller's injected clock
+/// ([`Clock`](detag_core::clock::Clock) via `AppState`) — the
+/// token's `expires_at` is `now` + TTL, so a frozen
+/// [`ManualClock`](detag_core::clock::ManualClock) makes the
+/// 24-hour expiry testable without waiting it out.
+pub async fn issue_verification(
+    conn: &mut PgConnection,
+    user: &User,
+    now: DateTime<Utc>,
+) -> Result<String, RepoError> {
     email_verification_tokens::delete_unused_for_user(&mut *conn, user.id).await?;
     let raw = generate_token();
     let hash = hash_token(&raw);
-    let expires_at = Utc::now() + Duration::seconds(VERIFICATION_TOKEN_TTL_SECS);
+    let expires_at = now + Duration::seconds(VERIFICATION_TOKEN_TTL_SECS);
     email_verification_tokens::mint(
         &mut *conn,
         user.id,
@@ -242,7 +252,14 @@ pub async fn issue_verification(conn: &mut PgConnection, user: &User) -> Result<
 /// Unknown token → `InvalidToken`; used token → `InvalidToken`
 /// (indistinguishable from unknown, by design); expired token
 /// → `ExpiredToken`. On success the user is returned.
-pub async fn verify_email(pool: &DbPool, raw_token: &str) -> Result<User, VerifyError> {
+///
+/// P1-023: `now` is the caller's injected clock (see
+/// [`issue_verification`]).
+pub async fn verify_email(
+    pool: &DbPool,
+    raw_token: &str,
+    now: DateTime<Utc>,
+) -> Result<User, VerifyError> {
     let hash = hash_token(raw_token.trim());
     let token = email_verification_tokens::by_hash(pool, &hash)
         .await
@@ -256,7 +273,7 @@ pub async fn verify_email(pool: &DbPool, raw_token: &str) -> Result<User, Verify
     if token.used_at.is_some() {
         return Err(VerifyError::InvalidToken);
     }
-    if token.expires_at <= Utc::now() {
+    if token.expires_at <= now {
         return Err(VerifyError::ExpiredToken);
     }
     let user_id = token.user_id;
@@ -317,15 +334,19 @@ pub async fn verify_email(pool: &DbPool, raw_token: &str) -> Result<User, Verify
 /// client. Deletes the user's previous unused tokens first
 /// (one live token per user — a live registration token dies
 /// here; see the module docs for the consequences).
+///
+/// P1-023: `now` is the caller's injected clock (see
+/// [`issue_verification`]).
 pub async fn issue_email_change(
     conn: &mut PgConnection,
     user: &User,
     pending_email: &str,
+    now: DateTime<Utc>,
 ) -> Result<String, RepoError> {
     email_verification_tokens::delete_unused_for_user(&mut *conn, user.id).await?;
     let raw = generate_token();
     let hash = hash_token(&raw);
-    let expires_at = Utc::now() + Duration::seconds(VERIFICATION_TOKEN_TTL_SECS);
+    let expires_at = now + Duration::seconds(VERIFICATION_TOKEN_TTL_SECS);
     email_verification_tokens::mint(
         &mut *conn,
         user.id,
@@ -449,7 +470,14 @@ enum ConfirmTxError {
 /// `InvalidToken` (the swap finds no pending row); an address
 /// taken meanwhile → `Duplicate`. On success the user is
 /// returned (new email, pending cleared, verified).
-pub async fn confirm_email_change(pool: &DbPool, raw_token: &str) -> Result<User, ConfirmError> {
+///
+/// P1-023: `now` is the caller's injected clock (see
+/// [`issue_verification`]).
+pub async fn confirm_email_change(
+    pool: &DbPool,
+    raw_token: &str,
+    now: DateTime<Utc>,
+) -> Result<User, ConfirmError> {
     let hash = hash_token(raw_token.trim());
     let token = email_verification_tokens::by_hash(pool, &hash)
         .await
@@ -463,7 +491,7 @@ pub async fn confirm_email_change(pool: &DbPool, raw_token: &str) -> Result<User
     if token.used_at.is_some() {
         return Err(ConfirmError::InvalidToken);
     }
-    if token.expires_at <= Utc::now() {
+    if token.expires_at <= now {
         return Err(ConfirmError::ExpiredToken);
     }
     if token.purpose != email_verification_tokens::PURPOSE_EMAIL_CHANGE {
@@ -553,7 +581,14 @@ pub enum ResendOutcome {
 /// Re-send a verification mail to `email` (normalized by the
 /// caller). 204-always semantics: the outcome is returned, the
 /// handler never varies the response by it.
-pub async fn resend_verification(pool: &DbPool, email: &str) -> Result<ResendOutcome, VerifyError> {
+///
+/// P1-023: `now` is the caller's injected clock (see
+/// [`issue_verification`]).
+pub async fn resend_verification(
+    pool: &DbPool,
+    email: &str,
+    now: DateTime<Utc>,
+) -> Result<ResendOutcome, VerifyError> {
     let user = users::by_email(pool, email).await.map_err(|err| {
         tracing::error!(error = ?err, "resend-verification: user lookup failed");
         VerifyError::Internal
@@ -582,7 +617,7 @@ pub async fn resend_verification(pool: &DbPool, email: &str) -> Result<ResendOut
     tx::with_tx(pool, timeout, |conn| {
         let user = user.clone();
         Box::pin(async move {
-            let _raw = issue_verification(&mut *conn, &user)
+            let _raw = issue_verification(&mut *conn, &user, now)
                 .await
                 .map_err(VerifyTxError::Db)?;
             audit_logs::insert(

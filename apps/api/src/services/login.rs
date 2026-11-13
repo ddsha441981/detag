@@ -103,12 +103,12 @@
 //! (`account_suspended`) — a wrong password is still the
 //! generic 401, so probing an address learns nothing new.
 
-use chrono::{Duration, Utc};
+use chrono::Duration;
 use detag_core::{
     checksum::sha256_hex,
     db::PoolConfig,
     error::FieldError,
-    jwt::{issue_access_token, ACCESS_TOKEN_TTL_SECS, REFRESH_TOKEN_TTL_SECS},
+    jwt::{issue_access_token_at, ACCESS_TOKEN_TTL_SECS, REFRESH_TOKEN_TTL_SECS},
     lockout::LOCKOUT_THRESHOLD,
     password::{verify_password, PasswordError},
     redis::ratelimit::RateLimit,
@@ -288,8 +288,9 @@ pub async fn login_user(
     // A locked attempt is not audited (no attempt row, no
     // failure row): an attacker hammering a locked account
     // must not flood the audit log — the lock itself was
-    // audited when it was set (`login.locked`).
-    let now = Utc::now();
+    // audited when it was set (`login.locked`). `now` is the
+    // injected clock (P1-023).
+    let now = state.clock.now();
     let mut locked_for: Option<i64> = None;
     for (scope, key) in [
         (LockScope::Account, email_hash.as_str()),
@@ -492,7 +493,7 @@ pub async fn login_user(
         "ua": device.user_agent,
         "ip_hash": sha256_hex(device.ip.as_bytes()),
     });
-    let expires_at = Utc::now() + Duration::seconds(REFRESH_TOKEN_TTL_SECS);
+    let expires_at = state.clock.now() + Duration::seconds(REFRESH_TOKEN_TTL_SECS);
     let timeout = PoolConfig::default().transaction_timeout;
     tx::with_tx(&state.pool, timeout, |conn| {
         let refresh_hash = refresh_hash.clone();
@@ -563,11 +564,12 @@ pub async fn login_user(
         }
     })?;
 
-    let access_token = issue_access_token(
+    let access_token = issue_access_token_at(
         &state.settings.jwt_secret,
         user.id,
         &user.role,
         ACCESS_TOKEN_TTL_SECS,
+        state.clock.now(),
     )
     .map_err(|err| {
         tracing::error!(error = ?err, "login: access-token issue failed");
@@ -599,7 +601,8 @@ async fn record_login_failure(
     user_id: Option<Uuid>,
     reason: &str,
 ) -> Result<(), LoginError> {
-    let now = Utc::now();
+    // `now` is the injected clock (P1-023).
+    let now = state.clock.now();
     let timeout = PoolConfig::default().transaction_timeout;
     tx::with_tx(&state.pool, timeout, |conn| {
         let email_hash = email_hash.to_string();

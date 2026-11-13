@@ -290,6 +290,9 @@ pub async fn patch_profile(
             serde_json::json!(new_pending_email.as_ref().map(|e| sha256_hex(e.as_bytes()))),
         );
     }
+    // `now` is the injected clock (P1-023) for the
+    // email-change token's expiry.
+    let now = state.clock.now();
     let timeout = PoolConfig::default().transaction_timeout;
     let updated = tx::with_tx(&state.pool, timeout, |conn| {
         let new_display_name = new_display_name.clone();
@@ -317,7 +320,7 @@ pub async fn patch_profile(
             if new_pending_email != user.pending_email {
                 match &new_pending_email {
                     Some(addr) => {
-                        let _raw = issue_email_change(&mut *conn, &user, addr)
+                        let _raw = issue_email_change(&mut *conn, &user, addr, now)
                             .await
                             .map_err(ProfileTxError::Db)?;
                     }

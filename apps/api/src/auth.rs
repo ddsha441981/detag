@@ -166,7 +166,7 @@ use crate::services::revocation::is_jti_revoked;
 use crate::{problem::ProblemResponse, request_id::RequestId, AppState};
 use detag_core::{
     error::{AppError, Profile},
-    jwt::{verify_access_token, JwtError},
+    jwt::{verify_access_token_at, JwtError},
     repos::users::{self, User},
 };
 
@@ -389,12 +389,14 @@ impl FromRequestParts<AppState> for AuthContext {
         };
         // The JWT verifies first (no DB touch for a bad token):
         // an invalid signature or malformed token is PF-1010, an
-        // expired one PF-1011.
-        let claims = match verify_access_token(&state.settings.jwt_secret, &token) {
-            Ok(claims) => claims,
-            Err(JwtError::Expired) => return Err(reject(AppError::ExpiredToken)),
-            Err(_) => return Err(reject(AppError::InvalidToken)),
-        };
+        // expired one PF-1011. Verified against the injected
+        // clock (P1-023), not the wall clock.
+        let claims =
+            match verify_access_token_at(&state.settings.jwt_secret, &token, state.clock.now()) {
+                Ok(claims) => claims,
+                Err(JwtError::Expired) => return Err(reject(AppError::ExpiredToken)),
+                Err(_) => return Err(reject(AppError::InvalidToken)),
+            };
         // The `sub` is the user id we issued (P1-003). A token
         // whose `sub` is not a UUID is not a token we issued.
         let user_id = match claims.sub.parse::<uuid::Uuid>() {

@@ -94,7 +94,7 @@ pub async fn revoke_jti(
     jti: &Uuid,
     exp_unix: i64,
 ) -> Result<u64, RevocationError> {
-    let ttl = denylist_ttl_secs(exp_unix, chrono::Utc::now().timestamp());
+    let ttl = denylist_ttl_secs(exp_unix, state.clock.now().timestamp());
     let mut conn = state.redis.get().await.map_err(|err| {
         tracing::error!(error = %err, "revocation: redis pool checkout failed");
         RevocationError::Internal

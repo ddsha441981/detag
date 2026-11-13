@@ -48,7 +48,7 @@ use axum::{
     Router,
 };
 use detag_core::error::{AppError, Problem, Profile};
-use detag_core::jwt::{verify_access_token, REFRESH_TOKEN_TTL_SECS};
+use detag_core::jwt::{verify_access_token_at, REFRESH_TOKEN_TTL_SECS};
 
 use crate::routes::extractors::{MaybeConnectInfo, ValidatedJson};
 
@@ -121,7 +121,7 @@ pub async fn verify_email(
     ValidatedJson(req): ValidatedJson<VerifyEmailRequest>,
 ) -> Response {
     let request_id = Some(id.0.as_str());
-    match verify_email_service(&state.pool, &req.token).await {
+    match verify_email_service(&state.pool, &req.token, state.clock.now()).await {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(VerifyError::InvalidToken) => ProblemResponse(AppError::InvalidToken.to_problem(
             Profile::Production,
@@ -168,7 +168,7 @@ pub async fn confirm_email_change(
     ValidatedJson(req): ValidatedJson<ConfirmEmailChangeRequest>,
 ) -> Response {
     let request_id = Some(id.0.as_str());
-    match confirm_email_change_service(&state.pool, &req.token).await {
+    match confirm_email_change_service(&state.pool, &req.token, state.clock.now()).await {
         Ok(_) => StatusCode::NO_CONTENT.into_response(),
         Err(ConfirmError::InvalidToken) => ProblemResponse(AppError::InvalidToken.to_problem(
             Profile::Production,
@@ -218,7 +218,9 @@ pub async fn resend_verification(
     let request_id = Some(id.0.as_str());
     // Only VerifyError::Internal is reachable (the service
     // never returns Invalid/ExpiredToken); any error is a 500.
-    if let Err(err) = resend_verification_service(&state.pool, &req.normalized_email()).await {
+    if let Err(err) =
+        resend_verification_service(&state.pool, &req.normalized_email(), state.clock.now()).await
+    {
         tracing::error!(error = ?err, "resend-verification failed");
         return ProblemResponse(AppError::Internal.to_problem(
             Profile::Production,
@@ -536,7 +538,7 @@ pub async fn logout_all(
             // Only the PRESENTED token dies: other devices'
             // tokens live until exp (their jtis are unknown).
             if let Credential::Bearer(token) = &auth.credential {
-                match verify_access_token(&state.settings.jwt_secret, token) {
+                match verify_access_token_at(&state.settings.jwt_secret, token, state.clock.now()) {
                     Ok(claims) => {
                         if let Some(jti) = claims.jti {
                             if let Err(err) = revoke_jti(&state, &jti, claims.exp).await {

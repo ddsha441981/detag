@@ -442,12 +442,13 @@ pub async fn impersonate_user(
     let Some(target) = target else {
         return Err(AdminError::NotFound);
     };
-    let access_token = detag_core::jwt::issue_impersonation_token(
+    let access_token = detag_core::jwt::issue_impersonation_token_at(
         &state.settings.jwt_secret,
         target.id,
         &target.role,
         admin.id,
         detag_core::jwt::ACCESS_TOKEN_TTL_SECS,
+        state.clock.now(),
     )
     .map_err(|err| {
         tracing::error!(error = ?err, "admin impersonate: token issue failed");

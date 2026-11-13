@@ -43,11 +43,11 @@
 //! needed here).
 
 use crate::AppState;
-use chrono::{Duration, Utc};
+use chrono::Duration;
 use detag_core::{
     checksum::sha256_hex,
     db::PoolConfig,
-    jwt::{issue_access_token, ACCESS_TOKEN_TTL_SECS, REFRESH_TOKEN_TTL_SECS},
+    jwt::{issue_access_token_at, ACCESS_TOKEN_TTL_SECS, REFRESH_TOKEN_TTL_SECS},
     repos::{
         audit_logs::{self, NewAuditLog},
         email_outbox::{self, NewOutboxMail},
@@ -135,7 +135,10 @@ pub async fn refresh_session(
         // — dead, not reuse.
         return Err(RefreshError::Invalid);
     }
-    if session.expires_at <= Utc::now() {
+    // `now` is the injected clock (P1-023): a frozen clock
+    // makes the 30-day session expiry testable.
+    let now = state.clock.now();
+    if session.expires_at <= now {
         return Err(RefreshError::Invalid);
     }
     let user = users::by_id(&state.pool, session.user_id)
@@ -157,11 +160,12 @@ pub async fn refresh_session(
     // handler only renders it).
     let new_refresh_token = generate_token();
     let new_refresh_hash = sha256_hex(new_refresh_token.as_bytes());
-    let new_access_token = issue_access_token(
+    let new_access_token = issue_access_token_at(
         &state.settings.jwt_secret,
         user.id,
         &user.role,
         ACCESS_TOKEN_TTL_SECS,
+        now,
     )
     .map_err(|err| {
         tracing::error!(error = ?err, "refresh: access token issue failed");
@@ -171,7 +175,7 @@ pub async fn refresh_session(
         "ua": device.user_agent,
         "ip_hash": sha256_hex(device.ip.as_bytes()),
     });
-    let expires_at = Utc::now() + Duration::seconds(REFRESH_TOKEN_TTL_SECS);
+    let expires_at = now + Duration::seconds(REFRESH_TOKEN_TTL_SECS);
     let timeout = PoolConfig::default().transaction_timeout;
     let rotated = tx::with_tx(&state.pool, timeout, |conn| {
         let session = session.clone();
@@ -209,7 +213,7 @@ pub async fn refresh_session(
             // session list can show the last activity of the
             // family line. A throttled-out touch is not an
             // error — the row simply keeps its older value.
-            sessions::touch_last_seen(&mut *conn, session.id, Utc::now(), LAST_SEEN_THROTTLE_SECS)
+            sessions::touch_last_seen(&mut *conn, session.id, now, LAST_SEEN_THROTTLE_SECS)
                 .await
                 .map_err(RefreshTxError::Db)?;
             audit_logs::insert(

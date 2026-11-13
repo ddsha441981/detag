@@ -287,6 +287,9 @@ pub async fn register_user(state: &AppState, req: &RegisterRequest) -> Result<Us
     })?;
 
     // One transaction: user + success audit + outbox enqueue.
+    // `now` is the injected clock (P1-023): the verification
+    // token's expiry is computed from it, not the wall clock.
+    let now = state.clock.now();
     let timeout = PoolConfig::default().transaction_timeout;
     let user = tx::with_tx(pool, timeout, |conn| {
         let email = email.clone();
@@ -327,7 +330,7 @@ pub async fn register_user(state: &AppState, req: &RegisterRequest) -> Result<Us
             // token lives only there and in the email; the DB holds
             // its hash. The token itself is discarded here
             // (register never returns it to a client).
-            let _token = crate::services::verification::issue_verification(&mut *conn, &user)
+            let _token = crate::services::verification::issue_verification(&mut *conn, &user, now)
                 .await
                 .map_err(RegisterTxError::Db)?;
             Ok(user)

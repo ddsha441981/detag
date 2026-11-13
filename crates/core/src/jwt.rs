@@ -85,7 +85,7 @@
 //! HMAC key, and the `exp` check is on by default.
 
 use crate::checksum::sha256_hex;
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -197,24 +197,74 @@ impl From<jsonwebtoken::errors::Error> for JwtError {
 }
 
 /// Issue an access token for `user_id` + `role`, valid
-/// `ttl_secs` seconds from now. The caller passes
+/// `ttl_secs` seconds from `now`. The caller passes
 /// [`ACCESS_TOKEN_TTL_SECS`] in production; tests pass short
 /// (or negative) TTLs to prove expiry without a clock. The
 /// header carries `kid` = this secret's fingerprint; the
 /// claims carry the locked P1-013 shape (`ver`, `jti`, `iss`,
 /// `aud` — no `impersonator_id` on a normal token).
+///
+/// P1-023: the `_at` form takes the issuance instant, so the
+/// API can mint from its injected clock
+/// ([`Clock`](crate::clock::Clock)) instead of the wall clock
+/// — a frozen [`ManualClock`](crate::clock::ManualClock) makes
+/// expiry testable without waiting out the TTL.
+pub fn issue_access_token_at(
+    secret: &str,
+    user_id: Uuid,
+    role: &str,
+    ttl_secs: i64,
+    now: DateTime<Utc>,
+) -> Result<String, JwtError> {
+    let claims = AccessTokenClaims {
+        sub: user_id.to_string(),
+        role: role.to_string(),
+        ver: TOKEN_VERSION,
+        impersonator_id: None,
+        jti: Some(Uuid::now_v7()),
+        exp: (now + Duration::seconds(ttl_secs)).timestamp(),
+        iat: now.timestamp(),
+        nbf: now.timestamp(),
+        iss: TOKEN_ISSUER.to_string(),
+        aud: TOKEN_AUDIENCE.to_string(),
+    };
+    let mut header = Header::new(Algorithm::HS256);
+    header.kid = Some(key_fingerprint(secret));
+    encode(
+        &header,
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .map_err(|_| JwtError::IssueFailed)
+}
+
+/// Issue an access token for `user_id` + `role`, valid
+/// `ttl_secs` seconds from now (the wall clock).
 pub fn issue_access_token(
     secret: &str,
     user_id: Uuid,
     role: &str,
     ttl_secs: i64,
 ) -> Result<String, JwtError> {
-    let now = Utc::now();
+    issue_access_token_at(secret, user_id, role, ttl_secs, Utc::now())
+}
+
+/// Issue an impersonation token (P1-010) valid `ttl_secs`
+/// seconds from `now` — the `_at` form (P1-023, see
+/// [`issue_access_token_at`]).
+pub fn issue_impersonation_token_at(
+    secret: &str,
+    user_id: Uuid,
+    role: &str,
+    impersonator_id: Uuid,
+    ttl_secs: i64,
+    now: DateTime<Utc>,
+) -> Result<String, JwtError> {
     let claims = AccessTokenClaims {
         sub: user_id.to_string(),
         role: role.to_string(),
         ver: TOKEN_VERSION,
-        impersonator_id: None,
+        impersonator_id: Some(impersonator_id),
         jti: Some(Uuid::now_v7()),
         exp: (now + Duration::seconds(ttl_secs)).timestamp(),
         iat: now.timestamp(),
@@ -248,31 +298,25 @@ pub fn issue_impersonation_token(
     impersonator_id: Uuid,
     ttl_secs: i64,
 ) -> Result<String, JwtError> {
-    let now = Utc::now();
-    let claims = AccessTokenClaims {
-        sub: user_id.to_string(),
-        role: role.to_string(),
-        ver: TOKEN_VERSION,
-        impersonator_id: Some(impersonator_id),
-        jti: Some(Uuid::now_v7()),
-        exp: (now + Duration::seconds(ttl_secs)).timestamp(),
-        iat: now.timestamp(),
-        nbf: now.timestamp(),
-        iss: TOKEN_ISSUER.to_string(),
-        aud: TOKEN_AUDIENCE.to_string(),
-    };
-    let mut header = Header::new(Algorithm::HS256);
-    header.kid = Some(key_fingerprint(secret));
-    encode(
-        &header,
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .map_err(|_| JwtError::IssueFailed)
+    issue_impersonation_token_at(secret, user_id, role, impersonator_id, ttl_secs, Utc::now())
 }
 
-/// Verify an access token: signature (HS256 only) + expiry.
-/// Returns the claims on success.
+/// Verify an access token against `now`: signature (HS256
+/// only) + expiry. Returns the claims on success.
+///
+/// P1-023: the `_at` form takes the verification instant, so
+/// the API can verify from its injected clock
+/// ([`Clock`](crate::clock::Clock)) instead of the wall clock.
+/// jsonwebtoken 11 has no injectable clock (its `exp`/`nbf`
+/// checks read the system time), so this decodes with
+/// `validate_exp` / `validate_nbf` off and enforces the two
+/// claims by hand against `now` — with EXACTLY the leeway-0
+/// semantics the crate enforces: `exp < 0` → `Invalid` (the
+/// crate's `reject_tokens_expiring_in_less_than` default),
+/// `exp < now` → `Expired`, `nbf > now` → `Invalid`
+/// (immature, never expired). Signature, `iss`/`aud`, `ver`
+/// and `kid` are enforced exactly as in
+/// [`verify_access_token`] — only the time source changes.
 ///
 /// The `exp` check has NO leeway (`validation.leeway = 0`):
 /// issuer and verifier are the same service, so there is no
@@ -291,15 +335,19 @@ pub fn issue_impersonation_token(
 /// set). A missing `kid`, `ver`, `iss`, `aud`, or `jti` is a
 /// pre-P1-013 token and still verifies (the claims default
 /// on decode).
-pub fn verify_access_token(secret: &str, token: &str) -> Result<AccessTokenClaims, JwtError> {
+pub fn verify_access_token_at(
+    secret: &str,
+    token: &str,
+    now: DateTime<Utc>,
+) -> Result<AccessTokenClaims, JwtError> {
     let mut validation = Validation::new(Algorithm::HS256);
     validation.leeway = 0;
-    // `nbf` is enforced (P1-022): a token whose not-before
-    // is in the future is immature, not expired — it answers
-    // `Invalid` (PF-1010), never `Expired` (PF-1011). Leeway
-    // stays 0: issuer and verifier are the same service, so
-    // no clock-skew tolerance is needed.
-    validation.validate_nbf = true;
+    // Time is enforced by hand below (jsonwebtoken reads the
+    // system clock) — but the shape checks stay on: `exp` is
+    // still a required claim, and a malformed `exp`/`nbf`
+    // still fails the decode.
+    validation.validate_exp = false;
+    validation.validate_nbf = false;
     validation.set_issuer(&[TOKEN_ISSUER]);
     validation.set_audience(&[TOKEN_AUDIENCE]);
     let data = decode::<AccessTokenClaims>(
@@ -307,6 +355,19 @@ pub fn verify_access_token(secret: &str, token: &str) -> Result<AccessTokenClaim
         &DecodingKey::from_secret(secret.as_bytes()),
         &validation,
     )?;
+    let now_ts = now.timestamp();
+    // Mirror jsonwebtoken's leeway-0 order: a negative `exp`
+    // is malformed (Invalid), a past `exp` is Expired, a
+    // future `nbf` is immature (Invalid, never Expired).
+    if data.claims.exp < 0 {
+        return Err(JwtError::Invalid);
+    }
+    if data.claims.exp < now_ts {
+        return Err(JwtError::Expired);
+    }
+    if data.claims.nbf > now_ts {
+        return Err(JwtError::Invalid);
+    }
     if data.claims.ver != TOKEN_VERSION {
         return Err(JwtError::Invalid);
     }
@@ -316,6 +377,13 @@ pub fn verify_access_token(secret: &str, token: &str) -> Result<AccessTokenClaim
         }
     }
     Ok(data.claims)
+}
+
+/// Verify an access token: signature (HS256 only) + expiry.
+/// Returns the claims on success. The wall-clock form of
+/// [`verify_access_token_at`].
+pub fn verify_access_token(secret: &str, token: &str) -> Result<AccessTokenClaims, JwtError> {
+    verify_access_token_at(secret, token, Utc::now())
 }
 
 #[cfg(test)]
@@ -604,5 +672,89 @@ mod tests {
         // No `nbf` on the wire → the default 0 (long past),
         // so the not-before check passes.
         assert_eq!(claims.nbf, 0);
+    }
+
+    /// P1-023: the `_at` forms read time from the caller, so
+    /// a frozen [`ManualClock`](crate::clock::ManualClock)
+    /// drives expiry without waiting out the TTL. The clock
+    /// is frozen at a fixed instant (not `Utc::now()` — the
+    /// test must not depend on the wall clock at all).
+    fn frozen_now() -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339("2026-11-13T12:00:00Z")
+            .expect("fixture parses")
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn at_forms_issue_and_verify_at_the_injected_time() {
+        let now = frozen_now();
+        let token = issue_access_token_at(SECRET, user_id(), "user", ACCESS_TOKEN_TTL_SECS, now)
+            .expect("issue succeeds");
+        let claims = verify_access_token_at(SECRET, &token, now).expect("verify at issue time");
+        assert_eq!(claims.iat, now.timestamp());
+        assert_eq!(claims.nbf, now.timestamp());
+        assert_eq!(
+            claims.exp,
+            (now + Duration::seconds(ACCESS_TOKEN_TTL_SECS)).timestamp()
+        );
+    }
+
+    #[test]
+    fn at_verify_expires_when_the_injected_clock_passes_exp() {
+        let now = frozen_now();
+        let token = issue_access_token_at(SECRET, user_id(), "user", ACCESS_TOKEN_TTL_SECS, now)
+            .expect("issue succeeds");
+        // One second before expiry: still valid.
+        verify_access_token_at(SECRET, &token, now + Duration::seconds(899))
+            .expect("live 1s before exp");
+        // At exp exactly: jsonwebtoken's leeway-0 rule is
+        // `exp < now` → expired, so exp == now still verifies.
+        verify_access_token_at(SECRET, &token, now + Duration::seconds(900))
+            .expect("live at exp exactly");
+        // One second past: Expired, never Invalid.
+        let err = verify_access_token_at(SECRET, &token, now + Duration::seconds(901))
+            .expect_err("dead 1s past exp");
+        assert!(matches!(err, JwtError::Expired));
+    }
+
+    #[test]
+    fn at_verify_rejects_future_nbf_at_the_injected_time() {
+        let now = frozen_now();
+        // Minted an hour ahead: at the issue instant the
+        // token is immature.
+        let token = issue_access_token_at(
+            SECRET,
+            user_id(),
+            "user",
+            ACCESS_TOKEN_TTL_SECS,
+            now + Duration::hours(1),
+        )
+        .expect("issue succeeds");
+        let err = verify_access_token_at(SECRET, &token, now).expect_err("immature must fail");
+        assert!(matches!(err, JwtError::Invalid));
+        // An hour later (the token's own `nbf`) it verifies.
+        verify_access_token_at(SECRET, &token, now + Duration::hours(1)).expect("mature verifies");
+    }
+
+    #[test]
+    fn at_forms_agree_with_the_wall_clock_forms() {
+        // Same token, both verifiers: the `_at` form at
+        // `Utc::now()` must answer exactly like the plain
+        // form (the refactor changed the time source, not
+        // the rules). A live token verifies under both; a
+        // negative-TTL token is Expired under both.
+        let live = issue_access_token(SECRET, user_id(), "user", ACCESS_TOKEN_TTL_SECS)
+            .expect("issue succeeds");
+        assert!(verify_access_token(SECRET, &live).is_ok());
+        assert!(verify_access_token_at(SECRET, &live, Utc::now()).is_ok());
+        let dead = issue_access_token(SECRET, user_id(), "user", -60).expect("issue succeeds");
+        assert!(matches!(
+            verify_access_token(SECRET, &dead).expect_err("dead must fail"),
+            JwtError::Expired
+        ));
+        assert!(matches!(
+            verify_access_token_at(SECRET, &dead, Utc::now()).expect_err("dead must fail"),
+            JwtError::Expired
+        ));
     }
 }
