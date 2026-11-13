@@ -24,13 +24,14 @@ P0-106/107/108 (Phase 0 ticket work done, 105/108); updated
 ~15:30 IST 13 Nov after P1-014 (Phase 1, 14/111); updated
 ~15:55 IST 13 Nov after P1-015 (Phase 1, 15/111); updated
 ~15:50 IST 13 Nov after P1-016 (Phase 1, 16/111); updated
-~16:10 IST 13 Nov after P1-017 (Phase 1, 17/111). Resumed
+~16:10 IST 13 Nov after P1-017 (Phase 1, 17/111); updated
+~16:30 IST 13 Nov after P1-018 (Phase 1, 18/111). Resumed
 from the 8th coordinator's interruption (~23:21 IST, P0-092 in
 progress with uncommitted work). Local HEAD at this update:
-`5fec1d0` (P1-017). No push (local-only by rule; parent handles
+`54b940a` (P1-018). No push (local-only by rule; parent handles
 GitHub pushes).
 
-## Tickets done (29)
+## Tickets done (30)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -922,6 +923,37 @@ GitHub pushes).
   `doc_lazy_continuation` on a doc line starting with `+`
   in route_table.rs + an unused variable in the logout
   tests — both lint fixes, no flakes).
+- **P1-018 — Revoke on password change** (`54b940a`):
+  Core `sessions.rs`: `revoke_all_except` (one UPDATE —
+  `revoked_at` where NULL and `id <> keep`). Service
+  `services/password.rs` (new:
+  `revoke_sessions_on_password_change(state, user_id,
+  current_session_id)` — one tx: revoke +
+  `session.revoked_on_password_change` audit (`after:
+  {sessions_revoked, kept_session_id}` — no audit when
+  nothing was revoked) + the digest mail
+  (`new-login-digest`, payload `{user_id,
+  sessions_revoked}` — queued on EVERY call, even when
+  nothing was revoked: the mail notifies about the CHANGE,
+  the audit records the REVOCATION). `Some(keep)` is the
+  change-password case (the current session is the one
+  behind the presented refresh cookie, read the way the
+  logout handler reads it); `None` is the reset case (no
+  current session — a reset happens logged-out, so
+  everything is revoked). Tests: 3 new in
+  `tests/password_sessions.rs` (revokes all except current
+  — 4 rows, returns 2, kept session still rotates through
+  the real refresh endpoint, revoked one → PF-1001, audit +
+  mail; reset case revokes all; no sessions — no audit, mail
+  still queued). The HTTP wiring is NOT this ticket's: the
+  reset flow (P1-025) calls the service when it lands, and
+  no change-password route exists yet (when it lands it
+  calls the same service with the current session from the
+  presented cookie) — the same land-early pattern as
+  P1-004's lockout `reset`. Docs: api-spec password-change
+  paragraph, security-testing bullets, threat model T22
+  extended + update-log row. `just verify` green 588
+  passed, 0 failed, attempt 1 (no flakes).
 
 ## Tickets partially done
 
@@ -1038,7 +1070,8 @@ GitHub pushes).
   → **569 passed, 0 failed** (P1-014; +8 refresh integration)
   → **571 passed, 0 failed** (P1-015; +2 gc session-purge)
   → **578 passed, 0 failed** (P1-016; +7: 6 dual-auth + 1 auth unit)
-  → **585 passed, 0 failed** (P1-017; +7 logout).
+  → **585 passed, 0 failed** (P1-017; +7 logout)
+  → **588 passed, 0 failed** (P1-018; +3 password-sessions).
   Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
@@ -1111,6 +1144,7 @@ GitHub pushes).
   doc line starting with `+` in route_table.rs + an unused
   variable in the logout tests — both lint fixes; the full
   verify took ~13.3 min, no flakes).
+  P1-018: 1 (no flakes — the full verify took ~14 min).
   Every red run was a known flake, a lint fix, or a
   test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
@@ -1130,11 +1164,11 @@ GitHub pushes).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-018 — Revoke on password change.
-2. P1-019 — Session listing.
-3. P1-020 — Brute-force limiter wiring.
-4. P1-021 — Token revocation cache.
-5. P1-022 — JWT verification extractor.
+1. P1-019 — Session listing.
+2. P1-020 — Brute-force limiter wiring.
+3. P1-021 — Token revocation cache.
+4. P1-022 — JWT verification extractor.
+5. P1-023 — Auth integration suite.
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never

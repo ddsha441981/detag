@@ -224,6 +224,36 @@ token already issued stays valid until it expires (≤ 15
 min — the documented residual window: logout revokes the
 SESSION, not the stateless token).
 
+Revoke on password change (P1-018, FR-A-01): when the
+password changes, every live session except the current
+one is revoked (`sessions::revoke_all_except` — one
+statement, `revoked_at` where NULL and `id <> keep`, the
+count is the sessions THIS call revoked; a session the
+rotation already revoked is not counted twice), audited
+once as `session.revoked_on_password_change` (`after:
+{sessions_revoked, kept_session_id}` — no audit when
+nothing was revoked), and the digest mail is queued
+(template `new-login-digest`, payload `{user_id,
+sessions_revoked}` — the mailer renders "your password
+changed; N other sessions were signed out" + the
+recent-login list from the session rows at render time;
+the rows are revoked, not deleted, so they are still
+there to read). The mail is queued on EVERY password
+change, even when nothing was revoked — it notifies about
+the CHANGE, while the audit records the REVOCATION (two
+different events). The "current" session is the one
+behind the presented refresh cookie (read the way the
+logout handler reads it), so the user is not signed out
+of the device they are holding. The reset case passes no
+current session — a reset happens logged-out, so every
+session is revoked. The mechanism is the shared service
+`services::password::revoke_sessions_on_password_change`;
+the HTTP wiring is NOT this ticket's: the reset flow
+(P1-025) calls it when it lands, and no change-password
+route exists yet (when it lands it calls the same service
+with the current session from the presented cookie) — the
+same land-early pattern as P1-004's lockout `reset`.
+
 Register behavior (P1-001, FR-A-01): the email is trimmed +
 lowercased before storage (the column is citext, so the match
 is case-insensitive either way); the password is Argon2id-hashed

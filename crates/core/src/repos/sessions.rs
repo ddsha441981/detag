@@ -130,6 +130,34 @@ pub async fn revoke_one(
     Ok(result.rows_affected() > 0)
 }
 
+/// Revoke every live session of a user EXCEPT one (P1-018 —
+/// password change). Sets `revoked_at = now()` where it is
+/// still NULL and the id is not `keep_session_id`, and
+/// returns how many sessions were revoked. The kept session
+/// is the current one (the session behind the presented
+/// refresh cookie — the change-password handler reads it the
+/// way the logout handler does); a row the rotation already
+/// revoked is not counted twice. Pass `None` (via
+/// [`revoke_all_for_user`]) when there is no current session
+/// — the reset flow (P1-025) revokes everything, because a
+/// reset happens logged-out.
+pub async fn revoke_all_except(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+    keep_session_id: Uuid,
+) -> Result<u64, RepoError> {
+    let result = sqlx::query!(
+        "UPDATE sessions SET revoked_at = now()
+         WHERE user_id = $1 AND revoked_at IS NULL AND id <> $2",
+        user_id,
+        keep_session_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(result.rows_affected())
+}
+
 /// Revoke every live session of a user (P1-008 — the suspend
 /// path; P1-014 still owns rotation/reuse, P1-017 logout).
 /// Sets `revoked_at = now()` where it is still NULL and
