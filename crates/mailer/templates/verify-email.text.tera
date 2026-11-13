@@ -1,0 +1,9 @@
+Hi,
+
+Thanks for creating a {{ app_name }} account. Please verify your email address by opening this link:
+
+{{ base_url }}/auth/verify-email?token={{ token }}
+
+The link expires in 24 hours. If you did not create this account, you can ignore this email — no account will be activated without verification.
+
+— The {{ app_name }} team

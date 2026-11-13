@@ -1,0 +1,7 @@
+Hi,
+
+Your {{ app_name }} password was changed. As a precaution, {{ sessions_revoked }} other session(s) were signed out — only your current session stays signed in.
+
+If this was not you, reset your password immediately and check your signed-in sessions. If it was you, no action is needed.
+
+— The {{ app_name }} team

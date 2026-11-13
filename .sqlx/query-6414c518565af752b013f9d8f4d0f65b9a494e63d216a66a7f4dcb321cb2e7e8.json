@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE email_outbox\n           SET sent_at = now(), last_error = NULL\n           WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6414c518565af752b013f9d8f4d0f65b9a494e63d216a66a7f4dcb321cb2e7e8"
+}

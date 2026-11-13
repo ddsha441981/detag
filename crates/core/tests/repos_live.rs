@@ -14,11 +14,13 @@
 //! The `pf` role needs CREATEDB (granted in the VM dev setup; CI's
 //! postgres service user has it).
 
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use detag_core::db::{connect, DbPool, PoolConfig};
 use detag_core::migrate::migrate_up;
 use detag_core::repos::error::RepoError;
-use detag_core::repos::{artifacts, jobs, plans, uploads, users};
+use detag_core::repos::{
+    artifacts, email_outbox, email_outbox::NewOutboxMail, jobs, plans, uploads, users,
+};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -55,6 +57,10 @@ fn drop_db_sql(db: &str) -> &'static str {
         "detag_p057_uploads_guarded" => "DROP DATABASE IF EXISTS detag_p057_uploads_guarded",
         "detag_p058_uploads_hash" => "DROP DATABASE IF EXISTS detag_p058_uploads_hash",
         "detag_p060_artifacts" => "DROP DATABASE IF EXISTS detag_p060_artifacts",
+        "detag_p128_outbox_claim" => "DROP DATABASE IF EXISTS detag_p128_outbox_claim",
+        "detag_p128_outbox_max" => "DROP DATABASE IF EXISTS detag_p128_outbox_max",
+        "detag_p128_outbox_truncate" => "DROP DATABASE IF EXISTS detag_p128_outbox_truncate",
+        "detag_p128_outbox_race" => "DROP DATABASE IF EXISTS detag_p128_outbox_race",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -71,6 +77,10 @@ fn create_db_sql(db: &str) -> &'static str {
         "detag_p057_uploads_guarded" => "CREATE DATABASE detag_p057_uploads_guarded",
         "detag_p058_uploads_hash" => "CREATE DATABASE detag_p058_uploads_hash",
         "detag_p060_artifacts" => "CREATE DATABASE detag_p060_artifacts",
+        "detag_p128_outbox_claim" => "CREATE DATABASE detag_p128_outbox_claim",
+        "detag_p128_outbox_max" => "CREATE DATABASE detag_p128_outbox_max",
+        "detag_p128_outbox_truncate" => "CREATE DATABASE detag_p128_outbox_truncate",
+        "detag_p128_outbox_race" => "CREATE DATABASE detag_p128_outbox_race",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -150,6 +160,169 @@ async fn users_roundtrip_and_case_insensitive_lookup() {
         .await
         .expect("by_email")
         .is_none());
+
+    teardown(pool, db).await;
+}
+
+/// P1-028: enqueue one outbox row for the drain tests below.
+async fn enqueue_outbox(
+    pool: &DbPool,
+    template: &str,
+    scheduled_at: Option<chrono::DateTime<Utc>>,
+) -> Uuid {
+    email_outbox::enqueue(
+        pool,
+        &NewOutboxMail {
+            to_hash: "deadbeef".to_string(),
+            template: template.to_string(),
+            payload: serde_json::json!({ "user_id": Uuid::now_v7() }),
+            scheduled_at,
+        },
+    )
+    .await
+    .expect("enqueue outbox row")
+}
+
+#[tokio::test]
+async fn outbox_claim_due_claims_oldest_first_and_bumps_attempts() {
+    let db = "detag_p128_outbox_claim";
+    let pool = setup(db).await;
+    let now = Utc::now();
+
+    // Two due rows (A older than C) + one scheduled an hour out.
+    let a = enqueue_outbox(&pool, "verify-email", Some(now - Duration::minutes(10))).await;
+    let _b = enqueue_outbox(&pool, "verify-email", Some(now + Duration::hours(1))).await;
+    let c = enqueue_outbox(&pool, "password-reset", Some(now - Duration::minutes(5))).await;
+
+    let claimed = email_outbox::claim_due(&pool, 10, 5, Utc::now())
+        .await
+        .expect("claim due");
+    assert_eq!(
+        claimed.iter().map(|r| r.id).collect::<Vec<_>>(),
+        vec![a, c],
+        "oldest due first; the future row is not due"
+    );
+    assert!(
+        claimed.iter().all(|r| r.attempts == 1),
+        "the claim bumps attempts to 1"
+    );
+
+    // The sent row is never claimed again; the failed row is
+    // rescheduled into the future and stays unclaimed until then.
+    email_outbox::mark_sent(&pool, a).await.expect("mark sent");
+    email_outbox::record_failure(&pool, c, "relay down", now + Duration::seconds(60))
+        .await
+        .expect("record failure");
+    let claimed = email_outbox::claim_due(&pool, 10, 5, Utc::now())
+        .await
+        .expect("second claim");
+    assert!(
+        claimed.is_empty(),
+        "sent + rescheduled rows are not due: got {}",
+        claimed.len()
+    );
+
+    teardown(pool, db).await;
+}
+
+#[tokio::test]
+async fn outbox_claim_stops_at_max_attempts_and_park_is_terminal() {
+    let db = "detag_p128_outbox_max";
+    let pool = setup(db).await;
+
+    let one = enqueue_outbox(&pool, "verify-email", None).await;
+    let two = enqueue_outbox(&pool, "verify-email", None).await;
+
+    // max_attempts = 1: one claim spends the row's only attempt.
+    let claimed = email_outbox::claim_due(&pool, 10, 1, Utc::now())
+        .await
+        .expect("claim");
+    assert_eq!(claimed.len(), 2, "both rows claimable at first");
+    let claimed = email_outbox::claim_due(&pool, 10, 1, Utc::now())
+        .await
+        .expect("second claim");
+    assert!(
+        claimed.is_empty(),
+        "attempts == max means terminal, got {}",
+        claimed.len()
+    );
+
+    // Parking is the same terminal state by construction.
+    let _ = one;
+    email_outbox::record_permanent_failure(&pool, two, 5, "unknown template")
+        .await
+        .expect("park");
+    let rows = email_outbox::unsent_for_template(&pool, "verify-email")
+        .await
+        .expect("read back");
+    let parked = rows
+        .iter()
+        .find(|r| r.id == two)
+        .expect("parked row reads back");
+    assert_eq!(parked.attempts, 5, "parking sets attempts to max");
+    assert_eq!(parked.last_error.as_deref(), Some("unknown template"));
+
+    teardown(pool, db).await;
+}
+
+#[tokio::test]
+async fn outbox_record_failure_truncates_long_errors() {
+    let db = "detag_p128_outbox_truncate";
+    let pool = setup(db).await;
+    let now = Utc::now();
+
+    let id = enqueue_outbox(&pool, "verify-email", None).await;
+    let long = "x".repeat(600);
+    email_outbox::record_failure(&pool, id, &long, now + Duration::seconds(60))
+        .await
+        .expect("record failure");
+    let rows = email_outbox::unsent_for_template(&pool, "verify-email")
+        .await
+        .expect("read back");
+    let row = rows.iter().find(|r| r.id == id).expect("row reads back");
+    let kept = row.last_error.clone().expect("error kept");
+    assert!(
+        kept.chars().count() <= 501,
+        "last_error must be truncated to 500 chars + ellipsis, got {}",
+        kept.chars().count()
+    );
+    assert!(kept.ends_with('…'), "truncation is marked: {kept}");
+
+    teardown(pool, db).await;
+}
+
+#[tokio::test]
+async fn outbox_concurrent_claims_never_double_claim() {
+    let db = "detag_p128_outbox_race";
+    let pool = setup(db).await;
+
+    for _ in 0..10 {
+        enqueue_outbox(&pool, "verify-email", None).await;
+    }
+    // Four claimers race for the same 10 rows: SKIP LOCKED must
+    // give each row to exactly one claimer.
+    let mut handles = Vec::new();
+    for _ in 0..4 {
+        let pool = pool.clone();
+        handles.push(tokio::spawn(async move {
+            email_outbox::claim_due(&pool, 10, 5, Utc::now())
+                .await
+                .expect("concurrent claim")
+        }));
+    }
+    let mut ids = Vec::new();
+    for handle in handles {
+        ids.extend(
+            handle
+                .await
+                .expect("claimer joins")
+                .into_iter()
+                .map(|r| r.id),
+        );
+    }
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 10, "every row claimed exactly once");
 
     teardown(pool, db).await;
 }

@@ -148,6 +148,32 @@ pub async fn update_profile(
         other => RepoError::from_sqlx(other),
     })
 }
+/// Set a user's pending (new) email address (P1-028): the
+/// email-change flow's intent, stored before the verification
+/// mail goes out — the drain resolves the
+/// `email-change-verify` mail's recipient from this column.
+/// One UPDATE; returns `NotFound` when the id does not exist.
+/// The caller validates the address (shape + disposable +
+/// duplicate) — this function stores, it does not validate.
+pub async fn set_pending_email(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+    pending_email: &str,
+) -> Result<(), RepoError> {
+    let result = sqlx::query!(
+        "UPDATE users SET pending_email = $2::citext, updated_at = now() WHERE id = $1",
+        id,
+        pending_email
+    )
+    .execute(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    if result.rows_affected() == 0 {
+        return Err(RepoError::NotFound);
+    }
+    Ok(())
+}
+
 pub async fn set_email_verified(
     pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     id: Uuid,

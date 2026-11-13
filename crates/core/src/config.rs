@@ -163,6 +163,27 @@ pub struct Settings {
     pub smtp_pass: String,
     /// Env: PF_MAIL_FROM
     pub mail_from: String,
+    /// Env: PF_SMTP_TLS — use STARTTLS when talking to the SMTP
+    /// relay (P1-028). Default false: dev MailHog is plaintext
+    /// on :1025; a production relay needs this on.
+    pub smtp_tls: bool,
+    /// Env: PF_MAILER_MAX_ATTEMPTS — how many send attempts an
+    /// outbox row gets before the drain stops claiming it
+    /// (P1-028). Default 5. A row that exhausts its attempts
+    /// stays in the table with `last_error` set — the terminal
+    /// state is `attempts >= max`, not a delete.
+    pub mailer_max_attempts: u32,
+    /// Env: PF_MAILER_BACKOFF_BASE_SECS — base of the drain's
+    /// exponential backoff (P1-028). After the n-th failed
+    /// attempt the next try is scheduled `base * 2^(n-1)`
+    /// seconds out, capped at 3600 s. Default 60.
+    pub mailer_backoff_base_secs: u64,
+    /// Env: PF_MAILER_DRAIN_INTERVAL_SECS — how often the worker's
+    /// outbox drain loop wakes (P1-028). Default 30.
+    pub mailer_drain_interval_secs: u64,
+    /// Env: PF_MAILER_DRAIN_BATCH — max outbox rows one drain
+    /// pass claims (P1-028). Default 25.
+    pub mailer_drain_batch: u32,
     /// Env: PF_ENGINE_MODELS_DIR
     pub engine_models_dir: String,
     /// Env: PF_ENGINE_GPU — GPU device count; 0 means CPU-only/off.
@@ -362,6 +383,11 @@ impl Default for Settings {
             smtp_user: String::new(),
             smtp_pass: String::new(),
             mail_from: "noreply@detag.local".to_string(),
+            smtp_tls: false,
+            mailer_max_attempts: 5,
+            mailer_backoff_base_secs: 60,
+            mailer_drain_interval_secs: 30,
+            mailer_drain_batch: 25,
             engine_models_dir: "./models".to_string(),
             engine_gpu: 0,
             engine_tiles_max: 1024,
@@ -430,6 +456,14 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("smtp_user", "PF_SMTP_USER"),
     ("smtp_pass", "PF_SMTP_PASS"),
     ("mail_from", "PF_MAIL_FROM"),
+    ("smtp_tls", "PF_SMTP_TLS"),
+    ("mailer_max_attempts", "PF_MAILER_MAX_ATTEMPTS"),
+    ("mailer_backoff_base_secs", "PF_MAILER_BACKOFF_BASE_SECS"),
+    (
+        "mailer_drain_interval_secs",
+        "PF_MAILER_DRAIN_INTERVAL_SECS",
+    ),
+    ("mailer_drain_batch", "PF_MAILER_DRAIN_BATCH"),
     ("engine_models_dir", "PF_ENGINE_MODELS_DIR"),
     ("engine_gpu", "PF_ENGINE_GPU"),
     ("engine_tiles_max", "PF_ENGINE_TILES_MAX"),
@@ -575,6 +609,11 @@ impl Settings {
             smtp_user: field!(smtp_user, String),
             smtp_pass: field!(smtp_pass, String),
             mail_from: field!(mail_from, String),
+            smtp_tls: field!(smtp_tls, bool),
+            mailer_max_attempts: field!(mailer_max_attempts, u32),
+            mailer_backoff_base_secs: field!(mailer_backoff_base_secs, u64),
+            mailer_drain_interval_secs: field!(mailer_drain_interval_secs, u64),
+            mailer_drain_batch: field!(mailer_drain_batch, u32),
             engine_models_dir: field!(engine_models_dir, String),
             engine_gpu: field!(engine_gpu, u8),
             engine_tiles_max: field!(engine_tiles_max, u32),
@@ -705,6 +744,18 @@ impl Settings {
         }
         if self.smtp_port == 0 {
             invalid("PF_SMTP_PORT", "must be 1..=65535".to_string());
+        }
+        if self.mailer_max_attempts == 0 {
+            invalid("PF_MAILER_MAX_ATTEMPTS", "must be >= 1".to_string());
+        }
+        if self.mailer_backoff_base_secs == 0 {
+            invalid("PF_MAILER_BACKOFF_BASE_SECS", "must be >= 1".to_string());
+        }
+        if self.mailer_drain_interval_secs == 0 {
+            invalid("PF_MAILER_DRAIN_INTERVAL_SECS", "must be >= 1".to_string());
+        }
+        if self.mailer_drain_batch == 0 {
+            invalid("PF_MAILER_DRAIN_BATCH", "must be >= 1".to_string());
         }
         if self.api_port == 0 {
             invalid("PF_API_PORT", "must be 1..=65535".to_string());
@@ -1014,6 +1065,11 @@ mod tests {
         "PF_SMTP_USER",
         "PF_SMTP_PASS",
         "PF_MAIL_FROM",
+        "PF_SMTP_TLS",
+        "PF_MAILER_MAX_ATTEMPTS",
+        "PF_MAILER_BACKOFF_BASE_SECS",
+        "PF_MAILER_DRAIN_INTERVAL_SECS",
+        "PF_MAILER_DRAIN_BATCH",
         "PF_ENGINE_MODELS_DIR",
         "PF_ENGINE_GPU",
         "PF_ENGINE_TILES_MAX",
@@ -1102,6 +1158,11 @@ mod tests {
         assert!(s.smtp_user.is_empty());
         assert!(s.smtp_pass.is_empty());
         assert_eq!(s.mail_from, "noreply@detag.local");
+        assert!(!s.smtp_tls);
+        assert_eq!(s.mailer_max_attempts, 5);
+        assert_eq!(s.mailer_backoff_base_secs, 60);
+        assert_eq!(s.mailer_drain_interval_secs, 30);
+        assert_eq!(s.mailer_drain_batch, 25);
         assert_eq!(s.engine_models_dir, "./models");
         assert_eq!(s.engine_gpu, 0);
         assert_eq!(s.engine_tiles_max, 1024);

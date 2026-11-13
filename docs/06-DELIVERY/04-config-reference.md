@@ -24,6 +24,10 @@
 | `PF_FEATURE_RAZORPAY` | `false` | billing |
 | `PF_JWT_SECRET` | `dev-fixed` | api |
 | `PF_LOG_LEVEL` | `info` | all |
+| `PF_MAILER_BACKOFF_BASE_SECS` | `60` | mailer |
+| `PF_MAILER_DRAIN_BATCH` | `25` | mailer |
+| `PF_MAILER_DRAIN_INTERVAL_SECS` | `30` | mailer |
+| `PF_MAILER_MAX_ATTEMPTS` | `5` | mailer |
 | `PF_MAIL_FROM` | `noreply@detag.local` | mailer |
 | `PF_METRICS_HOST` | `127.0.0.1` | api, worker |
 | `PF_METRICS_PORT` | `9090` | api |
@@ -62,6 +66,7 @@
 | `PF_SMTP_HOST` | `localhost` | mailer |
 | `PF_SMTP_PASS` | (empty) | mailer |
 | `PF_SMTP_PORT` | `1025` | mailer |
+| `PF_SMTP_TLS` | `false` | mailer |
 | `PF_SMTP_USER` | (empty) | mailer |
 | `PF_STRIPE_SECRET_KEY` | `sk_test_placeholder` | billing |
 | `PF_STRIPE_WEBHOOK_SECRET` | `whsec_placeholder` | billing |

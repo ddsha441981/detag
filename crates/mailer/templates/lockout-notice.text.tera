@@ -1,0 +1,7 @@
+Hi,
+
+Your {{ app_name }} account was temporarily locked after several failed sign-in attempts. Sign-in is available again shortly — no action is needed unless the attempts were not yours.
+
+If you did not try to sign in, change your password once you are back in. If the attempts continue, the lock re-applies automatically.
+
+— The {{ app_name }} team

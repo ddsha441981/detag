@@ -1,0 +1,7 @@
+Hi,
+
+A sign-in session on your {{ app_name }} account was used in a way that looks like theft — the same session token was presented twice. As a precaution, all of your sessions were signed out.
+
+If this was you (for example, a browser restoring an old tab), just sign in again. If it was not you, change your password after signing in.
+
+— The {{ app_name }} team

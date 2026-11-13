@@ -31,8 +31,10 @@ apalis.workspace = true
 apalis-redis.workspace = true
 detag-core = { path = "../../crates/core" }
 detag-engine = { path = "../../crates/engine" }
+detag-mailer = { path = "../../crates/mailer" }
 
 [dev-dependencies]
 libc.workspace = true
 sqlx.workspace = true
 url.workspace = true
+detag-testkit = { path = "../../crates/testkit" }

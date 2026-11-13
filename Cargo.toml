@@ -64,6 +64,8 @@ apalis-redis = "0.6"
 zxcvbn = "3"
 sha1 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+lettre = { version = "0.11", default-features = false, features = ["tokio1", "smtp-transport", "tokio1-rustls-tls", "hostname", "builder", "pool"] }
+tera = "1"
 
 [profile.release]
 lto = "thin"

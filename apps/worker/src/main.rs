@@ -9,8 +9,9 @@
 //! handlers are Phase-0 stubs until the features that own them
 //! land — nothing enqueues jobs yet, so the workers idle on
 //! empty queues. The process also writes a heartbeat row to
-//! Postgres every `PF_WORKER_HEARTBEAT_INTERVAL_SECS` (P0-080)
-//! and serves its metrics on an internal `/metrics` port.
+//! Postgres every `PF_WORKER_HEARTBEAT_INTERVAL_SECS` (P0-080),
+//! drains the `email_outbox` every `PF_MAILER_DRAIN_INTERVAL_SECS`
+//! (P1-028) and serves its metrics on an internal `/metrics` port.
 
 use detag_core::config::{warn_unknown_feature_flags, Settings};
 use detag_core::db::{connect_lazy, db_health, PoolConfig};
@@ -127,6 +128,30 @@ async fn main() {
         Duration::from_secs(settings.worker_heartbeat_interval_secs),
         Arc::clone(&shutdown),
     ));
+    // Outbox drain (P1-028): the mail loop — one pass now, then
+    // one per PF_MAILER_DRAIN_INTERVAL_SECS until shutdown. The
+    // engine + transport build here, at boot: a broken template
+    // set or a bad PF_MAIL_FROM fails the boot, not the first
+    // queued mail. Building the transport never touches the
+    // network (lettre connects lazily), so a down relay is a
+    // per-mail failure the drain retries, not a boot error.
+    let mail_engine = detag_mailer::TemplateEngine::new().unwrap_or_else(|err| {
+        eprintln!("detag-worker: template engine failed to build: {err}");
+        std::process::exit(1);
+    });
+    let mail_transport =
+        detag_mailer::LettreTransport::new(&detag_mailer::SmtpConfig::from_settings(&settings))
+            .unwrap_or_else(|err| {
+                eprintln!("detag-worker: mail transport failed to build: {err}");
+                std::process::exit(1);
+            });
+    let mail_drain_task = tokio::spawn(detag_worker::mail_drain::run_mail_drain(
+        pool.clone(),
+        Arc::new(mail_transport),
+        Arc::new(mail_engine),
+        detag_mailer::DrainConfig::from_settings(&settings),
+        Arc::clone(&shutdown),
+    ));
     tracing::info!(
         queues = QUEUES.join(","),
         concurrency = settings.worker_concurrency,
@@ -217,17 +242,17 @@ async fn main() {
             false
         }
     };
-    // The heartbeat loop and the metrics server got the same
-    // signal: give them the drain window to finish (the heartbeat
-    // deletes its row), then stop waiting — a stuck task must not
-    // hang the deploy.
+    // The heartbeat loop, the metrics server and the mail drain
+    // got the same signal: give them the drain window to finish
+    // (the heartbeat deletes its row), then stop waiting — a
+    // stuck task must not hang the deploy.
     if tokio::time::timeout(SHUTDOWN_TIMEOUT, async {
-        let _ = tokio::join!(metrics_task, heartbeat_task);
+        let _ = tokio::join!(metrics_task, heartbeat_task, mail_drain_task);
     })
     .await
     .is_err()
     {
-        tracing::error!("metrics/heartbeat tasks did not stop within the drain window");
+        tracing::error!("metrics/heartbeat/mail-drain tasks did not stop within the drain window");
     }
     pool.close().await;
     shutdown_telemetry();

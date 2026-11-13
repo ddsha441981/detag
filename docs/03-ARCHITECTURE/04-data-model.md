@@ -37,7 +37,7 @@ feature_flags   idempotency_keys   email_outbox     plans (catalog)
 **abuse_reports** — id, reporter_contact?, job_id?, reason, status (open|reviewing|resolved), resolution, notes.
 **feature_flags** — key PK, enabled bool, rollout jsonb, updated_by, updated_at (cached 30 s).
 **idempotency_keys** — key PK, user_id, endpoint, response jsonb, expires_at.
-**email_outbox** — id, to_hash?, template, payload jsonb, scheduled_at, sent_at, attempts, last_error (worker drains; supports retry + test assertions).
+**email_outbox** — id, to_hash?, template, payload jsonb, scheduled_at, sent_at, attempts, last_error (worker drains, P1-028: `claim_due` atomically claims due rows — unsent, `scheduled_at` passed, `attempts < max` — bumping `attempts` with `FOR UPDATE SKIP LOCKED`, so two drain replicas never send the same mail; success sets `sent_at`; a transient failure reschedules with exponential backoff `base * 2^(n-1)` s, capped at 3600 s; a permanent failure (unknown template, unresolvable recipient, `to_hash` mismatch) parks the row by setting `attempts = max`; exhausted/parked rows stay in the table with `last_error` kept and are never claimed again — the terminal state is `attempts >= max`, not a delete; sent rows are purged after 30 d).
 **worker_heartbeats** — worker_id PK (`{hostname}:{pid}`), pid, queues text[], in_flight int (>= 0), started_at, last_heartbeat_at (upserted every heartbeat tick, P0-080; staleness = dead worker; pruned after 1 h).
 
 ## Retention & cleanup jobs
