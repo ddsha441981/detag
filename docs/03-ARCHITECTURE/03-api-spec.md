@@ -49,6 +49,7 @@ Conventions first; endpoint tables are the contract. OpenAPI is generated from c
 | POST | `/v1/auth/register` | none | email, password, accept_tos_version → 201 user + verification email sent |
 | POST | `/v1/auth/verify-email` | none | token → 204 |
 | POST | `/v1/auth/resend-verification` | none | email → always 204 (no enumeration) |
+| POST | `/v1/auth/confirm-email-change` | none | token → 204 (swap to pending address; P1-006 — not in the original spec, same as resend) |
 
 Verify behavior (P1-002, FR-A-01): the token is a 32-byte
 random string, base64url-encoded (43 characters), valid 24
@@ -210,6 +211,48 @@ docs). User status is NOT checked here — suspension revokes
 sessions at suspend time (P1-008); a token issued before
 suspension staying valid until expiry (≤ 15 min) is that
 ticket's design space, not this extractor's.
+
+Email change (P1-006, FR-A-01): setting a NEW `pending_email`
+via `PATCH /v1/me` triggers, in the same transaction as the
+profile update + audit, a change token (single-use, 24h,
+hash-only, purpose `email_change` — the token table's
+`purpose` column, migration 20261113050515) and TWO mails:
+the verification mail to the NEW address (template
+`email-change-verify`, payload `{user_id, token}`) and the
+takeover alert to the OLD address (template
+`email-change-alert`, payload `{user_id}` — no token, and the
+new address never appears in it). `POST
+/v1/auth/confirm-email-change` consumes the token and swaps
+the email to the pending address (clearing the intent,
+setting `email_verified_at` — the token was delivered to the
+new address, so the new address is verified by it) in one
+transaction (consume + swap + `email.change` audit, the audit
+carrying both addresses as sha256 only). Unknown / used /
+wrong-purpose token → 401 `PF-1010` (a registration token
+presented here is invalid — the purposes are never
+interchangeable); expired → 401 `PF-1011`; an address taken
+by another account while it was pending → 409 `PF-2011` (the
+swap is the enforcement point for the P1-005 intent-time
+duplicate check, which was only a courtesy — the failed swap
+rolls the whole transaction back, so the token stays unused
+and the intent stays pending). A token whose intent was
+cleared meanwhile → 401 `PF-1010` (the swap's
+`pending_email IS NOT NULL` guard finds no row). Clearing a
+pending intent deletes the live change token (purpose-scoped
+— a registration token survives, so clearing must not force
+the user to re-verify their current address). Re-PATCHing the
+SAME pending address is a no-op (no new token, no new mails)
+— re-trigger by clearing + re-setting. One-live-token
+consequences: a resend-verification mints a `verification`
+token and kills a live change token (the pending intent
+survives on the user row); an email-change PATCH kills a
+live registration token (after the swap the user is
+verified, so the registration token is moot — if the change
+is abandoned instead, the user must resend verification).
+The outbox accumulates one mail per mint — a superseded
+mail stays queued with a dead token (its link 401s), the
+same as the resend flow; only the token row is the live
+credential.
 | POST | `/v1/auth/login` | none | email, password → access_token, expires_in (+ sets refresh cookie) |
 | POST | `/v1/auth/refresh` | cookie | → new access token, rotated refresh (reuse ⇒ revoke all sessions PF-1007) |
 | POST | `/v1/auth/logout` | any | → 204, revoke presented session |

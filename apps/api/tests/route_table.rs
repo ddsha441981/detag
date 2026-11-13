@@ -5,9 +5,11 @@
 //! path a request takes):
 //!
 //! 1. The table itself has no duplicate (method, path) pairs
-//!    and has the 64 entries the API spec lists (63 from the
+//!    and has the 65 entries the API spec lists (63 from the
 //!    spec + `POST /v1/auth/resend-verification`, added by
-//!    P1-002 — the spec names no resend route).
+//!    P1-002 — the spec names no resend route — + `POST
+//!    /v1/auth/confirm-email-change`, added by P1-006 — the
+//!    spec names no confirm route either).
 //! 2. Every table entry resolves to the 501 stub (never 404):
 //!    the route exists and its handler is the shared stub.
 //!    A duplicate or overlapping route would already have
@@ -66,8 +68,8 @@ fn route_table_has_no_duplicates() {
     }
     assert_eq!(
         ROUTE_TABLE.len(),
-        64,
-        "ROUTE_TABLE must list the spec's 64 routes (auth 17 + uploads 4 + jobs 9 + billing 12 + admin 20 + meta 2)"
+        65,
+        "ROUTE_TABLE must list the spec's 65 routes (auth 18 + uploads 4 + jobs 9 + billing 12 + admin 20 + meta 2)"
     );
 }
 
@@ -119,15 +121,17 @@ async fn every_table_entry_resolves_to_the_stub() {
         // Real handlers (not stubs) answer with their real
         // behavior for the empty-body probe. P1-001 register +
         // P1-002 verify-email / resend-verification + P1-003
-        // login: the empty body fails ValidatedJson → 422
-        // PF-2002 with the probe id echoed (the route exists;
-        // each handler's own test covers its success paths).
+        // login + P1-006 confirm-email-change: the empty body
+        // fails ValidatedJson → 422 PF-2002 with the probe id
+        // echoed (the route exists; each handler's own test
+        // covers its success paths).
         if *method == "POST"
             && matches!(
                 *path,
                 "/v1/auth/register"
                     | "/v1/auth/verify-email"
                     | "/v1/auth/resend-verification"
+                    | "/v1/auth/confirm-email-change"
                     | "/v1/auth/login"
             )
         {

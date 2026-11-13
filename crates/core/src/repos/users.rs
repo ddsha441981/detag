@@ -159,3 +159,39 @@ pub async fn set_email_verified(
         other => RepoError::from_sqlx(other),
     })
 }
+
+/// Swap the email to the pending address (P1-006): the address
+/// moves from `pending_email` to `email`, the pending intent is
+/// cleared, and `email_verified_at` is set — the token that
+/// authorized this swap was delivered to the new address, so
+/// the new address is verified by it. The `pending_email IS
+/// NOT NULL` guard is the race guard: if the intent was cleared
+/// (or already swapped) concurrently, zero rows update and the
+/// caller gets `NotFound` instead of swapping a stale or empty
+/// address. A `UniqueViolation` means the pending address was
+/// taken by another account while it was pending — the swap is
+/// the enforcement point for the P1-005 intent-time duplicate
+/// check (which was only a courtesy).
+pub async fn swap_email(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> Result<User, RepoError> {
+    sqlx::query_as!(
+        User,
+        "UPDATE users SET
+             email = pending_email,
+             pending_email = NULL,
+             email_verified_at = now(),
+             updated_at = now()
+         WHERE id = $1 AND pending_email IS NOT NULL
+         RETURNING id, email, password_hash, email_verified_at, role, status,
+             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
+        id
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|err| match err {
+        sqlx::Error::RowNotFound => RepoError::NotFound,
+        other => RepoError::from_sqlx(other),
+    })
+}

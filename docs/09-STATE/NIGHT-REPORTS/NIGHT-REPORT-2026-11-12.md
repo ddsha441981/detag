@@ -12,13 +12,14 @@ P0-106/107/108 (Phase 0 ticket work done, 105/108); updated
 ~07:45 IST 13 Nov after P1-002 (Phase 1, 2/111); updated
 ~08:31 IST 13 Nov after P1-003 (Phase 1, 3/111); updated
 ~09:15 IST 13 Nov after P1-004 (Phase 1, 4/111); updated
-~10:26 IST 13 Nov after P1-005 (Phase 1, 5/111). Resumed
+~10:26 IST 13 Nov after P1-005 (Phase 1, 5/111); updated
+~11:19 IST 13 Nov after P1-006 (Phase 1, 6/111). Resumed
 from the 8th coordinator's interruption (~23:21 IST, P0-092 in
 progress with uncommitted work). Local HEAD at this update:
-`4d5c73c` (P1-005). No push (local-only by rule; parent handles
+`6d074d3` (P1-006). No push (local-only by rule; parent handles
 GitHub pushes).
 
-## Tickets done (17)
+## Tickets done (18)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -416,6 +417,54 @@ GitHub pushes).
   profile-service unit + 6 validator display-name unit + the
   extractor's rejection unit test. `just verify` green 486
   passed, 0 failed, attempt 2 (no flakes).
+- **P1-006 — Email change flow** (6d074d3): migration
+  `20261113050515_email_change_token_purpose` adds `purpose`
+  (`verification` | `email_change`, CHECK, backfilled
+  `verification`) to `email_verification_tokens`; the two
+  purposes are never interchangeable (a registration token at
+  confirm → 401 PF-1010, not consumed). `tokens::mint` takes
+  a purpose + `delete_unused_for_purpose` (purpose-scoped
+  delete); `users::swap_email` (email = pending, pending
+  cleared, `email_verified_at` set, guarded by
+  `pending_email IS NOT NULL`). `issue_email_change` (in the
+  profile PATCH tx when a NEW pending address is set): deletes
+  all unused tokens (one live token per user), mints an
+  `email_change` token, queues `email-change-verify` to the
+  new address (`{user_id, token}`) + `email-change-alert` to
+  the old address (`{user_id}` — no token, never names the
+  new address); `clear_email_change_tokens` kills the live
+  change token when the intent is cleared (registration token
+  survives). `POST /v1/auth/confirm-email-change` → 204:
+  consume + swap + `email.change` audit (both addresses as
+  sha256) in one tx; unknown/used/wrong-purpose → 401
+  PF-1010, expired → 401 PF-1011, address taken meanwhile →
+  409 PF-2011 (swap is the enforcement point; the failed swap
+  rolls back, token stays unused, intent stays pending).
+  Re-PATCHing the same pending address is a no-op (no re-mail
+  — re-trigger by clearing + re-setting). One-live-token
+  consequences recorded in the api-spec: a resend kills a live
+  change token (intent survives); a change PATCH kills a live
+  registration token. Route table 65 routes, 9 live / 56
+  stubs; OpenAPI gains the confirm path + schema. Findings:
+  (1) the outbox accumulates one mail per mint — a superseded
+  mail stays queued with a dead token (its link 401s), the
+  same as the resend flow; only the token row is the live
+  credential — tests must read the LATEST mail, not assert
+  exactly one (caught by the replace-pending test); (2) the
+  harness DB persists across runs, so confirming tests must
+  use unique pending addresses — fixed strings collided with
+  a previous run's swapped user and 409'd (caught by the
+  second run, not the first); (3) an unknown confirm token is
+  PF-1010, not PF-1001 (PF-1001 is "no credential at all" —
+  a test-expectation bug, not a service bug). Tests: 12 new
+  in `tests/email_change.rs`, green twice in a row.
+  `just verify` green 498 passed, 0 failed, attempt 3
+  (attempts 1–2: FLAKY-002 `slow_consumer_drops_safely`
+  streak of 2, green after a 60 s settle; the 6th VM reset
+  hit mid-attempt-2 — runtime restart, services restored per
+  ASSUMPTION-010). Docs: api-spec email-change paragraph +
+  route-table row, data-model tokens row, security-testing
+  email-change line, threat model T18.
 
 ## Tickets partially done
 
@@ -525,7 +574,8 @@ GitHub pushes).
   failed** (P1-004; +8: 2 lockout-curve unit + 6 lockout
   integration) → **486 passed, 0 failed** (P1-005; +27: 16
   profile integration + 5 profile-service unit + 6 validator
-  display-name unit). Python script tests:
+  display-name unit) → **498 passed, 0 failed** (P1-006; +12
+  email-change integration). Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
   all green. `just bench` green (17 benches, 2m54s). `just coverage`
@@ -556,7 +606,17 @@ GitHub pushes).
   suite itself ran 3× green before the full verify), P1-005: 2
   (attempt 1 failed on `job_events_retry` — its 001+002-only
   scratch schema lacked the P1-005 columns; fixed by adding the
-  profile-fields migration to its scratch dir; no flakes).
+  profile-fields migration to its scratch dir; no flakes),
+  P1-006: 3 (attempts 1–2 failed on FLAKY-002
+  `slow_consumer_drops_safely` — streak of 2, green after a
+  60 s settle; the 6th VM reset hit mid-attempt-2 — the runtime
+  restarted, the verify was interrupted mid-run, services +
+  binaries were wiped, restored per ASSUMPTION-010: wait the
+  os-intent replay (pid 753, ~40 s), setsid redis,
+  `pg_ctlcluster 16 main start`, recreate `pf` role/db via
+  `sudo -u postgres psql` (the fresh cluster's `postgres`
+  superuser takes peer auth only — password auth fails),
+  `cargo sqlx migrate run` on the fresh `pf` DB).
   Every red run was a known flake, a lint fix, or a
   test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
@@ -576,11 +636,11 @@ GitHub pushes).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-006 — Email change flow.
-2. P1-007 — Account deletion.
-3. P1-008 — Admin suspend/restore.
-4. P1-009 — Admin user search.
-5. P1-010 — (next in the phase file after P1-009).
+1. P1-007 — Account deletion.
+2. P1-008 — Admin suspend/restore.
+3. P1-009 — Admin user search.
+4. P1-010 — (next in the phase file after P1-009).
+5. P1-011 — (next in the phase file after P1-010).
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never
@@ -638,6 +698,25 @@ one path can hold both a live and a stub route (GET/PATCH
 /v1/me live, DELETE still the P1-007 stub) — add the
 (method, path) to `is_live` AND to the special-case in
 `tests/route_table.rs` when a handler lands.
+P1-006 lessons: (1) the outbox accumulates one mail per mint
+— a superseded mail stays queued with a dead token — so
+tests that read a token from the outbox must take the LATEST
+mail for the user (`.last()`), never assert exactly one
+(the verification tests do the same); (2) the harness DB
+persists across runs — any test that CONFIRMS a swap (or
+otherwise enforces a uniqueness constraint) must use unique
+addresses per run, or the second run 409s against the first
+run's rows (fixed pending strings are fine only for
+PATCH-only tests, which never hit the constraint); (3) an
+unknown token at confirm is PF-1010, not PF-1001 — PF-1001
+means "no credential at all"; check the taxonomy before
+writing the expectation, not after. 6th VM reset (P1-006):
+the runtime restarted mid-verify; the os-intent replay (pid
+753) finished in ~40 s and the binaries were back — wait it
+out, do NOT apt-install in parallel; the fresh cluster's
+`postgres` superuser takes peer auth only, so recreate the
+`pf` role/db via `sudo -u postgres psql`, then `cargo sqlx
+migrate run` on the fresh `pf` DB.
 The duplicate-email 409-vs-201
 question is recorded in the P1-001 status (taxonomy says 409;
 full indistinguishability would be a DECISIONS.md item). If

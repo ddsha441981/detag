@@ -5,7 +5,7 @@
 ## Where we are
 
 - **Current phase:** 1 — Identity & Billing
-- **Current ticket:** P1-006 (Phase 0 ticket work done: 105/108; P0-034/046/083 implemented but unverified — DOCKER-001/CI-WORKFLOWS-001)
+- **Current ticket:** P1-007 (Phase 0 ticket work done: 105/108; P0-034/046/083 implemented but unverified — DOCKER-001/CI-WORKFLOWS-001)
 - **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007). P0-083 size gate likewise deferred to CI (DOCKER-001, no docker daemon here); Dockerfile.api + gate implemented, AC unticked until CI runs green. P0-088 AC ("smoke enforces health") and P0-090 AC ("smoke green in CI") likewise unticked until the smoke job goes green in CI — `just smoke` + the CI job are implemented, but the workflow files can't reach GitHub yet (CI-WORKFLOWS-001). Remote CI runs the STALE workflow — local checks added since ~09:20 IST never ran remotely.
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
@@ -14,7 +14,7 @@
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
 | 0 | Foundation & Platform Baseline | 105 / 108 | P0-034/046/083 implemented but unverified (DOCKER-001) — live ACs + exit gates for `just dev`/`just smoke`/CI deferred to docker-capable CI |
-| 1 | Identity & Billing | 5 / 111 | — |
+| 1 | Identity & Billing | 6 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
 | 4 | Console & Admin | 0 / 102 | — |
@@ -25,7 +25,7 @@
 
 | Signal | Value |
 | --- | --- |
-| `just verify` | green (fmt + clippy -D warnings + tests; smoke excluded per ADR-0017 — `just smoke` exists now, still excluded: no docker daemon here) — 486 passed, 0 failed (P1-005; 459 + 27 new: 16 profile integration + 5 profile-service unit + 6 validator display-name unit; attempt 2 — attempt 1 failed on `job_events_retry` (its 001+002-only scratch schema lacked the P1-005 columns; fixed by adding the profile-fields migration to its scratch dir), no flakes) |
+| `just verify` | green (fmt + clippy -D warnings + tests; smoke excluded per ADR-0017 — `just smoke` exists now, still excluded: no docker daemon here) — 498 passed, 0 failed (P1-006; 486 + 12 new email-change integration; attempt 3 — attempts 1–2 failed on FLAKY-002 `slow_consumer_drops_safely` (streak of 2), green after a 60 s settle; the 6th VM reset hit mid-attempt-2 (runtime restart, services/binaries wiped, os-intent replay pid 753, restored per ASSUMPTION-010: wait replay, setsid redis, pg_ctlcluster, recreate `pf` role/db via `sudo -u postgres`, `cargo sqlx migrate run`)) |
 | Coverage (core/engine/api) | 96.8% / 99.1% / 92.6% (worker 83.8%) — all above NFR-50 floors (85/80/75/70); report-only until Phase 2 (`just coverage-gate` exists, OFF) — re-measured 2026-11-13 during P1-001 (`just coverage` green) |
 | Golden suite | — |
 | Bench snapshot (image 4K p95 / video factor) | full-job 4K mean 545 ms (scaffold chain — see Bench history; p95 not tracked yet, criterion mean/median in `crates/engine/benches/baselines/`) / video factor n/a (input-prep only; real factor needs the Phase 2 video pipeline) |

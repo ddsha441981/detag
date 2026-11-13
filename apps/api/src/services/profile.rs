@@ -23,6 +23,7 @@
 //! either); a compare-and-swap would be over-engineering for
 //! a display name.
 
+use super::verification::{clear_email_change_tokens, issue_email_change};
 use super::{entitlements, register::is_disposable};
 use crate::AppState;
 use chrono::{DateTime, Utc};
@@ -285,10 +286,37 @@ pub async fn patch_profile(
         let after = serde_json::Value::Object(after.clone());
         let user = user.clone();
         Box::pin(async move {
-            let updated =
-                users::update_profile(&mut *conn, user.id, new_display_name, new_pending_email)
-                    .await
-                    .map_err(ProfileTxError::Db)?;
+            let updated = users::update_profile(
+                &mut *conn,
+                user.id,
+                new_display_name,
+                new_pending_email.clone(),
+            )
+            .await
+            .map_err(ProfileTxError::Db)?;
+            // Email-change trigger (P1-006), in the same tx as
+            // the profile update + audit: a NEW pending address
+            // mints the change token and queues the verification
+            // mail (to the new address) + the takeover alert
+            // (to the old address); clearing an intent kills
+            // the live change token. The raw token is dropped
+            // here on purpose — it lives only in the outbox
+            // payload (where the mail drain needs it) and in
+            // the email itself, never in a log or a response.
+            if new_pending_email != user.pending_email {
+                match &new_pending_email {
+                    Some(addr) => {
+                        let _raw = issue_email_change(&mut *conn, &user, addr)
+                            .await
+                            .map_err(ProfileTxError::Db)?;
+                    }
+                    None => {
+                        clear_email_change_tokens(&mut *conn, user.id)
+                            .await
+                            .map_err(ProfileTxError::Db)?;
+                    }
+                }
+            }
             audit_logs::insert(
                 &mut *conn,
                 &NewAuditLog {

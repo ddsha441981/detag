@@ -5,8 +5,9 @@
 //! 501 stub until their Phase 1 tickets land — except
 //! `/v1/auth/register`, which is real since P1-001,
 //! `/v1/auth/verify-email` + `/v1/auth/resend-verification`,
-//! real since P1-002, `/v1/auth/login`, real since P1-003, and
-//! `GET`/`PATCH /v1/me`, real since P1-005 (in
+//! real since P1-002, `/v1/auth/login`, real since P1-003,
+//! `POST /v1/auth/confirm-email-change`, real since P1-006,
+//! and `GET`/`PATCH /v1/me`, real since P1-005 (in
 //! `routes/profile.rs` — the handlers live there, the nest lives
 //! here).
 
@@ -21,9 +22,10 @@ use crate::{
         },
         register::{register_user, RegisterError, RegisterRequest, UserResponse},
         verification::{
+            confirm_email_change as confirm_email_change_service,
             resend_verification as resend_verification_service,
-            verify_email as verify_email_service, ResendVerificationRequest, VerifyEmailRequest,
-            VerifyError,
+            verify_email as verify_email_service, ConfirmEmailChangeRequest, ConfirmError,
+            ResendVerificationRequest, VerifyEmailRequest, VerifyError,
         },
     },
     AppState,
@@ -118,6 +120,57 @@ pub async fn verify_email(
         ))
         .into_response(),
         Err(VerifyError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
+/// Confirm an email change (P1-006, FR-A-01): consume the
+/// `email_change` token from the confirmation link mailed to
+/// the NEW address, swap the email to the pending address
+/// (clearing the intent, verifying the new address). Unknown /
+/// used / wrong-purpose token → 401 PF-1010; expired token →
+/// 401 PF-1011; an address taken by another account while it
+/// was pending → 409 PF-2011. Success is 204 (no body —
+/// the client re-reads the profile with GET /v1/me).
+#[utoipa::path(
+    post,
+    path = "/v1/auth/confirm-email-change",
+    request_body = ConfirmEmailChangeRequest,
+    responses(
+        (status = 204, description = "Email swapped to the pending address; new address verified"),
+        (status = 401, description = "Invalid or expired token", body = Problem),
+        (status = 409, description = "Pending address taken by another account meanwhile", body = Problem),
+        (status = 422, description = "Validation failed (token required)", body = Problem)
+    ),
+    tag = "auth"
+)]
+pub async fn confirm_email_change(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    ValidatedJson(req): ValidatedJson<ConfirmEmailChangeRequest>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    match confirm_email_change_service(&state.pool, &req.token).await {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(ConfirmError::InvalidToken) => ProblemResponse(AppError::InvalidToken.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response(),
+        Err(ConfirmError::ExpiredToken) => ProblemResponse(AppError::ExpiredToken.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response(),
+        Err(ConfirmError::Duplicate) => {
+            ProblemResponse(AppError::Conflict.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(ConfirmError::Internal) => {
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
                 .into_response()
         }
@@ -255,6 +308,7 @@ pub fn router() -> Router<AppState> {
                 .route("/register", post(register))
                 .route("/verify-email", post(verify_email))
                 .route("/resend-verification", post(resend_verification))
+                .route("/confirm-email-change", post(confirm_email_change))
                 .route("/login", post(login))
                 .route("/refresh", post(stub))
                 .route("/logout", post(stub))

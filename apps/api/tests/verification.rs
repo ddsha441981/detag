@@ -173,9 +173,15 @@ async fn verify_expired_token_is_401_pf1011_and_not_consumed() {
     // takes expires_at as a parameter — no clock to freeze).
     let raw = generate_token();
     let past = chrono::Utc::now() - chrono::Duration::hours(1);
-    email_verification_tokens::mint(&app.state.pool, user_id, &hash_token(&raw), past)
-        .await
-        .unwrap();
+    email_verification_tokens::mint(
+        &app.state.pool,
+        user_id,
+        &hash_token(&raw),
+        email_verification_tokens::PURPOSE_VERIFICATION,
+        past,
+    )
+    .await
+    .unwrap();
 
     let res = app.request(post_verify(&raw)).await;
     assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
