@@ -19,7 +19,9 @@
 //!    assert 404, proving the probes are not vacuously passing.
 //!    Exception: routes whose handler is real (P1-001
 //!    `/v1/auth/register`; P1-002 `/v1/auth/verify-email` +
-//!    `/v1/auth/resend-verification`; P1-003 `/v1/auth/login`)
+//!    `/v1/auth/resend-verification`; P1-003 `/v1/auth/login`;
+//!    P1-025 `/v1/auth/forgot-password` +
+//!    `/v1/auth/reset-password`)
 //!    answer with their real behavior for the empty-body probe
 //!    — 422 PF-2002, since `ValidatedJson` rejects the empty
 //!    body — and the probe asserts that instead of 501. P1-005
@@ -165,7 +167,8 @@ async fn every_table_entry_resolves_to_the_stub() {
         // Real handlers (not stubs) answer with their real
         // behavior for the empty-body probe. P1-001 register +
         // P1-002 verify-email / resend-verification + P1-003
-        // login + P1-006 confirm-email-change: the empty body
+        // login + P1-006 confirm-email-change + P1-025
+        // forgot-password / reset-password: the empty body
         // fails ValidatedJson → 422 PF-2002 with the probe id
         // echoed (the route exists; each handler's own test
         // covers its success paths).
@@ -177,6 +180,8 @@ async fn every_table_entry_resolves_to_the_stub() {
                     | "/v1/auth/resend-verification"
                     | "/v1/auth/confirm-email-change"
                     | "/v1/auth/login"
+                    | "/v1/auth/forgot-password"
+                    | "/v1/auth/reset-password"
             )
         {
             let req = Request::builder()

@@ -204,6 +204,33 @@ pub async fn set_revoked_before(
     Ok(())
 }
 
+/// Set a user's password hash (P1-025): the forgot/reset flow
+/// writes the new Argon2id hash here after consuming the reset
+/// token. One UPDATE; returns `NotFound` when the id does not
+/// exist. The caller runs it inside the same tx as the token
+/// consume + the lockout-counter reset, so the three commit or
+/// roll back together (a consumed token with an unchanged
+/// password — or a changed password with a live token — cannot
+/// exist).
+pub async fn set_password_hash(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+    password_hash: &str,
+) -> Result<(), RepoError> {
+    let result = sqlx::query!(
+        "UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1",
+        id,
+        password_hash
+    )
+    .execute(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    if result.rows_affected() == 0 {
+        return Err(RepoError::NotFound);
+    }
+    Ok(())
+}
+
 /// Swap the email to the pending address (P1-006): the address
 /// moves from `pending_email` to `email`, the pending intent is
 /// cleared, and `email_verified_at` is set — the token that

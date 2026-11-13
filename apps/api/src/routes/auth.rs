@@ -9,7 +9,9 @@
 //! `POST /v1/auth/confirm-email-change`, real since P1-006,
 //! `POST /v1/auth/refresh`, real since P1-014,
 //! `POST /v1/auth/logout` + `/v1/auth/logout-all`, real since
-//! P1-017, `GET /v1/me/sessions` +
+//! P1-017, `POST /v1/auth/forgot-password` +
+//! `POST /v1/auth/reset-password`, real since P1-025,
+//! `GET /v1/me/sessions` +
 //! `DELETE /v1/me/sessions/{id}`, real since P1-019 — in
 //! `routes/sessions.rs`, the handlers live there, the nest
 //! lives here — and `GET`/`PATCH`/`DELETE /v1/me`, real since
@@ -28,6 +30,10 @@ use crate::{
             login_user, DeviceInfo, LoginError, LoginRequest, LoginResponse, REFRESH_COOKIE_NAME,
         },
         logout::{logout_all as logout_all_service, logout_current, LogoutError},
+        password_reset::{
+            request_password_reset, reset_password as reset_password_service,
+            ForgotPasswordRequest, PasswordResetError, ResetPasswordRequest,
+        },
         refresh::{refresh_session, RefreshError},
         register::{register_user, RegisterError, RegisterRequest, UserResponse},
         revocation::revoke_jti,
@@ -230,6 +236,92 @@ pub async fn resend_verification(
         .into_response();
     }
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// Request a password reset (P1-025, FR-A-01). 204-always:
+/// a known email, an unknown email, and an already-… — all
+/// answer 204 with an empty body; only the rate-limit 429
+/// (PF-3007, the reset-account bucket — identical for known
+/// and unknown addresses) and a 500 vary the response. No
+/// enumeration, by construction.
+#[utoipa::path(
+    post,
+    path = "/v1/auth/forgot-password",
+    request_body = ForgotPasswordRequest,
+    responses(
+        (status = 204, description = "If the email is registered, a reset mail was queued (always 204 — no enumeration)"),
+        (status = 422, description = "Validation failed (email shape)", body = Problem),
+        (status = 429, description = "Too many reset attempts for this email (PF-3007, Retry-After + X-RateLimit-* trio)", body = Problem)
+    ),
+    tag = "auth"
+)]
+pub async fn forgot_password(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    ValidatedJson(req): ValidatedJson<ForgotPasswordRequest>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    match request_password_reset(&state, &req).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(PasswordResetError::RateLimited(result, limit)) => {
+            denied_response(result, limit, request_id)
+        }
+        Err(PasswordResetError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        // InvalidToken / ExpiredToken are unreachable here:
+        // the forgot flow never consumes a token.
+        Err(PasswordResetError::InvalidToken | PasswordResetError::ExpiredToken) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
+/// Reset the password with a token from the reset link
+/// (P1-025, FR-A-01). Unknown / used / wrong-purpose token
+/// → 401 PF-1010; expired token → 401 PF-1011. Success is
+/// 204 — the password is changed, the lockout counter is
+/// cleared, and EVERY session is revoked (the caller logs in
+/// again with the new password).
+#[utoipa::path(
+    post,
+    path = "/v1/auth/reset-password",
+    request_body = ResetPasswordRequest,
+    responses(
+        (status = 204, description = "Password changed; all sessions revoked"),
+        (status = 401, description = "Invalid or expired reset token", body = Problem),
+        (status = 422, description = "Validation failed (token required, password min 12)", body = Problem)
+    ),
+    tag = "auth"
+)]
+pub async fn reset_password(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    ValidatedJson(req): ValidatedJson<ResetPasswordRequest>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    match reset_password_service(&state, &req).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(PasswordResetError::InvalidToken) => ProblemResponse(
+            AppError::InvalidToken.to_problem(Profile::Production, request_id, None),
+        )
+        .into_response(),
+        Err(PasswordResetError::ExpiredToken) => ProblemResponse(
+            AppError::ExpiredToken.to_problem(Profile::Production, request_id, None),
+        )
+        .into_response(),
+        Err(PasswordResetError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        // RateLimited is unreachable here: the reset flow
+        // spends no bucket (the forgot flow spent it).
+        Err(PasswordResetError::RateLimited(result, limit)) => {
+            denied_response(result, limit, request_id)
+        }
+    }
 }
 
 /// Log a user in (P1-003, FR-A-01). Thin handler: the service
@@ -585,8 +677,8 @@ pub fn router() -> Router<AppState> {
                 .route("/refresh", post(refresh))
                 .route("/logout", post(logout))
                 .route("/logout-all", post(logout_all))
-                .route("/forgot-password", post(stub))
-                .route("/reset-password", post(stub)),
+                .route("/forgot-password", post(forgot_password))
+                .route("/reset-password", post(reset_password)),
         )
         .nest(
             "/v1/me",

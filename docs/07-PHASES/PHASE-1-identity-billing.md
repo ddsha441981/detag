@@ -230,12 +230,13 @@
 
 ## E1.3 — Password & email security (area: auth/password)
 
-- [ ] **P1-025** — Forgot/reset flow
+- [x] **P1-025** — Forgot/reset flow
   - **Type:** feat · **Area:** auth/password · **Est:** M · **Deps:** — · **Prio:** P1
   - **Spec:** Request always 204 (no enumeration), hashed single-use 30-min token, reset revokes sessions, audit + email.
   - **AC:**
-    - [ ] no enumeration
-    - [ ] token single-use
+    - [x] no enumeration
+    - [x] token single-use
+  - **Status:** DONE 2026-11-13. Service `services/password_reset.rs` (new: `request_password_reset`, `reset_password`, `RESET_TOKEN_TTL_SECS` = 1800, `PASSWORD_RESET_TEMPLATE = "password-reset"`) + handlers `POST /v1/auth/forgot-password` + `POST /v1/auth/reset-password` in `routes/auth.rs` (the two stub routes go live; route table 66 routes, 21 live / 45 stubs; OpenAPI gains both paths, 19 paths). Forgot is 204-always: the reset-account bucket (10 burst / 1 per min, P1-020) is spent BEFORE the lookup, keyed by the sha256 of the normalized email, so it trips identically for known and unknown addresses; a known email mints a `password_reset` token (migration `20261113145406` admits the third purpose in the CHECK) + queues the reset mail + audits `password.reset_requested`, an unknown email audits the same action with only the email hash and mints nothing; Redis failure fails open (P0-103). Reset: token is hashed (sha256), single-use (atomic `consume` — `used_at IS NULL AND expires_at > now()`), 30-min TTL, purpose-separated (a registration/email-change token is `InvalidToken` and NOT consumed — it still works for its own flow); unknown/used/wrong-purpose → 401 PF-1010, expired → 401 PF-1011; success is 204 — the password is re-hashed, the lockout counter is cleared (P1-004's hook), and EVERY session is revoked via the P1-018 shared service (no current session — the reset case), which bumps the revocation epoch and queues the digest mail. Two transactions on purpose (token-consume + password write + counter reset commit first; session revocation second — if it fails the password is already changed and the handler answers 500, the caller requests a fresh token). One live token per user (the P1-006 rule, across purposes): minting deletes the user's previous unused tokens. Tests: 12 new in `tests/password_reset.rs` (unknown email 204 + no mail; known email queues mail + second forgot kills the first token; happy path changes password, revokes sessions, audits; single-use; expired → PF-1011; verification token → PF-1010 and survives; unknown token → PF-1010; short password 422; rate limit trips at 11th forgot; reset clears the lockout counter; reset works for an unverified user). Docs: api-spec forgot/reset paragraphs, data-model token-purpose row, security-testing P1-025 bullets, threat model T17 extended (reset bucket wired) + update-log row. `just verify` green: 634 passed, 0 failed (622 + 12 new), attempt 1 (no flakes); `just openapi-check` + `just route-table-check` green.
 
 - [ ] **P1-026** — Password policy + pwned check
   - **Type:** feat · **Area:** auth/password · **Est:** S · **Deps:** P1-025 · **Prio:** P1

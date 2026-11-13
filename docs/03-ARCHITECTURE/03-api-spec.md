@@ -315,11 +315,64 @@ orphaned access token — its session already revoked, the
 token still inside its 15 minutes — dies with it). The
 mechanism is the shared service
 `services::password::revoke_sessions_on_password_change`;
-the HTTP wiring is NOT this ticket's: the reset flow
-(P1-025) calls it when it lands, and no change-password
-route exists yet (when it lands it calls the same service
-with the current session from the presented cookie) — the
-same land-early pattern as P1-004's lockout `reset`.
+the reset flow (P1-025) calls it when it lands — the
+forgot-password ticket landed the call (below) — and no
+change-password route exists yet (when it lands it calls
+the same service with the current session from the
+presented cookie) — the same land-early pattern as
+P1-004's lockout `reset`.
+
+Forgot / reset password (P1-025, FR-A-01):
+`POST /v1/auth/forgot-password` (`{email}`) is ALWAYS 204
+— a known email, an unknown email, and an already-… all
+answer 204 with an empty body; only the rate-limit 429
+and a 500 vary the response. No enumeration, by
+construction: the per-account reset bucket (`reset-account`,
+10 burst / 1 per min, P1-020) is spent BEFORE the lookup,
+keyed by the sha256 of the normalized email, so it trips
+identically for known and unknown addresses, and a denied
+request does no work at all; a Redis error fails OPEN
+(P0-103). A known email mints a reset token (below) +
+queues the reset mail (template `password-reset`, payload
+`{user_id, token}`) + audits `password.reset_requested`
+(actor None — the request is anonymous — target the
+user, `after: {email_hash}`); an unknown email audits
+the same action with only the email hash and mints
+nothing. `POST /v1/auth/reset-password`
+(`{token, new_password}`) consumes the token and sets
+the new password: unknown / used / wrong-purpose token →
+401 `PF-1010`; expired token → 401 `PF-1011`; success is
+204. The token is single-use (the consume is atomic:
+`used_at IS NULL AND expires_at > now()`), 30 minutes,
+hashed (sha256 — the raw token lives only in the outbox
+payload + the email), purpose `password_reset` (the
+migration CHECK admits it; a registration or email-change
+token is `InvalidToken` here and is NOT consumed, so it
+still works for its own flow afterwards). One live token
+per user (the P1-006 rule, applied across purposes):
+minting a reset token deletes the user's previous UNUSED
+tokens — a live verification or email-change token dies
+with it; the pending intent survives (it lives on the
+user row). On success the password is re-hashed with the
+current Argon2 params, the lockout counter for the
+account is cleared (P1-004's hook — a reset un-locks the
+account), and EVERY session is revoked via the shared
+service (the reset case: no current session — a reset
+happens logged-out, so every session is revoked) — which
+also bumps the revocation epoch, so pre-reset access
+tokens die at the extractor, and queues the
+`new-login-digest` mail. Two transactions, on purpose:
+the token consume + password write + counter reset
+commit together FIRST (a consumed token with an unchanged
+password — or a changed password with a live token —
+cannot exist); the session revocation runs second, in its
+own transaction. If the revocation fails, the password is
+already changed and the handler answers 500 — the caller
+requests a fresh reset token (the forgot flow still
+works; the account is not locked). The new password is
+min 12 chars (the P1-001 rule; strength + blocklist land
+with P1-026). The reset works for an unverified user (the
+login gate is not the verification gate).
 
 Session listing (P1-019, FR-A-01): `GET /v1/me/sessions`
 lists the user's LIVE sessions (not revoked, not expired),

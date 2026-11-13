@@ -38,10 +38,11 @@ pub struct VerificationToken {
     pub created_at: DateTime<Utc>,
 }
 
-/// The two token purposes (the migration CHECK admits nothing
+/// The three token purposes (the migration CHECK admits nothing
 /// else; these constants keep the strings in one place).
 pub const PURPOSE_VERIFICATION: &str = "verification";
 pub const PURPOSE_EMAIL_CHANGE: &str = "email_change";
+pub const PURPOSE_PASSWORD_RESET: &str = "password_reset";
 
 /// Mint a token row. The caller generated the raw token and
 /// hashed it (`detag_core::tokens`); this stores the hash only.

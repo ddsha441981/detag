@@ -9,6 +9,7 @@ pub mod entitlements;
 pub mod login;
 pub mod logout;
 pub mod password;
+pub mod password_reset;
 pub mod profile;
 pub mod refresh;
 pub mod register;
