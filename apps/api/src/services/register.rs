@@ -165,8 +165,10 @@ enum RegisterTxError {
 
 /// True when the email's domain is on the configured disposable
 /// denylist (comma-separated, case-insensitive). An empty list
-/// means no denylist.
-fn is_disposable(email: &str, denylist: &str) -> bool {
+/// means no denylist. Shared with the profile service (P1-005):
+/// an email change to a disposable address is rejected with the
+/// same rule as registration.
+pub(crate) fn is_disposable(email: &str, denylist: &str) -> bool {
     let Some(domain) = email.rsplit('@').next() else {
         return false;
     };

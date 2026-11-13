@@ -156,6 +156,60 @@ mail is *queued* in the outbox (template `verify-email`, payload
 transaction as the user row. Audit: `register.attempt` (anonymous,
 email as sha256) + `register.success`, in the same transaction as
 the user row and the outbox enqueue.
+
+Profile behavior (P1-005, FR-A-01): `GET /v1/me` returns the
+profile (id, email, display name, verification state, role,
+status, created at) + the current plan (the live subscription's
+plan, else Free) + today's quota snapshot (the two daily
+buckets: limit / used / remaining). `PATCH /v1/me` sets the
+display name and/or records an email-change intent. Both routes
+take the auth extractor's Bearer leg (below) — no credential,
+a malformed JWT, or a JWT for an unknown user is 401 `PF-1001`;
+an expired JWT is 401 `PF-1011`. Display name rule: trim, 1–100
+characters, no control characters (422 `required` / `too_long` /
+`invalid_display_name`). An `email` value stores `pending_email`
+only — it is validated (shape + disposable denylist, the same
+rule as registration), must differ from the current email (422
+`email_unchanged`), and is duplicate-checked against other
+accounts (409 `PF-2011`, the same enumeration trade-off as
+registration: the check is a courtesy, the swap in P1-006
+enforces uniqueness via the citext unique constraint on
+`email`). No mail is sent and no swap happens in P1-005 —
+P1-006 mints the verification token, notifies the old address,
+and swaps on verify. `email: null` clears a pending intent;
+`display_name: null` clears the name; absent fields leave the
+value unchanged; a PATCH with no fields is a no-op 200 (no
+write, no audit). The update + the `profile.update` audit are
+one transaction; the audit's `after` carries only what changed
+— the display name plainly, the pending email as sha256 (the
+P1-001 rule: no raw email in audits). GET is not audited (reads
+aren't audited in this codebase). The quota snapshot is computed
+by the shared entitlements service from the plan's entitlements
+jsonb + today's `usage_counters` row (no row = zero usage) —
+the quota middleware (P1-051) MUST reuse that service, so the
+snapshot and the middleware agree by construction; the AC
+"snapshot matches quota middleware" is verified by P1-051 when
+the middleware lands (there is no middleware to compare against
+yet — the same honest-scope pattern as P0-104). Serde trap,
+found by the failing test: a double `Option<Option<String>>`
+PATCH field does NOT distinguish JSON `null` from a missing
+field with plain derive (`null` deserializes as the outer
+`None`) — the fields carry an explicit `deserialize_with`
+that maps `null` to `Some(None)` (clear) and leaves missing
+as `None` (unchanged).
+
+Auth extractor, Bearer leg (P1-005, FR-A-02): the extractor
+verifies a `Bearer <jwt>` (HS256 signature + expiry, leeway 0)
+against `PF_JWT_SECRET`, loads the `sub` as a user, and yields
+a verified context carrying that user + the role from the user
+row. A Bearer API key or a session cookie is 401 `PF-1001`
+for now (no key table is read yet; the refresh cookie is not
+an access credential — the refresh rotation is P1-014, the
+cookie leg is P1-016, which also owns precedence + CSRF posture
+docs). User status is NOT checked here — suspension revokes
+sessions at suspend time (P1-008); a token issued before
+suspension staying valid until expiry (≤ 15 min) is that
+ticket's design space, not this extractor's.
 | POST | `/v1/auth/login` | none | email, password → access_token, expires_in (+ sets refresh cookie) |
 | POST | `/v1/auth/refresh` | cookie | → new access token, rotated refresh (reuse ⇒ revoke all sessions PF-1007) |
 | POST | `/v1/auth/logout` | any | → 204, revoke presented session |

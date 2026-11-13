@@ -32,7 +32,9 @@ pub mod jobs;
 pub mod login_attempts;
 pub mod plans;
 pub mod sessions;
+pub mod subscriptions;
 pub mod uploads;
+pub mod usage_counters;
 pub mod users;
 pub mod worker_heartbeats;
 

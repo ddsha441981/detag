@@ -20,7 +20,10 @@
 //!    `/v1/auth/resend-verification`; P1-003 `/v1/auth/login`)
 //!    answer with their real behavior for the empty-body probe
 //!    — 422 PF-2002, since `ValidatedJson` rejects the empty
-//!    body — and the probe asserts that instead of 501.
+//!    body — and the probe asserts that instead of 501. P1-005
+//!    `GET` + `PATCH /v1/me` answer 401 PF-1001 for the probe
+//!    (no credential — the auth extractor rejects before the
+//!    handler runs).
 //!
 //! The probes send a fixed `x-request-id` and assert the 501
 //! problem body echoes it — that proves the whole chain at
@@ -153,6 +156,39 @@ async fn every_table_entry_resolves_to_the_stub() {
                 serde_json::from_slice(&body).expect("real-handler body is JSON");
             assert_eq!(json["code"], "PF-2002", "POST {path}: {json}");
             assert_eq!(json["request_id"], PROBE_ID, "POST {path}: {json}");
+            continue;
+        }
+        // P1-005 GET + PATCH /v1/me: real handlers behind the
+        // auth extractor — the probe sends no credential, so the
+        // extractor rejects with 401 PF-1001 (not 501) and echoes
+        // the probe id (the route exists; each handler's own test
+        // covers its success paths).
+        if (*method == "GET" || *method == "PATCH") && *path == "/v1/me" {
+            let req = Request::builder()
+                .method(Method::from_bytes(method.as_bytes()).expect("method parses"))
+                .uri(*path)
+                .header("x-request-id", PROBE_ID)
+                .header("x-forwarded-for", xff.as_str())
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let res = router
+                .clone()
+                .oneshot(req)
+                .await
+                .unwrap_or_else(|err| panic!("oneshot {method} {path} failed: {err:?}"));
+            assert_eq!(
+                res.status(),
+                StatusCode::UNAUTHORIZED,
+                "{method} {path} without a credential must be 401, got {}",
+                res.status()
+            );
+            let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .expect("read body");
+            let json: serde_json::Value =
+                serde_json::from_slice(&body).expect("auth-rejection body is JSON");
+            assert_eq!(json["code"], "PF-1001", "{method} {path}: {json}");
+            assert_eq!(json["request_id"], PROBE_ID, "{method} {path}: {json}");
             continue;
         }
         let uri = probe_path(path);

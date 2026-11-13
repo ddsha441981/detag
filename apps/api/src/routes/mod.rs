@@ -44,6 +44,7 @@ pub mod billing;
 pub mod extractors;
 pub mod jobs;
 pub mod meta;
+pub mod profile;
 pub mod uploads;
 
 use crate::problem::ProblemResponse;

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, email, password_hash, email_verified_at, role, status,\n             tos_version, deleted_at, settings, created_at, updated_at\n         FROM users WHERE email = $1::citext",
+  "query": "SELECT id, email, password_hash, email_verified_at, role, status,\n             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at\n         FROM users WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -98,6 +98,33 @@
       },
       {
         "ordinal": 8,
+        "name": "display_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "display_name"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "pending_email",
+        "type_info": {
+          "Custom": {
+            "name": "citext",
+            "kind": "Simple"
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "pending_email"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
         "name": "settings",
         "type_info": "Jsonb",
         "origin": {
@@ -108,7 +135,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 11,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -119,7 +146,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 12,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -132,12 +159,7 @@
     ],
     "parameters": {
       "Left": [
-        {
-          "Custom": {
-            "name": "citext",
-            "kind": "Simple"
-          }
-        }
+        "Uuid"
       ]
     },
     "nullable": [
@@ -149,10 +171,12 @@
       false,
       true,
       true,
+      true,
+      true,
       false,
       false,
       false
     ]
   },
-  "hash": "c7132afe57e8efa4d17c0a6934961950beb1fc02ba66c072f051caa648168ea4"
+  "hash": "bf7a91ffd6a931378b0b0e5350701162d99d8c99dbf9fd1234ccf3c15be9c64e"
 }

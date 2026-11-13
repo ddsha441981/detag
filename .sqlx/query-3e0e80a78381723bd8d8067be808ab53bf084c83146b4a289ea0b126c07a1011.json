@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO users (email, password_hash, tos_version) VALUES ($1, $2, $3)\n         RETURNING id, email, password_hash, email_verified_at, role, status,\n             tos_version, deleted_at, settings, created_at, updated_at",
+  "query": "SELECT id, email, password_hash, email_verified_at, role, status,\n             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at\n         FROM users WHERE email = $1::citext",
   "describe": {
     "columns": [
       {
@@ -98,6 +98,33 @@
       },
       {
         "ordinal": 8,
+        "name": "display_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "display_name"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "pending_email",
+        "type_info": {
+          "Custom": {
+            "name": "citext",
+            "kind": "Simple"
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "pending_email"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
         "name": "settings",
         "type_info": "Jsonb",
         "origin": {
@@ -108,7 +135,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 11,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -119,7 +146,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 12,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -137,9 +164,7 @@
             "name": "citext",
             "kind": "Simple"
           }
-        },
-        "Text",
-        "Text"
+        }
       ]
     },
     "nullable": [
@@ -151,10 +176,12 @@
       false,
       true,
       true,
+      true,
+      true,
       false,
       false,
       false
     ]
   },
-  "hash": "3e0ed60100595e4f0f0ade93d15974b604d0fee46afd9e6bd4e99dadfdbed97c"
+  "hash": "3e0e80a78381723bd8d8067be808ab53bf084c83146b4a289ea0b126c07a1011"
 }

@@ -1,5 +1,5 @@
-//! Auth context extractor (P0-070, FR-A-02 skeleton; Phase 1
-//! fills in verification).
+//! Auth context extractor (P0-070, FR-A-02 skeleton; P1-005
+//! fills in the Bearer verification, P1-016 completes it).
 //!
 //! [`AuthContext`] is the one type every handler takes to learn
 //! who the caller is: which credential was presented (Bearer JWT,
@@ -8,27 +8,28 @@
 //! declares it as a parameter and the framework runs it before
 //! the handler body.
 //!
-//! # Phase 0 status — read this before using it
+//! # Phase 1 status — the Bearer leg is verified (P1-005)
 //!
-//! NOTHING IS VERIFIED YET. The extractor parses the credential
-//! and classifies it, but it does not check a signature, look up
-//! an API key, or load a session: [`AuthContext::verified`] is
-//! always `false` and [`AuthContext::role`] is always
-//! [`Role::Anonymous`]. Handlers MUST NOT authorize on this
-//! context in Phase 0 — and today none do: every `/v1` path is
-//! still the shared stub returning 501 `PF-5004` (P0-064), so the
-//! "unimplemented paths return 501" half of the spec is already
-//! true and stays true until Phase 1 replaces the stubs with
-//! real handlers AND this extractor with real verification.
-//!
-//! Phase 1 changes, in this file only:
-//! - no credential → 401 `PF-1001` (today: context with
-//!   [`Credential::None`], `verified: false`);
+//! A `Bearer <jwt>` is verified (HS256 signature + expiry, leeway 0)
+//! against `PF_JWT_SECRET` and the `sub` claim is loaded as a user:
+//! a verified context carries the [`User`] (`verified: true`, the real
+//! [`Role`] from the user row). The rejections:
+//! - no credential → 401 `PF-1001`;
 //! - a Bearer token that is not a valid JWT → 401 `PF-1010`;
 //!   an expired one → 401 `PF-1011`;
-//! - an unknown/revoked API key or session → 401 `PF-1001`;
-//! - a verified credential → `verified: true` and the real
-//!   [`Role`] from the user/session record.
+//! - a valid JWT for an unknown user id → 401 `PF-1001` (the token
+//!   is well-formed but the account is gone);
+//! - a Bearer API key or a session cookie → 401 `PF-1001` for now:
+//!   API keys are a later ticket (no key table is read yet) and
+//!   the refresh cookie is not an access credential (the refresh
+//!   rotation is P1-014; the cookie leg is P1-016).
+//!
+//! P1-016 owns the rest: the cookie + API-key legs, the precedence
+//! (Bearer wins today, and stays winning), and the CSRF posture
+//! documentation. A suspended/deleted user is NOT rejected here:
+//! suspension revokes sessions at suspend time (P1-008), and the
+//! stateless access token's remaining lifetime (≤ 15 min) is that
+//! ticket's design space, not this extractor's.
 //!
 //! # Credential sources (precedence)
 //!
@@ -56,9 +57,15 @@
 use axum::{
     extract::FromRequestParts,
     http::{header, request::Parts, HeaderMap},
+    response::{IntoResponse, Response},
 };
 
-use crate::request_id::RequestId;
+use crate::{problem::ProblemResponse, request_id::RequestId, AppState};
+use detag_core::{
+    error::{AppError, Profile},
+    jwt::{verify_access_token, JwtError},
+    repos::users::{self, User},
+};
 
 /// The credential the caller presented, if any. The VALUE is
 /// secret: `Debug` prints only the kind (see the module docs).
@@ -98,7 +105,7 @@ impl Credential {
 }
 
 /// Caller roles (api-spec: admin role; support gets a read-only
-/// subset). Phase 0 only ever yields [`Role::Anonymous`].
+/// subset).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     /// No verified identity.
@@ -111,13 +118,26 @@ pub enum Role {
     Support,
 }
 
+impl Role {
+    /// The role for a user row's `role` string (`user` /
+    /// `support` / `admin` — the column CHECK admits nothing
+    /// else, so anything unrecognized is a plain user).
+    fn from_user_role(role: &str) -> Self {
+        match role {
+            "admin" => Role::Admin,
+            "support" => Role::Support,
+            _ => Role::User,
+        }
+    }
+}
+
 /// Who the caller is — as far as Phase 0 knows.
 ///
 /// The struct is deliberately plain data: handlers read
 /// [`AuthContext::credential`], [`AuthContext::role`], and
 /// [`AuthContext::verified`]. Nothing here is proof of identity
 /// until Phase 1 sets `verified` from a real check.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AuthContext {
     /// The presented credential (or [`Credential::None`]).
     pub credential: Credential,
@@ -126,6 +146,11 @@ pub struct AuthContext {
     /// Whether the credential was verified. Always `false` in
     /// Phase 0 — see the module docs.
     pub verified: bool,
+    /// The verified user, when a Bearer <redacted> JWT verified and
+    /// its `sub` loaded (P1-005). `None` for every unverified
+    /// context — handlers that need the user take the context
+    /// and read this (it is `Some` exactly when `verified`).
+    pub user: Option<User>,
 }
 
 /// The web session cookie name (provisional — Phase 1 confirms it;
@@ -135,16 +160,17 @@ pub const REFRESH_COOKIE: &str = "detag_refresh";
 impl AuthContext {
     /// Parse the credential from request headers. Pure (no I/O,
     /// no verification) — unit-tested here; the extractor below
-    /// calls it.
+    /// calls it, then verifies.
     pub fn from_headers(headers: &HeaderMap) -> Self {
         let credential = parse_bearer(headers)
             .or_else(|| parse_session_cookie(headers))
             .unwrap_or(Credential::None);
-        // Phase 0: parsed, never verified.
+        // Parsed, never verified (the extractor verifies).
         Self {
             credential,
             role: Role::Anonymous,
             verified: false,
+            user: None,
         }
     }
 }
@@ -187,21 +213,70 @@ fn parse_session_cookie(headers: &HeaderMap) -> Option<Credential> {
     None
 }
 
-impl<S> FromRequestParts<S> for AuthContext
-where
-    S: Send + Sync,
-{
-    /// Phase 0 never rejects: the context is parsed but
-    /// unverified, and the handler (a 501 stub today, real logic
-    /// in Phase 1) decides what to do with it. Phase 1 replaces
-    /// this `Ok` with the 401 rejections documented above.
-    type Rejection = std::convert::Infallible;
+/// The Bearer verification (P1-005): the extractor takes
+/// [`AppState`] (the pool + the JWT secret) and rejects with a
+/// problem+json 401 — never an `Ok` unverified context. A
+/// handler that declares `AuthContext` therefore only ever
+/// runs for a verified caller; the `user` is `Some` exactly
+/// when `verified` is true. API keys and session cookies
+/// reject with `PF-1001` until their tickets land (P1-016).
+impl FromRequestParts<AppState> for AuthContext {
+    type Rejection = Response;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        // Touch the request id so a future rejection can echo it
-        // (and so the extractor stays honest about what it read).
-        let _ = parts.extensions.get::<RequestId>();
-        Ok(Self::from_headers(&parts.headers))
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
+        // A rejection helper: the problem+json body carries the
+        // request id, like every other error (the middleware's
+        // request-id layer runs outside this extractor, so the
+        // id is read from the extensions here).
+        let reject = |err: AppError| {
+            ProblemResponse(err.to_problem(Profile::Production, request_id, None)).into_response()
+        };
+        let ctx = Self::from_headers(&parts.headers);
+        // Destructure once: the token moves out of the credential
+        // here and is rebuilt into the verified context below.
+        let AuthContext { credential, .. } = ctx;
+        let token = match credential {
+            Credential::None => return Err(reject(AppError::Unauthenticated)),
+            Credential::ApiKey(_) | Credential::Session(_) => {
+                return Err(reject(AppError::Unauthenticated));
+            }
+            Credential::Bearer(token) => token,
+        };
+        // The JWT verifies first (no DB touch for a bad token):
+        // an invalid signature or malformed token is PF-1010, an
+        // expired one PF-1011.
+        let claims = match verify_access_token(&state.settings.jwt_secret, &token) {
+            Ok(claims) => claims,
+            Err(JwtError::Expired) => return Err(reject(AppError::ExpiredToken)),
+            Err(_) => return Err(reject(AppError::InvalidToken)),
+        };
+        // The `sub` is the user id we issued (P1-003). A token
+        // whose `sub` is not a UUID is not a token we issued.
+        let user_id = match claims.sub.parse::<uuid::Uuid>() {
+            Ok(id) => id,
+            Err(_) => return Err(reject(AppError::InvalidToken)),
+        };
+        let user = match users::by_id(&state.pool, user_id).await {
+            Ok(user) => user,
+            Err(err) => {
+                tracing::error!(error = ?err, "auth: user lookup failed");
+                return Err(reject(AppError::Internal));
+            }
+        };
+        let Some(user) = user else {
+            // The token is well-formed but the account is gone.
+            return Err(reject(AppError::Unauthenticated));
+        };
+        Ok(Self {
+            credential: Credential::Bearer(token),
+            role: Role::from_user_role(&user.role),
+            verified: true,
+            user: Some(user),
+        })
     }
 }
 
@@ -323,12 +398,15 @@ mod tests {
         );
     }
 
-    /// The extractor end to end: a probe handler that echoes the
-    /// parsed context runs for every credential shape — the
-    /// extractor never rejects in Phase 0 (the 501 lives in the
-    /// real handlers, which are stubs until Phase 1).
+    /// The extractor end to end: a probe handler that echoes
+    /// the parsed context runs only for a verified caller — the
+    /// three no-DB rejections (no credential, malformed JWT,
+    /// expired JWT) never reach it and answer problem+json 401s
+    /// with the taxonomy codes. The happy path (a valid JWT for
+    /// a real user) needs a database, so it lives in the
+    /// integration tests (`tests/profile.rs`), not here.
     #[tokio::test]
-    async fn extractor_runs_and_echoes_the_parsed_context() {
+    async fn extractor_rejects_unverified_callers() {
         async fn probe(ctx: AuthContext) -> impl IntoResponse {
             Json(serde_json::json!({
                 "kind": ctx.credential.kind(),
@@ -336,41 +414,47 @@ mod tests {
                 "verified": ctx.verified,
             }))
         }
-        let app = Router::new().route("/probe", get(probe));
+        let settings = detag_core::config::Settings::default();
+        let state = AppState::from_settings(&settings).expect("test state builds");
+        let app = Router::new().route("/probe", get(probe)).with_state(state);
+        let expired = detag_core::jwt::issue_access_token(
+            &settings.jwt_secret,
+            uuid::Uuid::now_v7(),
+            "user",
+            -60,
+        )
+        .expect("expired token issues");
 
-        for (headers, want_kind) in [
-            (format!("Bearer {JWT}"), "bearer"),
-            (format!("Bearer {API_KEY}"), "api-key"),
-            ("Bearer ".to_string(), "none"),
+        for (headers, want_code) in [
+            (None, "PF-1001"),
+            (Some(format!("Bearer {JWT}")), "PF-1010"),
+            (Some(format!("Bearer {expired}")), "PF-1011"),
+            (Some(format!("Bearer {API_KEY}")), "PF-1001"),
+            (
+                Some("detag_refresh=refresh-token-abc".to_string()),
+                "PF-1001",
+            ),
         ] {
-            let req = Request::builder()
-                .uri("/probe")
-                .header("authorization", headers)
-                .body(Body::empty())
-                .unwrap();
-            let res = app.clone().oneshot(req).await.expect("oneshot probe");
-            assert_eq!(res.status(), 200);
+            let mut req = Request::builder().uri("/probe");
+            if let Some(h) = &headers {
+                if h.starts_with("detag_refresh=") {
+                    req = req.header("cookie", h);
+                } else {
+                    req = req.header("authorization", h);
+                }
+            }
+            let res = app
+                .clone()
+                .oneshot(req.body(Body::empty()).unwrap())
+                .await
+                .expect("oneshot probe");
+            assert_eq!(res.status(), 401, "headers {headers:?}");
             let body = axum::body::to_bytes(res.into_body(), usize::MAX)
                 .await
                 .expect("read body");
             let json: serde_json::Value =
                 serde_json::from_slice(&body).expect("probe body is JSON");
-            assert_eq!(json["kind"], want_kind);
-            assert_eq!(json["role"], "Anonymous");
-            assert_eq!(json["verified"], false);
+            assert_eq!(json["code"], want_code, "headers {headers:?}");
         }
-
-        // Session cookie through the extractor too.
-        let req = Request::builder()
-            .uri("/probe")
-            .header("cookie", "detag_refresh=refresh-token-abc")
-            .body(Body::empty())
-            .unwrap();
-        let res = app.oneshot(req).await.expect("oneshot probe");
-        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
-            .await
-            .expect("read body");
-        let json: serde_json::Value = serde_json::from_slice(&body).expect("probe body is JSON");
-        assert_eq!(json["kind"], "session");
     }
 }

@@ -8,7 +8,11 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 /// A row of `users` (migration 001). `settings` is the raw jsonb
-/// value; services interpret its keys.
+/// value; services interpret its keys. `display_name` /
+/// `pending_email` are the P1-005 profile fields (migration
+/// 20261113040605): the display name (nullable until set) and
+/// the email-change intent (nullable until a change is
+/// requested; P1-006 verifies + swaps it).
 #[derive(Debug, Clone, PartialEq)]
 pub struct User {
     pub id: Uuid,
@@ -19,6 +23,8 @@ pub struct User {
     pub status: String,
     pub tos_version: Option<String>,
     pub deleted_at: Option<DateTime<Utc>>,
+    pub display_name: Option<String>,
+    pub pending_email: Option<String>,
     pub settings: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -49,7 +55,7 @@ pub async fn create_with_tos(
         User,
         "INSERT INTO users (email, password_hash, tos_version) VALUES ($1, $2, $3)
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, settings, created_at, updated_at",
+             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
         email,
         password_hash,
         tos_version
@@ -67,7 +73,7 @@ pub async fn by_id(
     sqlx::query_as!(
         User,
         "SELECT id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, settings, created_at, updated_at
+             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at
          FROM users WHERE id = $1",
         id
     )
@@ -90,7 +96,7 @@ pub async fn by_email(
     sqlx::query_as!(
         User,
         "SELECT id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, settings, created_at, updated_at
+             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at
          FROM users WHERE email = $1::citext",
         email
     )
@@ -99,11 +105,42 @@ pub async fn by_email(
     .map_err(RepoError::from_sqlx)
 }
 
-/// Mark the user's email verified (P1-002). Sets
-/// `email_verified_at = now()`; idempotent — calling it on an
-/// already-verified user refreshes the timestamp, which is why
-/// the verify service only calls it after atomically consuming
-/// a token. Returns `NotFound` when the user does not exist.
+/// Update the profile fields (P1-005): sets both columns to
+/// the given values (`None` clears). The caller loads the user
+/// first, applies the patch in Rust, and stores the final
+/// values — there is no "leave unchanged" at this layer, so a
+/// plain SET is correct (a COALESCE here could never clear a
+/// field). The email is bound as `citext` (same load-bearing
+/// cast as `by_email`). Returns `NotFound` when the user does
+/// not exist. The caller validates (display-name shape, email
+/// shape + disposable + duplicate) — this function stores,
+/// it does not validate.
+pub async fn update_profile(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+    display_name: Option<String>,
+    pending_email: Option<String>,
+) -> Result<User, RepoError> {
+    sqlx::query_as!(
+        User,
+        "UPDATE users SET
+             display_name = $2,
+             pending_email = $3::citext,
+             updated_at = now()
+         WHERE id = $1
+         RETURNING id, email, password_hash, email_verified_at, role, status,
+             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
+        id,
+        display_name,
+        pending_email,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|err| match err {
+        sqlx::Error::RowNotFound => RepoError::NotFound,
+        other => RepoError::from_sqlx(other),
+    })
+}
 pub async fn set_email_verified(
     pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     id: Uuid,
@@ -112,7 +149,7 @@ pub async fn set_email_verified(
         User,
         "UPDATE users SET email_verified_at = now() WHERE id = $1
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, settings, created_at, updated_at",
+             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
         id
     )
     .fetch_one(pool)

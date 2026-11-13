@@ -10,6 +10,8 @@
 //! Rules:
 //! - [`validate_email`] — RFC-ish email shape (hand-rolled, no regex
 //!   crate in the tree).
+//! - [`validate_display_name`] — a profile display name:
+//!   trimmed, 1–100 characters, no control characters (P1-005).
 //! - [`sanitize_filename`] — cleans an upload filename (separators,
 //!   control chars, leading dots) or rejects it when nothing usable
 //!   remains.
@@ -22,11 +24,14 @@
 //!   fetch layer must re-validate after resolution (SSRF
 //!   defense-in-depth, Phase 3).
 
+///   (P1-005).
+pub mod display_name;
 pub mod email;
 pub mod filename;
 pub mod password;
 pub mod public_url;
 
+pub use display_name::{validate_display_name, MAX_DISPLAY_NAME_LEN};
 pub use email::validate_email;
 pub use filename::sanitize_filename;
 pub use password::{validate_password, MIN_PASSWORD_LEN};

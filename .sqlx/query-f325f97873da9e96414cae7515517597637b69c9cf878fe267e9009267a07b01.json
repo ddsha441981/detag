@@ -1,0 +1,77 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT user_id, day, images_used, video_seconds_used, updated_at\n         FROM usage_counters WHERE user_id = $1 AND day = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "usage_counters",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "day",
+        "type_info": "Date",
+        "origin": {
+          "Table": {
+            "table": "usage_counters",
+            "name": "day"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "images_used",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "usage_counters",
+            "name": "images_used"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "video_seconds_used",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "usage_counters",
+            "name": "video_seconds_used"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "updated_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "usage_counters",
+            "name": "updated_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Date"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "f325f97873da9e96414cae7515517597637b69c9cf878fe267e9009267a07b01"
+}

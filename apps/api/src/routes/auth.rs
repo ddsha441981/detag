@@ -5,7 +5,10 @@
 //! 501 stub until their Phase 1 tickets land — except
 //! `/v1/auth/register`, which is real since P1-001,
 //! `/v1/auth/verify-email` + `/v1/auth/resend-verification`,
-//! real since P1-002, and `/v1/auth/login`, real since P1-003.
+//! real since P1-002, `/v1/auth/login`, real since P1-003, and
+//! `GET`/`PATCH /v1/me`, real since P1-005 (in
+//! `routes/profile.rs` — the handlers live there, the nest lives
+//! here).
 
 use super::extractors::RequestId;
 use super::stub;
@@ -261,7 +264,12 @@ pub fn router() -> Router<AppState> {
         .nest(
             "/v1/me",
             Router::new()
-                .route("/", get(stub).patch(stub).delete(stub))
+                .route(
+                    "/",
+                    get(super::profile::get_me)
+                        .patch(super::profile::patch_me)
+                        .delete(stub),
+                )
                 .route("/sessions", get(stub))
                 .route("/sessions/{id}", delete(stub))
                 .route("/export", post(stub)),

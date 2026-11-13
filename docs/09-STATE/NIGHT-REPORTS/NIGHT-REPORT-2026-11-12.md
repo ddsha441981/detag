@@ -11,13 +11,14 @@ P0-106/107/108 (Phase 0 ticket work done, 105/108); updated
 ~01:30 IST 13 Nov after P1-001 (Phase 1 open, 1/111); updated
 ~07:45 IST 13 Nov after P1-002 (Phase 1, 2/111); updated
 ~08:31 IST 13 Nov after P1-003 (Phase 1, 3/111); updated
-~09:15 IST 13 Nov after P1-004 (Phase 1, 4/111). Resumed
+~09:15 IST 13 Nov after P1-004 (Phase 1, 4/111); updated
+~10:26 IST 13 Nov after P1-005 (Phase 1, 5/111). Resumed
 from the 8th coordinator's interruption (~23:21 IST, P0-092 in
 progress with uncommitted work). Local HEAD at this update:
-`6d54c5e` (P1-004). No push (local-only by rule; parent handles
+`4d5c73c` (P1-005). No push (local-only by rule; parent handles
 GitHub pushes).
 
-## Tickets done (16)
+## Tickets done (17)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -379,6 +380,42 @@ GitHub pushes).
   the os-intent replay (pid 752), restarted services,
   recreated `pf` role/db, re-applied migrations. T17 now
   LIVE (lockout).
+- **P1-005 — Profile GET/PATCH /v1/me** (4d5c73c): migration
+  `20261113040605_user_profile_fields` adds `display_name` +
+  `pending_email` (no unique constraint — the P1-006 swap
+  enforces uniqueness via `email`). `users::update_profile`
+  (plain SET, so a PATCH can clear a field) +
+  `subscriptions`/`usage_counters` repos + `validate_display_name`
+  (trim, 1–100 chars, no control chars) + `entitlements` service
+  (current plan row + quota snapshot from plan entitlements +
+  today's usage row). Auth extractor Bearer leg: verifies the
+  JWT (leeway 0), loads the `sub` user, yields a verified context
+  (user + role from the row); no credential / API key / session
+  cookie → 401 PF-1001, malformed JWT → PF-1010, expired →
+  PF-1011, valid JWT for unknown user → PF-1001. API-key +
+  cookie legs, precedence + CSRF docs are P1-016's; user status
+  is NOT checked here (suspension is P1-008's scope).
+  `GET /v1/me` returns profile + plan + quota; `PATCH /v1/me`
+  sets the display name and/or records the email-change intent
+  (validated + disposable-checked + duplicate-checked → 409
+  PF-2011; unchanged → 422 `email_unchanged`); `null` clears,
+  absent leaves unchanged, no fields = no-op 200 (no write, no
+  audit); update + `profile.update` audit in one tx (pending
+  email as sha256 in the audit). Route table 8 live / 56 stubs
+  (DELETE /v1/me stays a stub for P1-007); OpenAPI gains both
+  paths + 5 schemas. Findings: (1) serde trap — plain derive
+  collapses JSON `null` into missing for double-`Option` PATCH
+  fields, so the clear-PATCH behaved as a no-op until a custom
+  `deserialize_with` kept `null` = clear (proven by a unit test
+  first); (2) verify attempt 1 failed on `job_events_retry` —
+  its 001+002-only scratch schema lacked the new columns
+  (`users::create` now selects them); fixed by adding the
+  profile-fields migration to its scratch dir (only that test
+  uses a partial schema — `repos_live`/`tx_live` apply all
+  migrations). Tests: 16 new in `tests/profile.rs` + 5
+  profile-service unit + 6 validator display-name unit + the
+  extractor's rejection unit test. `just verify` green 486
+  passed, 0 failed, attempt 2 (no flakes).
 
 ## Tickets partially done
 
@@ -486,7 +523,9 @@ GitHub pushes).
   → **451 passed, 0 failed** (P1-003; +14: 5 JWT + 1 login
   service unit + 8 login integration) → **459 passed, 0
   failed** (P1-004; +8: 2 lockout-curve unit + 6 lockout
-  integration). Python script tests:
+  integration) → **486 passed, 0 failed** (P1-005; +27: 16
+  profile integration + 5 profile-service unit + 6 validator
+  display-name unit). Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
   all green. `just bench` green (17 benches, 2m54s). `just coverage`
@@ -514,9 +553,12 @@ GitHub pushes).
   bucket staleness in the login IP test, then route-table
   probes tripping the shared "unknown" IP bucket — then
   green; no flakes), P1-004: 1 (no flakes — the lockout
-  suite itself ran 3× green before the full verify). Every red run
-  was a known flake, a lint fix, or a test-isolation fix; no
-  regressions found.
+  suite itself ran 3× green before the full verify), P1-005: 2
+  (attempt 1 failed on `job_events_retry` — its 001+002-only
+  scratch schema lacked the P1-005 columns; fixed by adding the
+  profile-fields migration to its scratch dir; no flakes).
+  Every red run was a known flake, a lint fix, or a
+  test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
   api 92.7%, worker 83.8% — all above NFR-50 floors; report-only
   until Phase 2. Re-measured during P1-001 (`just coverage`):
@@ -534,11 +576,11 @@ GitHub pushes).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-005 — Profile GET/PATCH /v1/me.
-2. P1-006 — Email change flow.
-3. P1-007 — Account deletion.
-4. P1-008 — Admin suspend/restore.
-5. P1-009 — (next in the phase file after P1-008).
+1. P1-006 — Email change flow.
+2. P1-007 — Account deletion.
+3. P1-008 — Admin suspend/restore.
+4. P1-009 — Admin user search.
+5. P1-010 — (next in the phase file after P1-009).
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never
@@ -579,6 +621,23 @@ one account needs raised buckets (the reset test uses
 100/0), and a test that locks an IP must use a fresh XFF for
 any later login from a different scope (register clears the
 account counter, not the IP counter).
+P1-005 lessons: (1) a double `Option<Option<T>>` PATCH field
+does NOT distinguish JSON `null` from a missing field with
+plain serde derive (`null` deserializes as the outer `None`)
+— fields that must support "clear with null" need an explicit
+`deserialize_with` (proven by a unit test first: the
+clear-PATCH behaved as a no-op until the deserializer
+landed); (2) changing a shared repo's column list breaks
+tests that build a partial schema — `job_events_retry.rs`
+applies ONLY 001+002 (+ now the P1-005 migration) to its
+scratch DB, so any future `users` column change must add its
+migration there too (grep for the stem list); `repos_live` /
+`tx_live` apply ALL migrations and are immune; (3) `is_live`
+in the route-table generator now takes (method, path) —
+one path can hold both a live and a stub route (GET/PATCH
+/v1/me live, DELETE still the P1-007 stub) — add the
+(method, path) to `is_live` AND to the special-case in
+`tests/route_table.rs` when a handler lands.
 The duplicate-email 409-vs-201
 question is recorded in the P1-001 status (taxonomy says 409;
 full indistinguishability would be a DECISIONS.md item). If
