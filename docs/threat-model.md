@@ -1,13 +1,14 @@
 # Threat model — Detag (living doc)
 
-> Status: **STUB** (P0-106, 2026-11-13). Phase 0 scope: the entry
-> points and mitigations that exist today, plus the planned
-> Phase 1/2 entry points marked PLANNED so nothing is claimed
-> before it lands. Phase 1 updates it for token theft / replay /
-> family revocation (P1 ticket); Phase 2 ties engine security
-> notes to it. This is a living doc — update it in the same
-> ticket that adds an entry point, an actor, or a new
-> dependency class; do not let it drift from the code.
+> Status: **Phase 1 auth is LIVE** (P1-024, 2026-11-13) — the
+> entry points and mitigations that exist today, plus the
+> planned Phase 2 entry points marked PLANNED so nothing is
+> claimed before it lands. Phase 1 updated it for token theft
+> / replay / family revocation (P1-024's design notes below).
+> Phase 2 ties engine security notes to it. This is a living
+> doc — update it in the same ticket that adds an entry
+> point, an actor, or a new dependency class; do not let it
+> drift from the code.
 >
 > Out of scope here: the LaMa inpainting model internals and
 > the video pipeline (Phase 2/3 tickets); payment processing
@@ -27,8 +28,8 @@
 | User uploads (owned media) | High — the user's own images/videos; the product promise is that only the owner can process them | S3 (MinIO bundled) / Postgres rows |
 | Processed results | High — same ownership as the input | S3, presigned URLs (TTL-bound) |
 | Ownership attestation + AUP record | High — the legal basis for processing; must not be forgeable by the requester | Postgres (Phase 2 job flow) |
-| Session / refresh tokens | High — bearer-equivalent; theft = account takeover | Phase 1 (planned) |
-| API keys (per-user, Phase 1) | High — programmatic account access | Phase 1 (planned) |
+| Session / refresh tokens | High — bearer-equivalent; theft = account takeover | Postgres `sessions` rows (refresh hash only) + 15-min access JWTs; rotation + family revocation + epoch/jti kill paths (P1-014/017/021/022) |
+| API keys (per-user, Phase 1) | High — programmatic account access | Table exists (`api_keys`, migration 20261112065339, P0-038); verification lands with P1-034 (E1.4) — until then an API key is 401 `PF-1001` (P1-016 FINAL) |
 | Billing webhook payloads | Medium — drive plan activation; forged payloads = free Pro | Phase 1 (planned) |
 | Job / session metadata | Medium — who processed what, when | Postgres |
 | Templates (badge/text packs) | Low — synthesized test assets, public by design | `templates/` |
@@ -54,9 +55,9 @@
 | --- | --- | --- |
 | `POST /v1/jobs` + upload intake | Stub (Phase 0); real intake Phase 2 | Body cap 1 MiB (P0-104); dimension guard `validate_dimensions` (P0-104) — not yet wired to a live handler (no upload row in Phase 0); magic-byte sniff + re-decode planned (Phase 2) |
 | `GET /healthz`, `/readyz`, `/metrics` | Live | Exempt from rate limiting (P0-103); `/metrics` is operator-scoped by deployment, not by code — see open question below |
-| Auth routes (`/v1/auth/*`) | Planned (Phase 1) | Body cap 64 KiB (P0-104) is already wired; token/cookie rules are Phase 1 |
+| Auth routes (`/v1/auth/*`) | Live (Phase 1) | Body cap 64 KiB (P0-104); JWT verify + expiry + nbf leeway 0 (P1-022); rotation + family revocation (P1-014); lockout + buckets (P1-004/020); cookie rules (P1-016); see the design notes below |
 | Billing webhooks (`/v1/billing/webhook`) | Planned (Phase 1) | Body cap 256 KiB (P0-104) is already wired; signature verification is Phase 1 |
-| Admin routes (`/v1/admin/*`) | Planned (Phase 1) | Body cap 1 MiB (P0-104) is already wired; authz matrix is Phase 1 |
+| Admin routes (`/v1/admin/*`) | Live (Phase 1) | Body cap 1 MiB (P0-104); `AdminContext` guard reads the role from the DB per request (P1-008/022); impersonation scoped + audited (P1-010/011) |
 | `/docs` (Swagger UI) | Live in dev only | Docs CSP (P0-102); disabled in prod via `docs_enabled` |
 | Redis queue / pubsub | Internal | Queue keys are namespaced per tenant; pubsub slow-consumer drops safely (FLAKY-002 is a test flake, not a product gap) |
 | Postgres / S3 / MinIO | Internal | Private network only; credentials from `.env`, no literals in compose (P0-105) |
@@ -87,7 +88,7 @@ Mitigation status: **LIVE** (in code + tested), **WIRED**
 
 | # | Threat (STRIDE) | Entry point / asset | Mitigation | Status |
 | --- | --- | --- | --- | --- |
-| T1 | Spoofing — fake identity, forged session | Auth routes, API keys | JWT dual-verify window (drafted, P0-105); refresh rotation + family revocation | PLANNED (P1-016) |
+| T1 | Spoofing — fake identity, forged session | Auth routes, API keys | JWT dual-verify window (drafted, P0-105); refresh rotation + family revocation (LIVE, P1-014/017/021/022 — see the design notes) | LIVE (rotation + family revocation); dual-verify still drafted (Phase 5) |
 | T2 | Spoofing — forged billing webhook | Billing webhook | Provider signature verification; mismatched signature rejects the event | PLANNED (Phase 1) |
 | T3 | Tampering — path traversal in filename | Upload intake | `sanitize_filename` cleans traversal/separators/control chars (P0-101); opaque storage key (ADR-0011) | LIVE (validator) / WIRED (intake Phase 2) |
 | T4 | Tampering — SSRF via user-supplied URL | Public-URL fetch (Phase 3) | `validate_public_url` rejects private/loopback/link-local/CGNAT/reserved IPs (P0-101) | LIVE — with a known gap: DNS names are NOT resolved; the fetch layer must re-validate after resolution (Phase 3) |
@@ -110,6 +111,182 @@ Mitigation status: **LIVE** (in code + tested), **WIRED**
 | T21 | Elevation of privilege / Repudiation — impersonation abuse | `POST /v1/admin/users/{id}/impersonate` + every route the token can reach | The token is a normal access token with `impersonator_id` in its claims (P1-010): it acts as the target (`sub` + `role` are the target's) for 15 minutes, with no refresh and no session row (it dies at `exp`; P1-014 rejects it at refresh — no session row behind the token) + the mint requires a reason (1–500 chars, 422 otherwise, P1-010) + the mint is audited as `user.impersonated` (actor = the admin, target = the user, the reason verbatim, P1-010) + both admin guards reject any context carrying `impersonator_id` with 403 `PF-1002` (writes AND reads — the token cannot suspend anyone, read the admin list, or impersonate someone else, P1-010) + support cannot impersonate (it is a write — 403 `PF-1002`, P1-010) + the banner contract is documented in the api-spec (the console MUST show both ids for the whole session, P1-010) + every impersonated action's audit row carries both ids — `actor_user_id` is the impersonator, `target_id` is the user acted-as (P1-011: proven on the profile update + the deletion request, with the non-impersonated case still auditing actor == target) + the admin block is proven on every live admin route (P1-011: restore + impersonate + the user list, on top of P1-010's suspend) + expiry is enforced before the guards (an expired token is 401 `PF-1011`, not 403, P1-011) + impersonating an admin target is still blocked (the block is on the marker, not the role, P1-011) | LIVE |
 | T22 | Spoofing / Tampering — refresh-token theft + reuse | `POST /v1/auth/refresh` | The refresh token is 32 random bytes, stored as its sha256 only (never the token itself, P1-003) + rotation replaces it inside one family (`revoked_at` + `replaced_by`, one tx with the new row + the `session.refreshed` audit, P1-014) + presenting an already-replaced token revokes the WHOLE family, audits `session.refresh_reused`, and queues the security email (`refresh-reuse-alert`, P1-014) + the answer distinguishes theft from a dead token (reuse is 401 `PF-1007`, unknown/revoked/expired is the generic 401 `PF-1001` — the hash lookup never says which, P1-014) + the replacement mark is conditional (`replaced_by IS NULL`), so two concurrent presents race safely — the loser runs the reuse path instead of minting a second live session (P1-014) + an impersonation token can never refresh (no session row behind it, P1-014) + a suspended user's token cannot refresh (the suspend revoked every session, P1-014) + logout revokes the presented session (`POST /v1/auth/logout`, cookie — audited `session.logged_out`, cookie cleared, P1-017) and logout-all revokes every session (`POST /v1/auth/logout-all`, Bearer — audited `session.logged_out_all` with the count, P1-017) + a revoked refresh token cannot rotate (the refresh service answers the generic 401 `PF-1001` for a revoked row — proven by test, P1-017) + a replaced token presented after logout-all is still a reuse detection (401 `PF-1007` — the row still carries `replaced_by`, P1-017) + a password change revokes every other session and queues the new-login digest mail (`session.revoked_on_password_change` audit with the count + the kept session id; the reset case revokes everything — the mechanism is the shared service, the HTTP wiring is P1-025's reset flow, P1-018) + the user can see their live sessions (`GET /v1/me/sessions` — parsed device, ip hash, created, throttled `last_seen`, P1-019) and revoke any one of them (`DELETE /v1/me/sessions/{id}`, audited `session.revoked`, 404 for foreign ids, P1-019) + token revocation (P1-021): the epoch (`users.revoked_before`, bumped by a password change in the same tx as the session revocation) kills every pre-change access token at the extractor (`iat <= epoch` — `<=`, not `<`: `iat` is whole seconds, so a token minted in the same second as the bump shares the bump's second and strict `<` has a one-second hole there, caught by test; a post-change token in the same second is denied too and self-heals via refresh) + the jti denylist (Redis `pf:revocation:jti:{jti}`, TTL = remaining life clamped [1, 900] s) kills the token logout-all presented (the only writer; other devices' tokens live until expiry — their jtis are unknown — and logout-all does NOT bump the epoch) + a legacy token without a `jti` skips the denylist but the epoch still covers it via `iat` + a Redis error on the denylist read/write fails OPEN (warn logged — the epoch is the durable backstop, the denylist the fast path) + both rejections are 401 `PF-1010` (a revoked token is indistinguishable from a forged one) + perf measured: one denylist GET is ~0.1–0.5 ms (p99 ~378 µs hit / ~500 µs miss, local Redis), the epoch adds no query — the p99 is unaffected | LIVE |
 | T23 | Tampering — cross-site request forgery (CSRF) on the session cookie | `POST /v1/auth/refresh` (the only cookie-reading endpoint) | The only cookie the api sets is the refresh cookie — `HttpOnly; Secure; SameSite=Lax; Path=/v1/auth; Max-Age=2592000` (P1-016) + `SameSite=Lax` means a cross-site `fetch`/XHR POST does not carry the cookie, so a refresh from another origin has no token to rotate (P1-016) + a top-level GET navigation DOES carry it — but there is no state-changing GET (every mutation is POST/PATCH/DELETE, every GET is a read, and `GET /v1/auth/refresh` is 405 — proven by test, P1-016), so a navigated GET cannot rotate a session or change anything (P1-016) + `Path=/v1/auth` means the browser sends the cookie only to `/v1/auth/*`, never to a protected route — the cookie cannot be an access credential for the API even by accident (P1-016) + the extractor rejects a bare cookie with 401 `PF-1001` even when it is a genuine, live refresh token (proven by test — a stolen refresh token cannot walk into the API as an access token, P1-016) + `HttpOnly` keeps the token out of JavaScript (defense-in-depth, not a cure — same-origin XSS can still call `/refresh` itself, P1-016) + the access token is never a cookie (in-memory only, ≤ 15 min, P1-016) | LIVE |
+
+## Auth design notes (P1-024)
+
+The rationale behind T1 / T22 / T23 — written after the
+whole auth surface landed (P1-003…P1-023), so every claim
+below names the code that enforces it and the test that
+proves it (security-testing plan, "Session & token tests").
+
+### Token theft — what a stolen token buys, and how it dies
+
+There are two tokens, and theft means something different
+for each:
+
+- **Access token (JWT, 15 min).** A bearer token: anyone
+  holding it IS the user until `exp`, for at most 15
+  minutes. There is no per-request revocation check for it
+  (the extractor verifies signature + expiry + `nbf` only,
+  leeway 0) — that is the price of statelessness, and it is
+  why the TTL is short. What kills a stolen access token
+  early: the epoch (`users.revoked_before`, bumped by a
+  password change — every pre-change token dies at the
+  extractor, P1-021) and the jti denylist (the token
+  `logout-all` presented dies at once, P1-021). What does
+  NOT kill it: logout of one session (other devices' tokens
+  live until expiry — their jtis are unknown), a suspend
+  (same residual window, see the trade-offs), or a family
+  revocation (the sessions die, the already-minted access
+  tokens do not). The residual window is ≤ 15 minutes in
+  every case, and it is documented, not hidden (P1-017
+  proves the token still works after logout; P1-008
+  proves it after suspend).
+- **Refresh token (opaque, 30 days).** 32 random bytes,
+  stored as sha256 only (P1-003) — a database read leaks
+  no usable token. Theft is DETECTABLE, which is the whole
+  point of rotation: the token is single-use, so a thief
+  who presents it after the owner already rotated gets
+  401 `PF-1007` instead of a new session, and the
+  presentation itself is the alarm (see "Family
+  revocation" below). The refresh token never appears in a
+  request body, a response body, or a log line — it travels
+  only in the `detag_refresh` cookie — so the theft surface
+  is the browser / the network, not our logs.
+
+The common mitigations for both: TLS at the edge (the
+tokens never cross plain HTTP in production), short
+lifetimes (15 min / 30 days — the access TTL is the blast
+radius, the refresh TTL is the session lifetime), and no
+token in any URL (nothing to leak into a referer or a
+server log).
+
+### Replay — what "replay" means per token
+
+- **Access token replay is inherent to bearer tokens.**
+  Presenting the same access token twice is not an attack
+  the server can detect — the token carries no
+  "already used" state, and the `jti` is NOT a used-set
+  (it exists so the denylist can name one token, P1-021).
+  The defense is the 15-minute window + TLS, not
+  detection. Anyone promising replay detection for a
+  stateless bearer token is selling a stateful check.
+- **Refresh token replay IS detected — that is the
+  rotation design.** A refresh token is consumed by its
+  first presentation (the row is marked `replaced_by` in
+  the same tx that creates the next row, P1-014). A second
+  presentation of the same token is the reuse signal, and
+  the answer is 401 `PF-1007` (distinct from the generic
+  401 `PF-1001` for unknown/revoked/expired — the
+  distinction is deliberate: the client learns its token
+  was replayed, an attacker probing random hashes learns
+  nothing). Two concurrent presents race safely: the
+  replacement mark is conditional (`replaced_by IS NULL`),
+  so exactly one wins and the loser runs the reuse path
+  instead of minting a second live session (P1-014).
+- **Verification / email-change tokens are single-use by
+  construction.** The raw token exists only in the outbox
+  payload / the email; the DB holds its sha256. Consuming
+  marks `used_at` in the same tx as the effect (verify /
+  swap), so a replayed token is `InvalidToken` (401
+  `PF-1010`), and an expired one is `ExpiredToken` (401
+  `PF-1011`) — the two failures are distinguishable by
+  design (P1-002/006). A registration token cannot confirm
+  an email change (purpose-separated, P1-006).
+
+### Family revocation — why the WHOLE family dies
+
+On a reuse detection the refresh service revokes every
+session in the family, not just the presented token
+(P1-014). The rationale, in order:
+
+1. **The server cannot tell thief from victim.** A
+   replayed refresh token means the token left the owner's
+   device — or the owner's own client presented twice
+   (a retry, a race). The two cases look identical on the
+   wire, and guessing wrong in either direction is bad:
+   trusting the replay hands the thief a session;
+   distrusting the owner locks them out. Revoking the
+   family resolves the ambiguity by failing closed.
+2. **A stolen refresh token implies a compromised
+   device or network, not a single token.** If the
+   attacker holds one token from the family, the family's
+   other tokens are suspect too — they were minted on the
+   same device, over the same network, into the same
+   cookie jar. Revoking only the presented token would
+   leave the attacker's other footholds live.
+3. **The cost of failing closed is one re-login.** The
+   victim loses every session and must log in again; the
+   security email (`refresh-reuse-alert`, queued in the
+   same tx as the revocation) tells them why. That is the
+   accepted price — a silent session handover would be
+   worse. The audit (`session.refresh_reused`) records
+   the revocation so support can distinguish "reuse" from
+   "logout" afterwards.
+4. **The access tokens are NOT revoked with the family**
+   (see "Token theft") — the family revocation kills the
+   ability to mint NEW tokens, not the ≤ 15-minute
+   residual window of tokens already minted. That split
+   is deliberate: the reuse path must be fast and
+   unconditional, and chasing every outstanding access
+   token would need the per-request revocation check the
+   design deliberately avoids.
+
+The same "revoke the family" logic is NOT used for
+logout: `logout` revokes one session, `logout-all`
+revokes all of them — both are the owner's explicit
+choice, not a theft signal, so they revoke exactly what
+was asked for (P1-017).
+
+### Cookie vs bearer — why there are two credentials
+
+The web client holds TWO things, and they are not
+interchangeable (P1-016, api-spec "Cookie + bearer auth"):
+
+| | Access token | Refresh token |
+| --- | --- | --- |
+| Form | JWT (`sub`, `role`, `ver`, `jti`, `exp`, `iat`, `nbf`, `iss`, `aud`) | 32 opaque random bytes |
+| Carried as | `Authorization: Bearer <jwt>` header | `detag_refresh` cookie (`HttpOnly; Secure; SameSite=Lax; Path=/v1/auth; Max-Age=2592000`) |
+| Lifetime | 15 minutes | 30 days (the session row's `expires_at`) |
+| Where it works | Every `/v1` route (via the extractor) | Only `POST /v1/auth/refresh` |
+| Read by JS? | Yes — it lives in memory (the client holds it) | No — `HttpOnly` |
+
+Why the split — each credential is exposed to exactly
+one class of attack, and useless to the other:
+
+- **The access token is exposed to XSS, not CSRF.** It
+  lives in JavaScript memory, so same-origin XSS can
+  read it — but it is worth at most 15 minutes, it is
+  never stored (no localStorage), and it cannot mint a
+  new token. A `Bearer` header is never attached by the
+  browser on its own, so a cross-site page cannot make
+  the browser send it — there is no CSRF vector for it.
+- **The refresh token is exposed to CSRF, not XSS.** It
+  lives in an `HttpOnly` cookie, so JavaScript cannot
+  read it — but the browser attaches it automatically.
+  The CSRF exposure is closed three ways: `SameSite=Lax`
+  (a cross-site `fetch`/XHR POST does not carry it),
+  no state-changing GET (a top-level navigation DOES
+  carry it, but every mutation is POST/PATCH/DELETE and
+  `GET /v1/auth/refresh` is 405), and `Path=/v1/auth`
+  (the browser sends it only to `/v1/auth/*`, never to a
+  protected route).
+- **Precedence is Bearer.** A request carrying both is
+  authenticated by the Bearer and the cookie is ignored,
+  never validated as an access credential (P1-016). The
+  extractor rejects a bare cookie with 401 `PF-1001`
+  even when it is a genuine, live refresh token — a
+  stolen refresh token cannot walk into the API as an
+  access token. The refresh endpoint is the ONLY cookie
+  reader in the codebase.
+- **API clients do not use the cookie.** A programmatic
+  client sends `Bearer <jwt>` for access and has no
+  refresh flow until API keys land (P1-033/034, E1.4):
+  today an API key is 401 `PF-1001` (P1-016 FINAL).
+  The cookie is a browser-session mechanism, not a
+  general credential — giving it to API clients would
+  hand them the CSRF exposure without the browser's
+  `SameSite` protection.
 
 ## Recorded trade-offs (accepted risks)
 
@@ -148,6 +325,28 @@ Mitigation status: **LIVE** (in code + tested), **WIRED**
   on every call for a 15-minute edge. If a shorter window is
   ever needed, the fix is a revocation check in the extractor
   (or a shorter access TTL), not a second status column.
+- **Access-token replay inside the residual window is
+  undetectable by design (P1-024).** A bearer token
+  presented twice is the same request twice as far as the
+  server can tell — the `jti` is a denylist handle, not a
+  used-set. The window is ≤ 15 min (logout, suspend, and
+  family revocation all leave already-minted tokens live
+  until `exp`); the epoch and the jti denylist are the only
+  early-kill paths, and they cover the password-change and
+  logout-all cases respectively. Shortening the access TTL
+  narrows the window at the cost of more refresh traffic;
+  a per-request revocation check would close it at the cost
+  of a Redis round trip on every call. Neither is taken
+  today — the window is accepted and documented.
+- **Family revocation logs the victim out everywhere
+  (P1-024).** A single replayed refresh token revokes
+  every session in the family, including sessions on
+  devices the attacker never touched. That is the price of
+  failing closed on an ambiguous signal (see the design
+  notes): the alternative — revoking only the presented
+  token — would leave the attacker's other footholds live.
+  The security email tells the victim why they were logged
+  out; a re-login restores them.
 
 ## Compliance boundaries (non-negotiable)
 
@@ -180,3 +379,4 @@ Mitigation status: **LIVE** (in code + tested), **WIRED**
 | 2026-11-13 | T22 extended (revocation): the epoch (`users.revoked_before`, bumped by a password change in the same tx as the session revocation) kills every pre-change access token (`iat <= epoch` — `<=` not `<`, the one-second hole in strict `<` caught by test) + the jti denylist (Redis, TTL = remaining life) kills the token logout-all presented (only writer; other devices' tokens live until expiry; logout-all does NOT bump the epoch) + legacy tokens without a `jti` skip the denylist but the epoch covers them + Redis errors fail open (epoch is the backstop) + both rejections are 401 `PF-1010` + perf measured (denylist GET p99 ~378 µs hit / ~500 µs miss; epoch adds no query) | P1-021 |
 | 2026-11-13 | T20 extended (extractor verification): the admin guard reads the role from the database on every request — a demoted admin loses access at once on the same token, a promoted user gains it at once, a forged `role` claim is ignored (all proven by test) + the extractor verifies signature + expiry + not-before (leeway 0; future `nbf` is immature, 401 `PF-1010`) and rejects any tampered token (flipped payload, foreign secret — 401 `PF-1010`, proven) + the API-key leg is the E1.4 integration point (verification lands with P1-034; until then an API key is 401 `PF-1001`) + the locked claims shape is now nine keys (`nbf` = `iat`) | P1-022 |
 | 2026-11-13 | T17 extended (brute-force limiter wiring): per-IP login bucket 20/10 (proven across accounts, trio names the login-IP bucket) + per-email register bucket 5/1 (proven: 1 creation + 4 duplicates then 429) + per-account reset bucket 10/1 exists (P1-025 wires it) + lockout checked FIRST (423 never masked by 429; locked attempts never spend tokens, so the denials can never coincide) + one bucket, one key + all four service buckets race-safe (50 concurrent spends admit exactly the burst) + service denials carry the DENYING bucket's trio (middleware header-clobber bug found by the login-IP test and fixed: it now stamps only when the handler has not already) | P1-020 |
+| 2026-11-13 | P1-024 design notes: token theft (what each stolen token buys + the epoch/jti kill paths + the ≤ 15-min residual window), replay (access replay undetectable by design — bearer; refresh replay IS the reuse signal; verification tokens single-use + purpose-separated), family revocation rationale (ambiguity → fail closed; compromised device, not one token; one re-login vs a silent handover; access tokens NOT revoked with the family), cookie vs bearer (two-credential split, precedence Bearer, refresh endpoint the only cookie reader, API clients wait for keys P1-033/034). T1 status fixed (rotation + family revocation LIVE; dual-verify still drafted, Phase 5); auth/admin entry points + session-token asset rows fixed from Planned to Live; API-keys asset row fixed (table exists, verification P1-034). Trade-offs added: bearer replay inside the residual window + family-revocation blast radius | P1-024 |
