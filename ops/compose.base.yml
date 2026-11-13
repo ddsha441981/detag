@@ -8,7 +8,7 @@
 #   docker compose -f ops/compose.base.yml -f ops/compose.prod.yml --env-file .env up -d --wait
 #
 # Networks (the runbook's topology): `edge` carries caddy + web +
-# api; `internal` carries api + worker + postgres + redis + minio and
+# api; `internal` carries api + worker + postgres + redis + garage and
 # has no route out. The api sits on both; the worker and the data
 # services sit on `internal` only. This is the canonical bridge
 # topology for CI/deploy — it differs from the per-service fragments
@@ -31,10 +31,10 @@
 # file layers under prod too. Their dev values come from the env file
 # (`--env-file .env`, copied from `.env.example` — placeholders only);
 # prod MUST provide real values in its own `.env` (a missing secret
-# fails the deploy fast: postgres/MinIO refuse to start).
+# fails the deploy fast: postgres/Garage refuse to start).
 # `scripts/check_compose_secrets.py` (`just compose-secrets-check`)
 # enforces this. Inter-service URLs use service DNS names
-# (postgres/redis/minio), never localhost: inside a container
+# (postgres/redis/garage), never localhost: inside a container
 # localhost is the container itself. The full wiring audit landed in
 # P0-089; the no-literal-secrets gate lands here (P0-105).
 #
@@ -97,73 +97,79 @@ services:
       retries: 10
       start_period: 10s
 
-  minio:
-    # :latest on purpose (P0-054): MinIO tags are dated RELEASE tags
-    # and none could be verified — the Hub API returns "object not
-    # found" for the minio namespace from this VM. Pin both images to
-    # a dated RELEASE tag once CI can pull (see the ticket status in
-    # PHASE-0-foundation.md).
-    image: quay.io/minio/minio:latest
-    container_name: detag-minio
+  # Garage S3 (CI-FAIL-004): MinIO's distribution is dead — Docker Hub
+  # removed minio/minio, Quay denies anonymous pulls of quay.io/minio/*,
+  # dl.min.io answers 410 (open-source server/mc archived). The stack
+  # runs Garage v2.5.0 (Rust, AGPL, S3-compatible incl. multipart,
+  # presigned URLs and lifecycle rules — verified end-to-end locally
+  # with boto3 before this landed). Single node; the entrypoint creates
+  # the layout + key + bucket on first start, so by the time this
+  # container is healthy the bucket exists and the api needs no
+  # separate bootstrap wait. S3 API on :9000 (same endpoint as MinIO
+  # had); no console — Garage has none (admin API on :3903, internal).
+  garage:
+    build:
+      context: .
+      dockerfile: Dockerfile.garage
+    image: detag-garage:latest
+    container_name: detag-garage
     networks:
       - internal
-    command: ["server", "/data", "--console-address", ":9001"]
     environment:
-      MINIO_ROOT_USER: ${PF_S3_ACCESS_KEY}
-      MINIO_ROOT_PASSWORD: ${PF_S3_SECRET_KEY}
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET}
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN}
+      PF_S3_ACCESS_KEY: ${PF_S3_ACCESS_KEY}
+      PF_S3_SECRET_KEY: ${PF_S3_SECRET_KEY}
+      PF_S3_BUCKET: ${PF_S3_BUCKET:-detag-dev}
     volumes:
-      - miniadata:/data
+      - ./garage.toml:/etc/garage.toml:ro
+      - garagemeta:/var/lib/garage/meta
+      - garagedata:/var/lib/garage/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      # `garage health` exits 1 while the cluster is unavailable.
+      test: ["CMD", "garage", "health", "-q"]
       interval: 5s
       timeout: 5s
       retries: 10
       start_period: 10s
 
-  # One-shot bootstrap: create the bucket and lock it private.
-  # Exits 0 on success; `restart: "no"` so a failure is visible
-  # instead of looping forever. Re-running `up` re-runs it, and
-  # `mb --ignore-existing` makes that a no-op for an existing bucket.
-  bootstrap:
-    image: quay.io/minio/mc:latest
-    container_name: detag-minio-bootstrap
+  # One-shot lifecycle bootstrap: apply the 72 h result ceiling (P0-060)
+  # via the S3 API. The bucket itself is created by the garage
+  # entrypoint; this service only waits for it, then applies
+  # ops/minio/lifecycle.json (kept at its old path — the file is plain
+  # S3 LifecycleConfiguration JSON, Garage accepts it as-is).
+  # Exits 0 on success; `restart: "no"` so a failure is visible.
+  bootstrap-lifecycle:
+    image: amazon/aws-cli:latest
+    container_name: detag-lifecycle-bootstrap
     networks:
       - internal
     depends_on:
-      minio:
+      garage:
         condition: service_healthy
     restart: "no"
     environment:
-      # The minio service DNS name, not localhost: inside this
-      # container localhost is the bootstrap container itself.
-      PF_S3_ENDPOINT: ${PF_S3_ENDPOINT:-http://minio:9000}
+      AWS_ACCESS_KEY_ID: ${PF_S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${PF_S3_SECRET_KEY}
+      AWS_DEFAULT_REGION: ${PF_S3_REGION:-us-east-1}
+      AWS_EC2_METADATA_DISABLED: "true"
+      PF_S3_ENDPOINT: http://garage:9000
       PF_S3_BUCKET: ${PF_S3_BUCKET:-detag-dev}
-      PF_S3_ACCESS_KEY: ${PF_S3_ACCESS_KEY}
-      PF_S3_SECRET_KEY: ${PF_S3_SECRET_KEY}
     volumes:
-      # The lifecycle config (P0-060): applied with `mc ilm import`
-      # below. Path is relative to this compose file (ops/).
+      # Path is relative to this compose file (ops/).
       - ./minio/lifecycle.json:/lifecycle.json:ro
     entrypoint: ["sh", "-c"]
     command:
       - |
         set -eu
-        # Wait for MinIO to answer (bounded: fail loudly after ~60 s).
+        # Wait for the bucket (bounded: fail loudly after ~60 s).
         i=0
-        until mc alias set detag "$${PF_S3_ENDPOINT}" "$${PF_S3_ACCESS_KEY}" "$${PF_S3_SECRET_KEY}" >/dev/null 2>&1; do
+        until aws --endpoint-url "$${PF_S3_ENDPOINT}" s3api head-bucket --bucket "$${PF_S3_BUCKET}" >/dev/null 2>&1; do
           i=$$((i + 1))
-          if [ "$$i" -ge 30 ]; then echo "bootstrap: minio did not answer in 60s" >&2; exit 1; fi
+          if [ "$$i" -ge 30 ]; then echo "bootstrap-lifecycle: bucket did not appear in 60s" >&2; exit 1; fi
           sleep 2
         done
-        mc mb --ignore-existing "detag/$${PF_S3_BUCKET}"
-        # Private by default, made explicit: no anonymous access.
-        mc anonymous set none "detag/$${PF_S3_BUCKET}"
-        # Lifecycle ceiling (P0-060): nothing in the bucket lives
-        # past 72 h (the Business result TTL, FR-J-09). The per-plan
-        # TTLs (6 h Free / 24 h Pro) cannot be expressed in ILM —
-        # lifecycle granularity is days — so the detag-gc job enforces
-        # them from artifacts.expires_at; this rule is the backstop.
-        mc ilm import "detag/$${PF_S3_BUCKET}" < /lifecycle.json
+        aws --endpoint-url "$${PF_S3_ENDPOINT}" s3api put-bucket-lifecycle-configuration --bucket "$${PF_S3_BUCKET}" --lifecycle-configuration file:///lifecycle.json
 
   api:
     build:
@@ -172,6 +178,9 @@ services:
       context: ..
       dockerfile: Dockerfile.api
     image: detag-api:latest
+    # CI-FAIL-004: compose tried to pull this local-only image in CI #5
+    # (no such remote repo) — always build it instead.
+    pull_policy: build
     container_name: detag-api
     networks:
       - edge
@@ -181,14 +190,15 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      garage:
         condition: service_healthy
-      # The bucket must exist before the api serves: /readyz reports
-      # storage down until the bootstrap creates it (P0-088). The
-      # bootstrap exits 0 in seconds once minio is healthy, and a
-      # failed bootstrap blocks the api loudly instead of serving
-      # with a missing bucket.
-      bootstrap:
+      # The bucket + lifecycle must exist before the api serves:
+      # /readyz reports storage down until they do (P0-088). The
+      # garage entrypoint creates the bucket before the container
+      # goes healthy, and bootstrap-lifecycle applies the 72 h
+      # ceiling; a failed bootstrap blocks the api loudly instead
+      # of serving with a missing bucket.
+      bootstrap-lifecycle:
         condition: service_completed_successfully
     # No ports published here: dev publishes :8080 directly (P0-086);
     # prod reaches the api only via caddy (P0-087). The metrics port
@@ -208,7 +218,7 @@ services:
       # (compose.dev.yml) is safe; P0-089 audits this.)
       PF_DATABASE_URL: postgres://${PF_POSTGRES_USER:-pf}:${PF_POSTGRES_PASSWORD}@postgres:5432/${PF_POSTGRES_DB:-pf}
       PF_REDIS_URL: redis://redis:6379
-      PF_S3_ENDPOINT: http://minio:9000
+      PF_S3_ENDPOINT: http://garage:9000
       PF_S3_BUCKET: ${PF_S3_BUCKET:-detag-dev}
       PF_S3_ACCESS_KEY: ${PF_S3_ACCESS_KEY}
       PF_S3_SECRET_KEY: ${PF_S3_SECRET_KEY}
@@ -229,6 +239,8 @@ services:
       context: ..
       dockerfile: Dockerfile.worker
     image: detag-worker:latest
+    # CI-FAIL-004: same as the api — always build, never pull.
+    pull_policy: build
     container_name: detag-worker
     networks:
       - internal
@@ -237,18 +249,18 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
+      garage:
         condition: service_healthy
       # Same bucket ordering as the api (P0-088): the worker must not
-      # consume jobs before the bootstrap creates the bucket.
-      bootstrap:
+      # consume jobs before the bucket + lifecycle exist.
+      bootstrap-lifecycle:
         condition: service_completed_successfully
     environment:
       PF_METRICS_HOST: 0.0.0.0
       PF_WORKER_METRICS_PORT: ${PF_WORKER_METRICS_PORT:-9092}
       PF_DATABASE_URL: postgres://${PF_POSTGRES_USER:-pf}:${PF_POSTGRES_PASSWORD}@postgres:5432/${PF_POSTGRES_DB:-pf}
       PF_REDIS_URL: redis://redis:6379
-      PF_S3_ENDPOINT: http://minio:9000
+      PF_S3_ENDPOINT: http://garage:9000
       PF_S3_BUCKET: ${PF_S3_BUCKET:-detag-dev}
       PF_S3_ACCESS_KEY: ${PF_S3_ACCESS_KEY}
       PF_S3_SECRET_KEY: ${PF_S3_SECRET_KEY}
@@ -306,7 +318,9 @@ networks:
 volumes:
   pgdata:
     name: detag_pgdata
-  miniadata:
-    name: detag_miniodata
+  garagemeta:
+    name: detag_garagemeta
+  garagedata:
+    name: detag_garagedata
   models:
     name: detag_models

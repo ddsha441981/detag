@@ -17,7 +17,7 @@
 #      compose mode; read once in --skip-up mode — the stack is
 #      already up and will not change). In --skip-up mode /readyz
 #      may report a component down on a partial native stack (no
-#      MinIO here): warn and continue when db+redis are ok, fail
+#      Garage here): warn and continue when db+redis are ok, fail
 #      only when they are down.
 #   5. `just smoke-ping` (P0-082): enqueue a ping job on the
 #      pipeline queue and assert the worker processes it.
@@ -131,10 +131,10 @@ else
         *,db,*|*,redis,*) fail "/readyz reports down: $DOWN_COMPONENTS" ;;
     esac
     if [ -n "$DOWN_COMPONENTS" ]; then
-        # Partial native stack: storage/models may be down (no MinIO
+        # Partial native stack: storage/models may be down (no Garage
         # on this VM). db + redis are ok (checked above), so warn
         # and continue — the ping leg still proves redis+worker.
-        echo "smoke: warning: /readyz is degraded (down: $DOWN_COMPONENTS) — storage/models are down on the native stack without MinIO; continuing"
+        echo "smoke: warning: /readyz is degraded (down: $DOWN_COMPONENTS) — storage/models are down on the native stack without Garage; continuing"
     fi
 fi
 
@@ -150,7 +150,7 @@ echo "  healthz: $API_URL/healthz"
 echo "  readyz:  $API_URL/readyz"
 echo "  docs:    $API_URL/docs (Swagger UI, dev only)"
 echo "  web:     http://127.0.0.1:3000 (console placeholder, P0-085)"
-echo "  minio:   http://127.0.0.1:9001 (console, dev only)"
+echo "  s3:      http://127.0.0.1:9000 (Garage S3 API, dev only — no console)"
 echo "  mailhog: http://127.0.0.1:8025 (dev only)"
 echo "  metrics: api :9090, worker :9092 (dev only)"
 if [ "$DOWN" = 1 ] && [ "$SKIP_UP" = 0 ]; then

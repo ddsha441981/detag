@@ -25,6 +25,34 @@
 - Fix: add `curl` (and `ca-certificates` for https) to the builder-stage `apt-get install` in `Dockerfile.api`, next to `binutils`. Longer-term alternative: vendor the Swagger UI zip so the build needs no download.
 - Status: fixed (0f0abbc) — api builder fixed as specified. Correction to the note above: `Dockerfile.worker` did NOT already install curl in its builder (only binutils) — the same pair was added there too, since the worker build never ran in CI #3 (the job died at the api build first) and a curl-needing worker build script is unproven; builder layer is discarded either way. Live docker build still waits on CI (DOCKER-001); gate script unit tests pass here.
 
+### CI-FAIL-004 [bug] CI #5 smoke job fails — MinIO distribution is dead on every channel (quay.io/minio/mc 401 + api/worker pull denied)
+- Date: 2026-11-13 · Ticket: P0-090 (smoke) · Severity: S1 (CI red on main)
+- Symptom: CI run #5 (commit bf9c3c1), smoke job step 5: `failed to resolve reference "quay.io/minio/mc:latest": unexpected status from HEAD request to https://quay.io/v2/minio/mc/manifests/latest: 401 UNAUTHORIZED`; also `detag-api:latest` / `detag-worker:latest` pull access denied. The stack never started.
+- Cause (proven, three independent channels): MinIO's open-source distribution is shut down — Docker Hub removed minio/minio (pull access denied, CI #3); Quay denies anonymous pulls of quay.io/minio/minio AND quay.io/minio/mc (token flow verified from this VM: control repo prometheus/prometheus resolves 200, both minio repos 401 on manifest + tags/list); dl.min.io answers 410 Gone ("open-source MinIO Server, MinIO Client (mc) and MinIO KES projects are archived and no longer maintained... no longer served"). The CI-FAIL-002 Quay fix therefore could not work — the images are not anonymously pullable at all. The api/worker pulls: compose tried to pull the local-only images (no such remote repo).
+- Fix: replace MinIO with Garage v2.5.0 (Rust, AGPL, S3-compatible) — see ADR-0019 in DECISIONS.md. `ops/garage.toml` + `ops/Dockerfile.garage` (Alpine wrapper: the dxflrs/garage image is scratch + binary, no shell) + `ops/garage-entrypoint.sh` (layout + key import + bucket + allow, then foreground server); compose.base.yml `garage` service + `bootstrap-lifecycle` (amazon/aws-cli applies `ops/minio/lifecycle.json` via the S3 API); api/worker `pull_policy: build` + `PF_S3_ENDPOINT` http://garage:9000; compose.dev.yml publishes :9000 only; `.env.example` secret placeholder lengthened (Garage refuses secrets < 16 chars). Verified end-to-end locally with the real v2.5.0 binary + boto3 (HeadBucket/Put/Get/List/Head/Delete + PutBucketLifecycleConfiguration with the exact lifecycle.json + presigned PUT/GET round-trip, all 200) before landing.
+- Status: fixed (20263da) — live smoke still waits on CI #6 (DOCKER-001).
+- Follow-up: `ops/compose.minio.yml` (local-dev-only MinIO file) + the testcontainers live legs (`crates/testkit`, `storage_integration.rs`, api harness — quay.io/minio/minio) still reference dead MinIO images; not CI-blocking (CI never sets PF_TEST_CONTAINERS/PF_TEST_LIVE_MINIO, and compose-minio-check only renders) — tracked as TESTKIT-MINIO-001 below.
+
+### CI-FAIL-005 [bug] CI #5 verify job fails at fixtures-check — numpy/pillow have no Python 3.14 wheels
+- Date: 2026-11-13 · Severity: S1 (CI red on main)
+- Symptom: CI run #5, verify job step 15: `python3 -m pip install "pillow==10.2.0" "numpy==1.26.4"` fails — pip builds numpy from source (no cp314 wheel) and the build dies with `KeyError: '__version__'` in setup.py's get_version. Steps 5–14 passed (incl. openapi-check — CI-FAIL-001's fix works).
+- Cause: ubuntu-latest moved to Python 3.14 (runner image migration to Ubuntu 26); pillow 10.2.0 + numpy 1.26.4 predate 3.14 and ship no cp314 wheels. First time this step ever ran on CI (CI #3/#4 died earlier at openapi-check).
+- Fix: pin the job's Python to 3.12 with actions/setup-python@v5 immediately before fixtures-check (covers templates-check too — same pillow pin, same failure waiting there). NOT a pin bump: the generator's determinism contract records Pillow/numpy versions in every envelope and `--check` compares fixture bytes, so newer libs could drift the fixtures.
+- Status: fixed (a0a87fc) — waits on CI #6.
+
+### CI-FAIL-006 [bug] CI #5 image-size job fails again — curl installed AFTER cargo chef cook
+- Date: 2026-11-13 · Ticket: P0-083/P0-084 · Severity: S1 (CI red on main)
+- Symptom: CI run #5, image-size job step 4: same `utoipa-swagger-ui: failed to download Swagger UI: "curl command not found"` at `cargo chef cook --release`, exit 101.
+- Cause: CI-FAIL-003's fix (0f0abbc) installed curl in the builder's later RUN (with `cargo build`), but `cargo chef cook` runs in an EARLIER RUN in the same stage and compiles the same dependencies — the fix never reached the step that needed it. Same ordering bug in Dockerfile.worker (cook line 35, apt-get line 46).
+- Fix: install curl + ca-certificates in a RUN before `cargo chef cook` in both Dockerfiles; the later RUN keeps binutils only.
+- Status: fixed (0ae112f) — waits on CI #6.
+
+### TESTKIT-MINIO-001 [follow-up] testcontainers live legs + local-dev compose.minio.yml still reference dead MinIO images
+- Date: 2026-11-13 · Severity: S3 (not CI-blocking)
+- Cause: CI never sets PF_TEST_CONTAINERS/PF_TEST_LIVE_MINIO, so the live legs skip in CI; compose-minio-check only renders. But anyone running the live legs locally (or `docker compose -f ops/compose.minio.yml up`) hits the same dead MinIO pulls as CI-FAIL-004.
+- Fix: swap the testcontainers S3 image to Garage (needs layout+key+bucket setup inside the harness) or s3mock, and the same for ops/compose.minio.yml (+ scripts/check_minio_policy.py, which parses it). Do not do this silently inside a ticket — it is a follow-up ticket.
+- Status: open.
+
 ### PERF-001 [hardening] Synchronous Argon2id verify blocks tokio workers — a burst of concurrent logins 500s on pool timeout (P1-004)
 - Date: 2026-11-13 · Ticket: P1-004
 - Finding: the login service verifies the password inline (`verify_password` in the async handler). Argon2id is ~250 ms of synchronous CPU per verify. On this VM (2-worker runtime, 10-connection pool), twenty concurrent logins starve the workers: the failure transactions cannot drain (each statement waits for worker time), pool acquires hit the 5 s timeout, and the login 500s — proven by a scratch run that reproduced the exact flow with the real error (`PoolTimedOut` at the very first query, 8/20 ok; the repo layer alone is clean 20/20, counter exactly 20). An HTTP-level concurrent race test was tried at 20, then 8, then 4 concurrent logins and flaked in the full-binary run (the other five lockout tests' verifies add load), so the race proof lives at the repo layer (`concurrent_counter_records_never_lose_an_increment` in `tests/lockout.rs`) and the HTTP tests prove the wiring sequentially.

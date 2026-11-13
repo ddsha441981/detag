@@ -43,12 +43,11 @@ services:
     ports:
       - "6379:6379"
 
-  minio:
-    # S3 API for host-side tools + the console UI (dev only — prod
-    # never publishes the console; P0-087).
+  garage:
+    # S3 API for host-side tools (dev only). Garage has no console UI,
+    # so only :9000 is published (MinIO's :9001 console is gone with it).
     ports:
       - "9000:9000"
-      - "9001:9001"
 
   mailhog:
     image: mailhog/mailhog:v1.0.1
