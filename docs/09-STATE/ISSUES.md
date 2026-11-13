@@ -61,6 +61,18 @@
 - Fix: real 32-byte-hex dev values for both GARAGE_* vars in .env.example (dev-only placeholders, same as minioadmin — generate fresh ones for prod); smoke.sh now fails fast with a clear message when GARAGE_RPC_SECRET is not 64 hex chars, and prints the garage logs on failure so the next smoke failure carries its own diagnosis.
 - Status: fixed (this commit) — waits on CI #8.
 
+### CI-FAIL-009 [bug] CI #8 verify fails at compose-prod-check — stale `minio:` override in ops/compose.prod.yml creates an imageless service
+- Date: 2026-11-13 · Ticket: P0-087 (cause) · Severity: S1 (CI red on main)
+- Symptom: CI run #8 (commit dfe50a4), verify job: image-size ✓, gitleaks ✓, cargo-deny ✓, fixtures-check ✓ (CI-FAIL-007 fix works), config-table-check ✓ — then `compose-prod-check` FAILED. This is the first CI run that ever reached this step (CI #5 died at fixtures-check, CI #6 at config-table-check, CI #7 at fixtures-check), so the failure is old, not a regression from dfe50a4.
+- Cause (reproduced locally, 2026-11-14): `docker compose -f ops/compose.base.yml -f ops/compose.prod.yml --profile prod --env-file .env.example config --quiet` fails with `service "minio" has neither an image nor a build context specified: invalid compose project`. `ops/compose.prod.yml:129` still carries a `minio:` override (restart/logging/1g mem cap) from before the MinIO→Garage swap (CI-FAIL-004): the base file no longer defines a `minio` service (it is `garage:` now), and a compose override that names a service absent from the base CREATES that service with only the override's keys — no image, no build — so the render is invalid. The prod file's header comments still say "minio" in three places for the same reason.
+- Fix: rename the override to `garage:` in ops/compose.prod.yml and update the three stale header comments (minio → garage; Garage has no console). No other override file is affected (compose.dev.yml has no `minio:` service block; compose.minio.yml is the separate local-dev MinIO file, TESTKIT-MINIO-001).
+- Status: fixed (this commit) — renamed the override to `garage:` + the three stale header comments; `just compose-prod-check` green locally (rendered config: garage restart unless-stopped, mem limit 1073741824, json-file logging, no `minio` service), compose-dev-check + compose-base-check also green; live CI confirmation waits on CI #9.
+
+### CI-FAIL-010 [bug] CI #8 smoke fails again — new/different failure (NOT the CI-FAIL-008 Garage secret)
+- Date: 2026-11-13 · Ticket: P0-090 (smoke) · Severity: S1 (CI red on main)
+- Symptom: CI run #8 (commit dfe50a4), smoke job FAILED again. The CI-FAIL-008 fix (real 64-hex Garage dev secrets) is in dfe50a4, so this is a new/different failure, not the old "garage stays unhealthy" cause. Exact error unknown — the CI #8 logs zip was requested from the user ~23:31 IST 2026-11-13 and is still pending.
+- Status: open — blocked: pending the user's CI #8 logs zip. Do NOT guess at the cause; diagnose from the logs when they arrive. (One candidate to check against the logs: CI-FAIL-009's stale `minio:` override also breaks `docker compose config` for base+prod — if the smoke job renders prod compose, the same defect may be the smoke cause; confirm from the logs, do not assume.)
+
 ### TESTKIT-MINIO-001 [follow-up] testcontainers live legs + local-dev compose.minio.yml still reference dead MinIO images
 - Date: 2026-11-13 · Severity: S3 (not CI-blocking)
 - Cause: CI never sets PF_TEST_CONTAINERS/PF_TEST_LIVE_MINIO, so the live legs skip in CI; compose-minio-check only renders. But anyone running the live legs locally (or `docker compose -f ops/compose.minio.yml up`) hits the same dead MinIO pulls as CI-FAIL-004.
