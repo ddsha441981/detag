@@ -48,6 +48,27 @@ Conventions first; endpoint tables are the contract. OpenAPI is generated from c
 | --- | --- | --- | --- |
 | POST | `/v1/auth/register` | none | email, password, accept_tos_version → 201 user + verification email sent |
 | POST | `/v1/auth/verify-email` | none | token → 204 |
+
+Register behavior (P1-001, FR-A-01): the email is trimmed +
+lowercased before storage (the column is citext, so the match
+is case-insensitive either way); the password is Argon2id-hashed
+(params from `PF_ARGON2_*`, OWASP defaults m=19 MiB/t=2/p=1) and
+never stored, logged, or echoed — the 201 body is the user
+without any hash field. Password rule: minimum 12 characters
+(NIST SP 800-63B), never trimmed. `accept_tos_version` must equal
+the current version (`PF_TOS_CURRENT_VERSION`, default "v1") and
+is recorded on the user row. A disposable-email domain (config
+`PF_DISPOSABLE_EMAIL_DOMAINS`) is a 422 field error
+(`disposable_email`); a wrong ToS version is a 422 field error
+(`tos_version_mismatch`). A duplicate email is 409 `PF-2011`
+Conflict with the generic `conflict` body — the body never names
+the email (no enumeration detail), though the status itself
+distinguishes duplicate (409) from new (201). The verification
+mail is *queued* in the outbox (template `verify-email`, payload
+`{user_id}`, recipient as sha256 only) — the token that makes it
+sendable is P1-002's scope. Audit: `register.attempt` (anonymous,
+email as sha256) + `register.success`, in the same transaction as
+the user row and the outbox enqueue.
 | POST | `/v1/auth/login` | none | email, password → access_token, expires_in (+ sets refresh cookie) |
 | POST | `/v1/auth/refresh` | cookie | → new access token, rotated refresh (reuse ⇒ revoke all sessions PF-1007) |
 | POST | `/v1/auth/logout` | any | → 204, revoke presented session |

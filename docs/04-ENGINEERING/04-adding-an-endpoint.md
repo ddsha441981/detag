@@ -35,10 +35,15 @@ without hunting.
   and enforce the role; unauthed routes say so in the module
   docs. The extractor never rejects in Phase 0 — Phase 1
   verification replaces it.
-- [ ] Handlers return `Result<..., AppError>` rendered through
-  `ProblemResponse` (`apps/api/src/problem.rs`): every error
-  body is problem+json with a PF code. Never return a bare
-  status or a plain-text body.
+- [ ] Handlers return `Response` (`axum::response::Response`):
+  the success tuple and the `ProblemResponse` both via
+  `.into_response()`. Do NOT return `Result<_, ProblemResponse>`
+  — clippy's `result_large_err` (deny) forbids it
+  (`ProblemResponse` is 152 bytes against a small `Ok`), and
+  axum has no `IntoResponse` for `Box<ProblemResponse>` either
+  (tried in P1-001). Every error body is still problem+json
+  with a PF code. If an `AppError` responder ever lands, this
+  prescription can become `Result<_, AppError>`.
 - [ ] JSON bodies use typed extractors. The framework maps
   rejections for you (error mapper, P0-065/P0-073): bad JSON or
   bad query → 400/422 PF-2002, wrong content type → 415

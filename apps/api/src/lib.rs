@@ -71,6 +71,7 @@ pub mod rate_limit;
 pub mod request_id;
 pub mod routes;
 pub mod secure_headers;
+pub mod services;
 
 use axum::{extract::Extension, middleware, Router};
 use detag_core::clock::{Clock, SystemClock};

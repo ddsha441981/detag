@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO users (email, password_hash) VALUES ($1, $2)\n         RETURNING id, email, password_hash, email_verified_at, role, status,\n             tos_version, deleted_at, settings, created_at, updated_at",
+  "query": "INSERT INTO users (email, password_hash, tos_version) VALUES ($1, $2, $3)\n         RETURNING id, email, password_hash, email_verified_at, role, status,\n             tos_version, deleted_at, settings, created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -138,6 +138,7 @@
             "kind": "Simple"
           }
         },
+        "Text",
         "Text"
       ]
     },
@@ -155,5 +156,5 @@
       false
     ]
   },
-  "hash": "4c2f32e2243f9dbf8e7fc7785c6e89d399b78ce99f271f21ff043a10b25bd4c3"
+  "hash": "3e0ed60100595e4f0f0ade93d15974b604d0fee46afd9e6bd4e99dadfdbed97c"
 }

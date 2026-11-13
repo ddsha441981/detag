@@ -290,6 +290,18 @@ impl TestApp {
         Self::spawn_with_settings(settings, None).await
     }
 
+    /// App from explicit settings AND explicit fixtures (P1-001):
+    /// the fixtures' migrated scratch database with the caller's
+    /// settings (e.g. the register test's disposable-email
+    /// denylist). Use it when the test needs both a real database
+    /// and non-default settings.
+    pub async fn spawn_with_fixtures_and_settings(
+        fixtures: TestFixtures,
+        settings: Settings,
+    ) -> Self {
+        Self::spawn_with_settings(settings, Some(fixtures)).await
+    }
+
     async fn spawn_with_settings(settings: Settings, fixtures: Option<TestFixtures>) -> Self {
         let pool = connect_lazy(&settings.database_url, &PoolConfig::default())
             .expect("harness: seed pool builds");

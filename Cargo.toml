@@ -54,7 +54,9 @@ criterion = { version = "0.7", features = ["html_reports"] }
 image = "0.25"
 sha2 = "0.11"
 base64 = "0.22"
-utoipa = { version = "6", features = ["axum_extras"] }
+argon2 = { version = "0.5", features = ["rand"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+utoipa = { version = "6", features = ["axum_extras", "uuid", "chrono"] }
 utoipa-swagger-ui = { version = "10", features = ["axum"] }
 apalis = "0.6"
 apalis-redis = "0.6"

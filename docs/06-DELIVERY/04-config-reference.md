@@ -10,7 +10,11 @@
 | --- | --- | --- |
 | `PF_API_HOST` | `127.0.0.1` | api |
 | `PF_API_PORT` | `8080` | api |
+| `PF_ARGON2_M_COST_KIB` | `19456` | api |
+| `PF_ARGON2_P_COST` | `1` | api |
+| `PF_ARGON2_T_COST` | `2` | api |
 | `PF_DATABASE_URL` | `postgres://pf:pf@localhost:5432/pf` | api, worker |
+| `PF_DISPOSABLE_EMAIL_DOMAINS` | `mailinator.com,guerrillamail.com,10minutemail.com,tempmail.com,yopmail.com` | api |
 | `PF_DOMAIN` | `localhost` | caddy (compose) |
 | `PF_ENGINE_GPU` | `0` | worker/engine |
 | `PF_ENGINE_MODELS_DIR` | `./models` | worker/engine |
@@ -53,6 +57,7 @@
 | `PF_STRIPE_WEBHOOK_SECRET` | `whsec_placeholder` | billing |
 | `PF_TEST_CONTAINERS` | (empty) | tests |
 | `PF_TEST_LIVE_MINIO` | (empty) | tests |
+| `PF_TOS_CURRENT_VERSION` | `v1` | api |
 | `PF_UPLOAD_PART_URL_TTL_SECS` | `600` | storage |
 | `PF_WEB_ORIGIN` | (empty) | api |
 | `PF_WORKER_CONCURRENCY` | `4` | worker |

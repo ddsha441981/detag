@@ -32,7 +32,9 @@ use detag_core::error::Problem;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::{Config, SwaggerUi, Url};
 
+use crate::routes::auth::__path_register;
 use crate::routes::meta::{__path_healthz, __path_readyz};
+use crate::services::register::{RegisterRequest, UserResponse};
 use crate::AppState;
 
 /// The API document (utoipa derive). `info.version` is the API
@@ -44,9 +46,12 @@ use crate::AppState;
         version = "1.0.0",
         description = "Detag — watermark removal for images and videos you own. All errors are RFC 7807 problem+json with a stable PF-code (see the Problem schema)."
     ),
-    paths(healthz, readyz),
-    components(schemas(Problem, Readiness, ComponentHealth)),
-    tags((name = "meta", description = "Liveness and readiness"))
+    paths(healthz, readyz, register),
+    components(schemas(Problem, Readiness, ComponentHealth, RegisterRequest, UserResponse)),
+    tags(
+        (name = "meta", description = "Liveness and readiness"),
+        (name = "auth", description = "Registration, sessions, API keys")
+    )
 )]
 pub struct ApiDoc;
 

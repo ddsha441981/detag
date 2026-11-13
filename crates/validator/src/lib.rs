@@ -13,6 +13,8 @@
 //! - [`sanitize_filename`] — cleans an upload filename (separators,
 //!   control chars, leading dots) or rejects it when nothing usable
 //!   remains.
+//! - [`validate_password`] — minimum 12 characters (NIST
+//!   SP 800-63B); never trimmed, counted in characters.
 //! - [`validate_public_url`] — http(s) URL whose host is public:
 //!   no localhost, no private/loopback/link-local IP literal, no
 //!   single-label hostname. DNS names are NOT resolved here — a
@@ -22,10 +24,12 @@
 
 pub mod email;
 pub mod filename;
+pub mod password;
 pub mod public_url;
 
 pub use email::validate_email;
 pub use filename::sanitize_filename;
+pub use password::{validate_password, MIN_PASSWORD_LEN};
 pub use public_url::validate_public_url;
 
 use detag_core::error::{AppError, FieldError, Problem, Profile};

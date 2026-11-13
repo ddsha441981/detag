@@ -86,6 +86,28 @@ pub struct Settings {
     pub s3_region: String,
     /// Env: PF_JWT_SECRET
     pub jwt_secret: String,
+    /// Env: PF_ARGON2_M_COST_KIB — Argon2id memory cost for
+    /// password hashing (P1-001, FR-A-01). Default 19456 (19 MiB,
+    /// the OWASP first choice); validated 4096..=1048576.
+    pub argon2_m_cost_kib: u32,
+    /// Env: PF_ARGON2_T_COST — Argon2id time cost (iterations).
+    /// Default 2 (OWASP first choice); validated 1..=16.
+    pub argon2_t_cost: u32,
+    /// Env: PF_ARGON2_P_COST — Argon2id parallelism. Default 1
+    /// (OWASP first choice); validated 1..=16.
+    pub argon2_p_cost: u32,
+    /// Env: PF_TOS_CURRENT_VERSION — the ToS version a
+    /// registration must accept (P1-001). Default "v1"; the
+    /// register handler rejects any other `accept_tos_version`
+    /// with a 422, and records the accepted version on the user
+    /// row. Must be non-empty.
+    pub tos_current_version: String,
+    /// Env: PF_DISPOSABLE_EMAIL_DOMAINS — comma-separated
+    /// disposable-email domains rejected at registration
+    /// (P1-001). Empty means no denylist. The starter list lives
+    /// in `.env.example` (operator-editable); there is no
+    /// built-in list in code — the denylist is config, per spec.
+    pub disposable_email_domains: String,
     /// Env: PF_PUBLIC_BASE_URL
     pub public_base_url: String,
     /// Env: PF_API_PORT — TCP port the api binds on PF_API_HOST.
@@ -242,6 +264,11 @@ impl Default for Settings {
             s3_secret_key: "minioadmin".to_string(),
             s3_region: "us-east-1".to_string(),
             jwt_secret: "dev-fixed".to_string(),
+            argon2_m_cost_kib: 19_456,
+            argon2_t_cost: 2,
+            argon2_p_cost: 1,
+            tos_current_version: "v1".to_string(),
+            disposable_email_domains: String::new(),
             public_base_url: "http://localhost:8080".to_string(),
             api_port: 8080,
             api_host: IpAddr::from([127, 0, 0, 1]),
@@ -295,6 +322,11 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("s3_secret_key", "PF_S3_SECRET_KEY"),
     ("s3_region", "PF_S3_REGION"),
     ("jwt_secret", "PF_JWT_SECRET"),
+    ("argon2_m_cost_kib", "PF_ARGON2_M_COST_KIB"),
+    ("argon2_t_cost", "PF_ARGON2_T_COST"),
+    ("argon2_p_cost", "PF_ARGON2_P_COST"),
+    ("tos_current_version", "PF_TOS_CURRENT_VERSION"),
+    ("disposable_email_domains", "PF_DISPOSABLE_EMAIL_DOMAINS"),
     ("public_base_url", "PF_PUBLIC_BASE_URL"),
     ("api_port", "PF_API_PORT"),
     ("api_host", "PF_API_HOST"),
@@ -404,6 +436,11 @@ impl Settings {
             s3_secret_key: field!(s3_secret_key, String),
             s3_region: field!(s3_region, String),
             jwt_secret: field!(jwt_secret, String),
+            argon2_m_cost_kib: field!(argon2_m_cost_kib, u32),
+            argon2_t_cost: field!(argon2_t_cost, u32),
+            argon2_p_cost: field!(argon2_p_cost, u32),
+            tos_current_version: field!(tos_current_version, String),
+            disposable_email_domains: field!(disposable_email_domains, String),
             public_base_url: field!(public_base_url, String),
             api_port: field!(api_port, u16),
             api_host: field!(api_host, IpAddr),
@@ -515,6 +552,21 @@ impl Settings {
         }
 
         // Ranges must hold.
+        if !(4096..=1_048_576).contains(&self.argon2_m_cost_kib) {
+            invalid(
+                "PF_ARGON2_M_COST_KIB",
+                "must be 4096..=1048576 (4 MiB..=1 GiB)".to_string(),
+            );
+        }
+        if !(1..=16).contains(&self.argon2_t_cost) {
+            invalid("PF_ARGON2_T_COST", "must be 1..=16".to_string());
+        }
+        if !(1..=16).contains(&self.argon2_p_cost) {
+            invalid("PF_ARGON2_P_COST", "must be 1..=16".to_string());
+        }
+        if self.tos_current_version.trim().is_empty() {
+            invalid("PF_TOS_CURRENT_VERSION", "must not be empty".to_string());
+        }
         if self.smtp_port == 0 {
             invalid("PF_SMTP_PORT", "must be 1..=65535".to_string());
         }
@@ -775,7 +827,16 @@ mod tests {
         "PF_S3_SECRET_KEY",
         "PF_S3_REGION",
         "PF_JWT_SECRET",
+        "PF_ARGON2_M_COST_KIB",
+        "PF_ARGON2_T_COST",
+        "PF_ARGON2_P_COST",
+        "PF_TOS_CURRENT_VERSION",
+        "PF_DISPOSABLE_EMAIL_DOMAINS",
         "PF_PUBLIC_BASE_URL",
+        "PF_RATE_LIMIT_IP_BURST",
+        "PF_RATE_LIMIT_IP_REFILL_PER_MIN",
+        "PF_RATE_LIMIT_ROUTE_BURST",
+        "PF_RATE_LIMIT_ROUTE_REFILL_PER_MIN",
         "PF_METRICS_PORT",
         "PF_METRICS_HOST",
         "PF_STRIPE_SECRET_KEY",
@@ -852,6 +913,13 @@ mod tests {
         assert_eq!(s.s3_secret_key, "minioadmin");
         assert_eq!(s.s3_region, "us-east-1");
         assert_eq!(s.jwt_secret, "dev-fixed");
+        assert_eq!(s.argon2_m_cost_kib, 19_456);
+        assert_eq!(s.argon2_t_cost, 2);
+        assert_eq!(s.argon2_p_cost, 1);
+        assert_eq!(s.tos_current_version, "v1");
+        // No assertion for disposable_email_domains: the code
+        // default is "" (no denylist) while .env.example seeds a
+        // starter list — deliberately different, see the field docs.
         assert_eq!(s.public_base_url, "http://localhost:8080");
         assert_eq!(s.api_port, 8080);
         assert_eq!(s.api_host, IpAddr::from([127, 0, 0, 1]));
@@ -1023,6 +1091,53 @@ mod tests {
         assert_eq!(settings.rate_limit_ip_burst, 5);
         assert_eq!(settings.rate_limit_route_burst, 3);
         assert_eq!(settings.rate_limit_ip_refill_per_min, 0);
+    }
+
+    /// P1-001: auth hashing + registration policy defaults
+    /// (OWASP Argon2id first choice, ToS "v1", no disposable
+    /// denylist); out-of-range argon2 params and an empty ToS
+    /// version fail naming the var.
+    #[test]
+    fn auth_defaults_and_bounds() {
+        let _env = clean_env();
+        let settings = Settings::load_from(None).expect("defaults must load");
+        assert_eq!(settings.argon2_m_cost_kib, 19_456);
+        assert_eq!(settings.argon2_t_cost, 2);
+        assert_eq!(settings.argon2_p_cost, 1);
+        assert_eq!(settings.tos_current_version, "v1");
+        assert_eq!(settings.disposable_email_domains, "");
+        env::set_var("PF_ARGON2_M_COST_KIB", "1024");
+        let err = Settings::load_from(None).expect_err("4 MiB floor must fail");
+        assert!(
+            err.to_string().contains("PF_ARGON2_M_COST_KIB"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_ARGON2_M_COST_KIB", "19456");
+        env::set_var("PF_ARGON2_T_COST", "0");
+        let err = Settings::load_from(None).expect_err("0 time cost must fail");
+        assert!(
+            err.to_string().contains("PF_ARGON2_T_COST"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_ARGON2_T_COST", "3");
+        env::set_var("PF_TOS_CURRENT_VERSION", "   ");
+        let err = Settings::load_from(None).expect_err("blank ToS version must fail");
+        assert!(
+            err.to_string().contains("PF_TOS_CURRENT_VERSION"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_TOS_CURRENT_VERSION", "v2");
+        env::set_var(
+            "PF_DISPOSABLE_EMAIL_DOMAINS",
+            "mailinator.com, tempmail.com",
+        );
+        let settings = Settings::load_from(None).expect("valid overrides must load");
+        assert_eq!(settings.argon2_t_cost, 3);
+        assert_eq!(settings.tos_current_version, "v2");
+        assert_eq!(
+            settings.disposable_email_domains,
+            "mailinator.com, tempmail.com"
+        );
     }
 
     /// P0-079: visibility timeout defaults to 300 s and keep-alive

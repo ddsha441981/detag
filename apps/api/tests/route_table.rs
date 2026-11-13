@@ -13,6 +13,11 @@
 //!    it IS the duplicate check; the probes are the presence
 //!    check. Negative controls (paths that must NOT exist)
 //!    assert 404, proving the probes are not vacuously passing.
+//!    Exception: routes whose handler is real (P1-001
+//!    `/v1/auth/register`) answer with their real behavior for
+//!    the empty-body probe — 422 PF-2002 for register, since
+//!    `ValidatedJson` rejects the empty body — and the probe
+//!    asserts that instead of 501.
 //!
 //! The probes send a fixed `x-request-id` and assert the 501
 //! problem body echoes it — that proves the whole chain at
@@ -92,6 +97,41 @@ async fn every_table_entry_resolves_to_the_stub() {
                 res.status() == StatusCode::OK || res.status() == StatusCode::SERVICE_UNAVAILABLE,
                 "/readyz must be 200 or 503, got {}",
                 res.status()
+            );
+            continue;
+        }
+        // Real handlers (not stubs) answer with their real
+        // behavior for the empty-body probe. P1-001 register:
+        // the empty body fails ValidatedJson → 422 PF-2002
+        // with the probe id echoed (the route exists; the
+        // handler's own test covers the 201/409 paths).
+        if *method == "POST" && *path == "/v1/auth/register" {
+            let req = Request::builder()
+                .method(Method::POST)
+                .uri("/v1/auth/register")
+                .header("x-request-id", PROBE_ID)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let res = router
+                .clone()
+                .oneshot(req)
+                .await
+                .expect("oneshot POST /v1/auth/register");
+            assert_eq!(
+                res.status(),
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "POST /v1/auth/register with an empty body must be 422, got {}",
+                res.status()
+            );
+            let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .expect("read body");
+            let json: serde_json::Value =
+                serde_json::from_slice(&body).expect("register body is JSON");
+            assert_eq!(json["code"], "PF-2002", "POST /v1/auth/register: {json}");
+            assert_eq!(
+                json["request_id"], PROBE_ID,
+                "POST /v1/auth/register: {json}"
             );
             continue;
         }

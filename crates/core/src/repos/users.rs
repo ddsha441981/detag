@@ -32,13 +32,27 @@ pub async fn create(
     email: &str,
     password_hash: &str,
 ) -> Result<User, RepoError> {
+    create_with_tos(pool, email, password_hash, None).await
+}
+
+/// Insert a user recording the accepted ToS version (P1-001).
+/// `tos_version` is the `accept_tos_version` the client sent —
+/// the caller has already checked it equals the current version;
+/// this function records, it does not validate.
+pub async fn create_with_tos(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    email: &str,
+    password_hash: &str,
+    tos_version: Option<&str>,
+) -> Result<User, RepoError> {
     sqlx::query_as!(
         User,
-        "INSERT INTO users (email, password_hash) VALUES ($1, $2)
+        "INSERT INTO users (email, password_hash, tos_version) VALUES ($1, $2, $3)
          RETURNING id, email, password_hash, email_verified_at, role, status,
              tos_version, deleted_at, settings, created_at, updated_at",
         email,
-        password_hash
+        password_hash,
+        tos_version
     )
     .fetch_one(pool)
     .await

@@ -23,6 +23,8 @@
 //! Testcontainers form belongs with the fixtures work (P0-092).
 
 pub mod artifacts;
+pub mod audit_logs;
+pub mod email_outbox;
 pub mod error;
 pub mod job_events;
 pub mod jobs;
