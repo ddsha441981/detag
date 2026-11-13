@@ -829,11 +829,12 @@
     - [x] stub committed
   - **Status:** DONE 2026-11-13 (local HEAD `4c0c63e` + this commit; `just verify` green: 391 passed, 0 failed). New `docs/threat-model.md`: assets (10), actors (8), entry points (8, with Live/Stub/Planned status — auth/billing/admin are Phase 1, intake is Phase 2), 5 trust boundaries, STRIDE-lite T1–T16 with LIVE/WIRED/PLANNED/OPEN status per mitigation (P0-101 validation, P0-102 headers, P0-103 rate limiting, P0-104 body/dimension caps, P0-105 secrets policy all cited as the live mitigations), recorded trade-offs (rate limiter fails OPEN on Redis down; public-URL validation does not resolve DNS — fetch layer re-validates in Phase 3; `dev-fixed` JWT default has no prod fail-fast; `/metrics` has no in-code auth — deployment-scoped, must not be exposed publicly; JWT dual-verify drafted, not implemented), compliance boundaries (attestation + AUP, C2PA/SynthID OFF). Linked from the security-testing plan (T-IDs as cross-references) and the runbook. Update log started; Phase 1/2 tickets extend it in place.
 
-- [ ] **P0-107** — Security smoke tests
+- [x] **P0-107** — Security smoke tests
   - **Type:** test · **Area:** security · **Est:** S · **Deps:** P0-106 · **Prio:** P1
   - **Spec:** Headers present, rate limit trips at threshold, oversized body rejected, method-not-allowed, no swagger in prod profile.
   - **AC:**
-    - [ ] smoke suite green
+    - [x] smoke suite green
+  - **Status:** DONE 2026-11-13 (local HEAD `aaa7324` + this commit; `just verify` green: 396 passed, 0 failed). New `apps/api/tests/security_smoke.rs` — one named gate over the five ACs, driven through the real router (`TestApp` oneshot): headers present (full table verbatim + request id + ACAO, no HSTS in dev), rate limit trips at threshold (burst 5 admits 5, 6th is 429 PF-3007 + Retry-After), oversized body rejected (65 KiB on the 64 KiB auth class is 413 PF-2003, same body on jobs is admitted), method-not-allowed (DELETE /healthz is 405 with `Allow: GET`), no swagger in prod (both `/docs` paths are 404 PF-2010 in prod, `/healthz` still 200 with HSTS; dev `/docs` 303-redirects). Two test bugs found by running: the default `web_origin` is not the test ORIGIN (ACAO was None until the settings set it — the helpers now set `web_origin` explicitly), and the 413 problem title is snake_case (`payload_too_large`, not "Payload too large"); the 404 code is PF-2010 (PF-1001 is Unauthenticated). Observation recorded in the test + security-testing doc: the 405 body is axum's bare 405, not problem+json — the mapper rewrites 400/404/413/415/422 only; whether 405 belongs in the envelope is a Phase 1 question, not a smoke change. Docs: security-testing plan gained a "Security smoke suite" section (table with threat-model cross-refs); `just security-smoke` recipe added (verify runs it as part of the suite).
 
 - [ ] **P0-108** — Security baseline summary
   - **Type:** docs · **Area:** security · **Est:** S · **Deps:** P0-107 · **Prio:** P1

@@ -99,6 +99,11 @@ snapshots-check:
 # Property tests (P0-096): proptest harness, 1000 cases per property
 # (config lives in the test files). Also runs in CI on every push
 # and on the nightly job.
+# The security smoke suite (P0-107), on its own. `just verify`
+# runs it as part of the workspace suite.
+security-smoke:
+    SQLX_OFFLINE=true cargo test -p detag-api --test security_smoke
+
 prop:
     cargo test -p detag-core --test prop
 

@@ -27,6 +27,24 @@ For every `/v1` endpoint × role {anonymous, user-A, user-B, support, admin, api
 | Mismatched extension vs magic | magic wins (FR-U-03) |
 | Path traversal in filename | sanitized to opaque storage key (ADR-0011) |
 
+## Security smoke suite (P0-107)
+
+`apps/api/tests/security_smoke.rs` — one named gate over the
+five Phase 0 hardening ACs, driven through the real router.
+Run it alone with `just security-smoke`; `just verify` runs it
+as part of the workspace suite. It deliberately duplicates a
+few assertions from the deeper suites — a smoke suite that
+only re-runs other suites proves nothing; it owns its five
+checks:
+
+| Check | Threat | What it asserts |
+| --- | --- | --- |
+| Headers present | T7/T8 | The secure-header table verbatim + request id + ACAO on a real response; no HSTS in dev |
+| Rate limit trips at threshold | T11 | Burst 5 admits 5, the 6th is 429 PF-3007 with `Retry-After` |
+| Oversized body rejected | T5 | 65 KiB on the 64 KiB auth class is 413 PF-2003; the same body on jobs (1 MiB) is admitted |
+| Method-not-allowed | — | DELETE on GET-only `/healthz` is 405 with `Allow: GET`; the body is axum's bare 405, not problem+json — the mapper rewrites 400/404/413/415/422 only, and whether 405 belongs in the envelope is a Phase 1 question |
+| No swagger in prod profile | T9 | `/docs` and `/docs/` are 404 (PF-2010) with `PF_ENVIRONMENT=prod`; `/healthz` still answers 200 with HSTS; dev `/docs` 303-redirects to `/docs/` |
+
 ## API & webhook hardening
 
 - Body caps per route class (P0-104): auth/meta 64 KiB, jobs/admin 1 MiB, billing (webhooks) 256 KiB; over-cap is 413 PF-2003, tested per class. Uploads are exempt (bytes never transit the api).
