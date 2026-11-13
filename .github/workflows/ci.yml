@@ -108,6 +108,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install ffmpeg for the fixture generator (CI-FAIL-007)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: fixtures-check (committed fixtures match the generator, P0-093)
         run: |
           python3 -m pip install --quiet "pillow==10.2.0" "numpy==1.26.4"

@@ -61,6 +61,8 @@ fail() { # <message>
         $COMPOSE ps >&2 || true
         echo "smoke: api/worker logs (tail 50):" >&2
         $COMPOSE logs --tail=50 api worker >&2 || true
+        echo "smoke: garage logs (tail 50):" >&2
+        $COMPOSE logs --tail=50 garage >&2 || true
     fi
     exit 1
 }
@@ -72,6 +74,16 @@ command -v curl >/dev/null 2>&1 || fail "curl not found"
 if [ ! -f .env ]; then
     cp .env.example .env
     echo "smoke: created .env from .env.example (dev placeholders only)"
+fi
+
+# Garage refuses to start unless the RPC secret is 32 bytes of random
+# hex (CI-FAIL-008: the .env.example placeholder was the literal string
+# "<redacted>" and the server died on start, so the stack never went
+# healthy). Fail fast here with a clear message instead of a 120 s
+# timeout and an "unhealthy" container.
+RPC_SECRET="$(grep -E '^GARAGE_RPC_SECRET=' .env | cut -d= -f2-)"
+if ! printf '%s' "$RPC_SECRET" | grep -Eq '^[0-9a-f]{64}$'; then
+    fail "GARAGE_RPC_SECRET in .env is not 32 bytes of random hex (see .env.example)"
 fi
 
 # --- 2. compose up ----------------------------------------------------------

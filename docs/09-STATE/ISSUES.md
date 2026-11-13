@@ -47,10 +47,31 @@
 - Fix: install curl + ca-certificates in a RUN before `cargo chef cook` in both Dockerfiles; the later RUN keeps binutils only.
 - Status: fixed (0ae112f) — waits on CI #6.
 
+### CI-FAIL-007 [bug] CI #7 verify fails at fixtures-check — ffmpeg not on the runner PATH
+- Date: 2026-11-13 · Ticket: P0-093 · Severity: S1 (CI red on main)
+- Symptom: CI run #7, verify step 16: `python3 scripts/fixtures_gen.py --check` → `fixtures_gen: ffmpeg not found on PATH — videos need it`, exit 1. (The Python 3.12 fix from CI-FAIL-005 worked — pillow/numpy installed cleanly this time; the job got far enough to hit the next missing tool.)
+- Cause: `fixtures_gen.py generate()` hard-fails when ffmpeg is absent (it generates the 3 video fixtures). ubuntu-latest runners do not ship ffmpeg, and no CI step installed it — the failure was hidden behind the numpy build error in CI #5 and behind config-table-check in CI #6.
+- Fix: install ffmpeg in the verify job before fixtures-check (`sudo apt-get update && sudo apt-get install -y ffmpeg`). templates-check needs no ffmpeg (0 references in templates_gen.py).
+- Status: fixed (this commit) — waits on CI #8.
+
+### CI-FAIL-008 [bug] CI #6/#7 smoke fails — Garage server never starts, container stays unhealthy
+- Date: 2026-11-13 · Ticket: P0-090 · Severity: S1 (CI red on main)
+- Symptom: CI runs #6 and #7, smoke step: all images build, postgres/redis/mailhog/web go healthy, but `detag-garage` stays `Up (unhealthy)` and compose aborts at ~55 s with `dependency failed to start: container detag-garage is unhealthy`; `smoke: FAILED — compose stack did not go healthy in 120s`. The pasted CI #6 log was truncated mid-build and showed no error; the CI #7 logs zip showed the same symptom with no garage logs (smoke.sh printed only api/worker logs).
+- Cause: `.env.example` carried `GARAGE_RPC_SECRET=<redacted>` and `GARAGE_ADMIN_TOKEN=<redacted>` — literally the string `<redacted>`, written that way in the CI-FAIL-004 fix (ce00f0c). Garage requires the RPC secret to be 32 bytes of random hex and refuses to start otherwise. Proven locally with the real v2.5.0 binary: `Error: Invalid RPC secret key: expected 32 bytes of random hex`. So in CI the bg server died instantly, the entrypoint's `garage status` loop ran its 60 s, the healthcheck (`garage health -q`) failed 10× in that window, and compose marked the container unhealthy at ~55 s. The healthcheck command itself is correct — proven locally: bare `garage health -q` exits 0 on a healthy cluster (default config path is /etc/garage.toml, which the compose mount provides).
+- Fix: real 32-byte-hex dev values for both GARAGE_* vars in .env.example (dev-only placeholders, same as minioadmin — generate fresh ones for prod); smoke.sh now fails fast with a clear message when GARAGE_RPC_SECRET is not 64 hex chars, and prints the garage logs on failure so the next smoke failure carries its own diagnosis.
+- Status: fixed (this commit) — waits on CI #8.
+
 ### TESTKIT-MINIO-001 [follow-up] testcontainers live legs + local-dev compose.minio.yml still reference dead MinIO images
 - Date: 2026-11-13 · Severity: S3 (not CI-blocking)
 - Cause: CI never sets PF_TEST_CONTAINERS/PF_TEST_LIVE_MINIO, so the live legs skip in CI; compose-minio-check only renders. But anyone running the live legs locally (or `docker compose -f ops/compose.minio.yml up`) hits the same dead MinIO pulls as CI-FAIL-004.
 - Fix: swap the testcontainers S3 image to Garage (needs layout+key+bucket setup inside the harness) or s3mock, and the same for ops/compose.minio.yml (+ scripts/check_minio_policy.py, which parses it). Do not do this silently inside a ticket — it is a follow-up ticket.
+- Status: open.
+
+### COMMITS-LINT-001 [bug] Commit linter rejects every CI-fix commit subject (CI-FAIL-xxx) — Commits workflow red on main since CI #5
+- Date: 2026-11-13 · Severity: S2 (CI red on main, but only the lint workflow — the CI workflow itself is unaffected)
+- Symptom: Commits run 43458655135 (on bf9c3c1) failed: 7 of 8 commits in the push range failed `scripts/lint_commits.py` — incl. bf9c3c1 itself (P1-024: no FR/NFR reference) and the 10th coordinator's CI-fix commits (5304cb2/65826b4/0f0abbc/e39fe89/a92e324 — `CI-FAIL-xxx` subjects). The b0c86ac push's run 43464044009 failed the same way: 5 of 6 (my four CI-FAIL fix commits + the merge commit).
+- Cause: the subject rule is `<type>(<scope>): P<phase>-<num> <description>` — it has no way to express a CI-fix commit (whose id is CI-FAIL-xxx, not a P-ticket) or a state/bookkeeping commit (a92e324). Merge commits are skipped only when the subject starts with `Merge ` — my merge commit used a custom lowercase `merge: ...` subject, so it was linted and failed.
+- Fix: teach `lint_commits.py` to accept subjects carrying a CI-FAIL-xxx / SCHEMA-DOC-xxx id (same position as the P-ticket), plus unit tests in `scripts/test_lint_commits.py`; use the default `Merge branch ...` subject (or a `Merge ...` prefix) for merge commits. The fix commit itself must cite the owning ticket: `fix(ci): P0-006 ...` (P0-006 is the lint job). Do NOT rewrite the already-pushed commits to fix this — force-push on main is forbidden; the workflow lints only each push's range, so a compliant next push goes green.
 - Status: open.
 
 ### PERF-001 [hardening] Synchronous Argon2id verify blocks tokio workers — a burst of concurrent logins 500s on pool timeout (P1-004)
