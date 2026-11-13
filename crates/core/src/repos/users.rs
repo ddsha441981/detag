@@ -24,6 +24,12 @@ pub struct User {
     pub status: String,
     pub tos_version: Option<String>,
     pub deleted_at: Option<DateTime<Utc>>,
+    /// The revocation epoch (P1-021): every access token of
+    /// this user with `iat` earlier than this instant is dead.
+    /// `None` means never revoked. Set (never cleared) by a
+    /// password change — `revoke_sessions_on_password_change`
+    /// bumps it in the same tx as the session revocation.
+    pub revoked_before: Option<DateTime<Utc>>,
     pub display_name: Option<String>,
     pub pending_email: Option<String>,
     pub settings: serde_json::Value,
@@ -56,7 +62,7 @@ pub async fn create_with_tos(
         User,
         "INSERT INTO users (email, password_hash, tos_version) VALUES ($1, $2, $3)
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
+             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
         email,
         password_hash,
         tos_version
@@ -74,7 +80,7 @@ pub async fn by_id(
     sqlx::query_as!(
         User,
         "SELECT id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at
+             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at
          FROM users WHERE id = $1",
         id
     )
@@ -97,7 +103,7 @@ pub async fn by_email(
     sqlx::query_as!(
         User,
         "SELECT id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at
+             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at
          FROM users WHERE email = $1::citext",
         email
     )
@@ -130,7 +136,7 @@ pub async fn update_profile(
              updated_at = now()
          WHERE id = $1
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
+             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
         id,
         display_name,
         pending_email,
@@ -150,7 +156,7 @@ pub async fn set_email_verified(
         User,
         "UPDATE users SET email_verified_at = now() WHERE id = $1
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
+             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
         id
     )
     .fetch_one(pool)
@@ -159,6 +165,43 @@ pub async fn set_email_verified(
         sqlx::Error::RowNotFound => RepoError::NotFound,
         other => RepoError::from_sqlx(other),
     })
+}
+
+/// Bump the revocation epoch (P1-021): every access token of
+/// this user issued before now dies at the extractor
+/// (`iat < revoked_before`). The bump is one UPDATE — the
+/// caller (P1-018's `revoke_sessions_on_password_change`)
+/// runs it inside the same tx as the session revocation, so
+/// the epoch and the revoked sessions commit or roll back
+/// together. The epoch is only ever SET, never cleared: there
+/// is no "unrevoke". Returns `NotFound` when the id does not
+/// exist. The timestamp is `now()` (microseconds) while the
+/// token's `iat` is whole seconds — a token minted in the same
+/// second as the bump (before OR after it) shares the bump's
+/// second, so the comparison is `iat <= revoked_before` (the
+/// floored second): a pre-change token in that second must
+/// die, and a post-change token in the same second is denied
+/// too and self-heals via refresh (its refresh token is still
+/// valid — the change-password case keeps the current
+/// session). A false denial self-heals; a false admission
+/// would be a hole. So the comparison errs toward denial by
+/// construction — strict `<` against the floored second has a
+/// one-second hole (`iat == floor(bump)` is not `< bump`).
+pub async fn set_revoked_before(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> Result<(), RepoError> {
+    let result = sqlx::query!(
+        "UPDATE users SET revoked_before = now(), updated_at = now() WHERE id = $1",
+        id
+    )
+    .execute(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    if result.rows_affected() == 0 {
+        return Err(RepoError::NotFound);
+    }
+    Ok(())
 }
 
 /// Swap the email to the pending address (P1-006): the address
@@ -186,7 +229,7 @@ pub async fn swap_email(
              updated_at = now()
          WHERE id = $1 AND pending_email IS NOT NULL
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
+             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
         id
     )
     .fetch_one(pool)
@@ -222,7 +265,7 @@ pub async fn request_deletion(
              updated_at = now()
          WHERE id = $1
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
+             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
         id
     )
     .fetch_one(pool)
@@ -250,7 +293,7 @@ pub async fn cancel_deletion(
              updated_at = now()
          WHERE id = $1 AND status = 'deletion_pending'
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
+             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
         id
     )
     .fetch_optional(pool)
@@ -319,7 +362,7 @@ pub async fn suspend(
         "UPDATE users SET status = 'suspended', deleted_at = NULL, updated_at = now()
          WHERE id = $1
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
+             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
         id
     )
     .fetch_one(pool)
@@ -348,7 +391,7 @@ pub async fn restore(
         "UPDATE users SET status = 'active', deleted_at = NULL, updated_at = now()
          WHERE id = $1
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
+             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
         id
     )
     .fetch_one(pool)

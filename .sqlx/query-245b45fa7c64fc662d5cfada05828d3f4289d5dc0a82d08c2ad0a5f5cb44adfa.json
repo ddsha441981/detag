@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE users SET\n             email = pending_email,\n             pending_email = NULL,\n             email_verified_at = now(),\n             updated_at = now()\n         WHERE id = $1 AND pending_email IS NOT NULL\n         RETURNING id, email, password_hash, email_verified_at, role, status,\n             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
+  "query": "UPDATE users SET\n             email = pending_email,\n             pending_email = NULL,\n             email_verified_at = now(),\n             updated_at = now()\n         WHERE id = $1 AND pending_email IS NOT NULL\n         RETURNING id, email, password_hash, email_verified_at, role, status,\n             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -98,6 +98,17 @@
       },
       {
         "ordinal": 8,
+        "name": "revoked_before",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "revoked_before"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
         "name": "display_name",
         "type_info": "Text",
         "origin": {
@@ -108,7 +119,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "pending_email",
         "type_info": {
           "Custom": {
@@ -124,7 +135,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "settings",
         "type_info": "Jsonb",
         "origin": {
@@ -135,7 +146,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -146,7 +157,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -173,10 +184,11 @@
       true,
       true,
       true,
+      true,
       false,
       false,
       false
     ]
   },
-  "hash": "ac1498718e2ce81bac584009c2e6978fcd0ed58ce8ab56970a591475e4d424f6"
+  "hash": "245b45fa7c64fc662d5cfada05828d3f4289d5dc0a82d08c2ad0a5f5cb44adfa"
 }

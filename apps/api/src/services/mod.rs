@@ -12,5 +12,6 @@ pub mod password;
 pub mod profile;
 pub mod refresh;
 pub mod register;
+pub mod revocation;
 pub mod sessions;
 pub mod verification;

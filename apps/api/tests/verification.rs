@@ -410,6 +410,7 @@ fn require_verified_gate_is_pf1009_403_for_unverified_users() {
         status: "active".to_string(),
         tos_version: Some("v1".to_string()),
         deleted_at: None,
+        revoked_before: None,
         display_name: None,
         pending_email: None,
         settings: json!({}),

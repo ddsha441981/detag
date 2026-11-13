@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE users SET\n             display_name = $2,\n             pending_email = $3::citext,\n             updated_at = now()\n         WHERE id = $1\n         RETURNING id, email, password_hash, email_verified_at, role, status,\n             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
+  "query": "SELECT id, email, password_hash, email_verified_at, role, status,\n             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at\n         FROM users WHERE email = $1::citext",
   "describe": {
     "columns": [
       {
@@ -98,6 +98,17 @@
       },
       {
         "ordinal": 8,
+        "name": "revoked_before",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "revoked_before"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
         "name": "display_name",
         "type_info": "Text",
         "origin": {
@@ -108,7 +119,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "pending_email",
         "type_info": {
           "Custom": {
@@ -124,7 +135,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "settings",
         "type_info": "Jsonb",
         "origin": {
@@ -135,7 +146,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -146,7 +157,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -159,8 +170,6 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid",
-        "Text",
         {
           "Custom": {
             "name": "citext",
@@ -180,10 +189,11 @@
       true,
       true,
       true,
+      true,
       false,
       false,
       false
     ]
   },
-  "hash": "0a9687af14646a8440c467ff95ee1ad35b7cd337778ae488edc5b008138f78c8"
+  "hash": "2fa1fb565a72d9c03034ef5bd0a2f4018f0051d3b703ff3673301f02a07d110c"
 }

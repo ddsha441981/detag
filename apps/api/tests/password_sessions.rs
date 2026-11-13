@@ -20,6 +20,9 @@
 //! - the kept session still rotates (proven through the real
 //!   `POST /v1/auth/refresh`); a revoked one answers the
 //!   generic 401 `PF-1001`.
+//! - every call bumps the revocation epoch (P1-021) in the
+//!   same tx — the access tokens issued before the change die
+//!   at the extractor, even when there was nothing to revoke.
 
 mod common;
 
@@ -30,7 +33,7 @@ use detag_api::services::password::{
 };
 use detag_core::{
     checksum::sha256_hex,
-    repos::{audit_logs, email_outbox, sessions},
+    repos::{audit_logs, email_outbox, sessions, users},
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -121,6 +124,21 @@ async fn login_tokens(app: &TestApp, email: &str) -> (String, String) {
     (access, refresh)
 }
 
+/// The epoch (P1-021) is bumped by every password-change
+/// call — in the same tx as the revocations — so the access
+/// tokens issued before the change die at the extractor even
+/// when the sessions were already gone.
+async fn assert_epoch_set(app: &TestApp, user_id: Uuid) {
+    let user = users::by_id(&app.state.pool, user_id)
+        .await
+        .expect("user loads")
+        .expect("user exists");
+    assert!(
+        user.revoked_before.is_some(),
+        "the revocation epoch is set after a password change"
+    );
+}
+
 /// POST /v1/auth/refresh with the given cookie value.
 fn refresh_req(cookie: &str) -> Request<axum::body::Body> {
     Request::builder()
@@ -203,6 +221,7 @@ async fn revokes_all_except_current() {
     // B + C (A was already revoked by the rotation and is not
     // counted twice; D is kept).
     assert_eq!(revoked, 2);
+    assert_epoch_set(&app, user_id).await;
 
     // D is live, B and C are revoked, A is still revoked.
     let rows = sessions::list_for_user(&app.state.pool, user_id)
@@ -260,6 +279,7 @@ async fn revokes_all_when_no_current_session() {
         .await
         .expect("revoke");
     assert_eq!(revoked, 2);
+    assert_epoch_set(&app, user_id).await;
 
     let rows = sessions::list_for_user(&app.state.pool, user_id)
         .await
@@ -288,6 +308,10 @@ async fn no_sessions_is_noop_no_audit_but_still_mails() {
         .await
         .expect("revoke");
     assert_eq!(revoked, 0);
+    // The epoch is bumped even with nothing to revoke: an
+    // orphaned access token (its session already revoked, the
+    // token still inside its 15 minutes) dies with it.
+    assert_epoch_set(&app, user_id).await;
     assert_eq!(
         audits_for(&app, user_id, "session.revoked_on_password_change")
             .await

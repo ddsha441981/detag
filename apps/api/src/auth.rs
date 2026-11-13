@@ -38,6 +38,40 @@
 //! access token's remaining lifetime (≤ 15 min) is that
 //! ticket's design space, not this extractor's.
 //!
+//! # Revocation (P1-021)
+//!
+//! A verified token can still be dead, two ways — both checked
+//! here, after the JWT verifies and the user loads:
+//! 1. **The epoch.** `users.revoked_before` is the instant
+//!    before which every access token of the user is dead
+//!    (bumped by a password change — P1-018's service, same tx
+//!    as the session revocation). A token whose `iat` is
+//!    earlier than it is 401 `PF-1010`. The column rides the
+//!    user row already loaded, so this check costs zero extra
+//!    queries. A token minted in the same second AFTER the bump
+//!    is denied too (its `iat` is earlier than the bump
+//!    instant) and self-heals: the client refreshes — its
+//!    refresh token is still valid — and gets a live token.
+//!    The comparison is strict (`iat < revoked_before`) and
+//!    errs toward denial by construction (see
+//!    `users::set_revoked_before`).
+//! 2. **The jti denylist.** One Redis key per revoked token
+//!    (`pf:revocation:jti:{jti}`, TTL = the token's remaining
+//!    life). A token whose `jti` is present is 401 `PF-1010`.
+//!    A token without a `jti` (pre-P1-013 legacy) skips the
+//!    check — the epoch still covers it via `iat`. A Redis
+//!    error fails OPEN (warn logged): a cache outage must not
+//!    take auth down — the epoch check is DB-backed and still
+//!    runs, so a password change still kills tokens during an
+//!    outage; only the per-token denylist degrades (a
+//!    logout-all'd token lives until exp, ≤ 15 min — the same
+//!    residual window as the single logout).
+//!
+//! Both rejections are `PF-1010` (invalid token) — the same
+//! code as a bad signature. A revoked token is not
+//! distinguishable from a forged one: the response never says
+//! WHY the token is invalid.
+//!
 //! The admin guard is [`AdminContext`] (P1-008): it wraps this
 //! extractor and additionally requires the role to be
 //! [`Role::Admin`], rejecting a verified non-admin (user or
@@ -121,6 +155,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+use crate::services::revocation::is_jti_revoked;
 use crate::{problem::ProblemResponse, request_id::RequestId, AppState};
 use detag_core::{
     error::{AppError, Profile},
@@ -361,6 +396,42 @@ impl FromRequestParts<AppState> for AuthContext {
             // The token is well-formed but the account is gone.
             return Err(reject(AppError::Unauthenticated));
         };
+        // Revocation, epoch first (P1-021): a token issued
+        // before the user's `revoked_before` is dead — a
+        // password change bumped the epoch, and this token
+        // predates it. Zero extra queries (the column rides
+        // the loaded row). The comparison is `<=`, not `<`:
+        // `iat` is whole seconds while the epoch is
+        // microsecond-precise, so a token minted in the same
+        // second as the bump (before OR after it) shares the
+        // bump's second — and a pre-change token in that
+        // second must die (strict `<` has a one-second hole
+        // here: `iat == floor(bump)` is not `< bump`, so the
+        // token survives — caught by the revocation tests).
+        // A post-change token minted in the same second is
+        // denied too and self-heals via refresh (its refresh
+        // token is still valid; the next mint lands in a
+        // later second). Fail closed on the boundary second.
+        if let Some(revoked_before) = user.revoked_before {
+            if claims.iat <= revoked_before.timestamp() {
+                return Err(reject(AppError::InvalidToken));
+            }
+        }
+        // Revocation, jti denylist second (P1-021): one Redis
+        // GET on the token's jti. A token without a jti
+        // (pre-P1-013 legacy) skips the check — the epoch
+        // above still covers it via `iat`. A Redis error
+        // fails OPEN (warn logged): the epoch is the durable
+        // backstop, the denylist is the fast path.
+        if let Some(jti) = claims.jti {
+            match is_jti_revoked(state, &jti).await {
+                Ok(true) => return Err(reject(AppError::InvalidToken)),
+                Ok(false) => {}
+                Err(err) => {
+                    tracing::warn!(error = ?err, "auth: revocation cache unavailable, failing open");
+                }
+            }
+        }
         Ok(Self {
             credential: Credential::Bearer(token),
             role: Role::from_user_role(&user.role),

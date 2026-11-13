@@ -1,19 +1,24 @@
 //! Live test for the retry-event writer (P0-077, E0.8).
 //!
 //! Applies ONLY the 001 + 002 migration pairs plus the P1-005
-//! profile-fields migration (copied from the repo's real
-//! `migrations/` into a scratch dir — the same pattern as the
-//! migration live tests) to a scratch DATABASE
-//! (`detag_p077_test`, created and dropped by the test) — never
-//! the dev database. The profile-fields migration is needed
-//! because the `users` repo queries now read `display_name` +
-//! `pending_email` (P1-005): without it, `users::create` fails
-//! with "column display_name does not exist". Creates a user +
-//! job through the repos, records a retry event, reads it back,
-//! and asserts the payload round-trips; also asserts the FK:
-//! recording for a job id with no jobs row fails with
-//! `ForeignKeyViolation` (the worker sink treats that as
-//! best-effort, never failing the job).
+//! profile-fields migration plus the P1-021 revoked-before
+//! migration (copied from the repo's real `migrations/` into
+//! a scratch dir — the same pattern as the migration live
+//! tests) to a scratch DATABASE (`detag_p077_test`, created
+//! and dropped by the test) — never the dev database. The
+//! profile-fields migration is needed because the `users`
+//! repo queries now read `display_name` + `pending_email`
+//! (P1-005): without it, `users::create` fails with "column
+//! display_name does not exist". The revoked-before migration
+//! is needed for the same reason since P1-021 (`users` repo
+//! queries now read `revoked_before`): without it,
+//! `users::create` fails with "column revoked_before does
+//! not exist". Creates a user + job through the repos,
+//! records a retry event, reads it back, and asserts the
+//! payload round-trips; also asserts the FK: recording for
+//! a job id with no jobs row fails with `ForeignKeyViolation`
+//! (the worker sink treats that as best-effort, never failing
+//! the job).
 
 use detag_core::db::{connect, DbPool, PoolConfig};
 use detag_core::migrate::{migrate_revert_last, migrate_up};
@@ -49,10 +54,12 @@ fn repo_migrations_dir() -> PathBuf {
 }
 
 /// A scratch dir holding ONLY the 001 + 002 pairs + the P1-005
-/// profile-fields pair, copied from the repo (002 depends on
-/// 001's users table; the profile-fields migration adds the
-/// columns the `users` repo reads since P1-005). One dir per
-/// test (the tests in this file run in parallel).
+/// profile-fields pair + the P1-021 revoked-before pair,
+/// copied from the repo (002 depends on 001's users table; the
+/// profile-fields migration adds the columns the `users` repo
+/// reads since P1-005; the revoked-before migration adds the
+/// column it reads since P1-021). One dir per test (the tests
+/// in this file run in parallel).
 fn migrations_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "detag-p077-migrations-{}-{tag}",
@@ -65,6 +72,7 @@ fn migrations_dir(tag: &str) -> PathBuf {
         "20261112064220_users_sessions",
         "20261112064924_jobs_artifacts",
         "20261113040605_user_profile_fields",
+        "20261113120835_users_revoked_before",
     ] {
         for ext in ["up.sql", "down.sql"] {
             let name = format!("{stem}.{ext}");

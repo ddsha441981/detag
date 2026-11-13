@@ -1,0 +1,18 @@
+-- users_revoked_before (20261113120835)
+-- Up migration.
+--
+-- P1-021 (token revocation cache): the per-user revocation
+-- epoch. `revoked_before` is the instant before which every
+-- access token of the user is dead: the extractor denies a
+-- token whose `iat` is earlier than this timestamp. NULL means
+-- never revoked (every pre-P1-021 user) — the epoch is only
+-- ever SET, never cleared: a password change bumps it to now
+-- (P1-018's `revoke_sessions_on_password_change`, same tx as
+-- the session revocation), and there is no "unrevoke". The
+-- column lives on the user row the extractor already loads,
+-- so the epoch check costs zero extra queries; the jti
+-- denylist (Redis) is the per-token mechanism alongside it.
+-- Non-destructive (pure ADD COLUMN, NULL default) — the
+-- migration adds no backfill: existing tokens were all issued
+-- before the column existed, and none of them is revoked.
+ALTER TABLE users ADD COLUMN revoked_before TIMESTAMPTZ;

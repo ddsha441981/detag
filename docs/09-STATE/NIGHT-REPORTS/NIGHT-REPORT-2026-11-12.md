@@ -32,8 +32,17 @@ progress with uncommitted work). Local HEAD at this update:
 `dbf4f4e` (P1-020). No push (local-only by rule; parent handles
 GitHub pushes).
 ~17:34 IST 13 Nov after P1-020 (Phase 1, 20/111).
+Updated ~18:30 IST 13 Nov after P1-021 (Phase 1, 21/111).
+Local HEAD at this update: `018fa88` (P1-021). No push
+(local-only by rule — the driver cron pushes; see the
+remote-state note in Blocked items: remote main was unified
+with local main at 35925df by a one-time user-approved
+force-push ~18:11 IST, then the main agent pushed 3a8528c
+(CI workflow_dispatch trigger, ~18:17 IST, public repo, CI
+#3 running); the P1-021 commit is local until the driver's
+next push run).
 
-## Tickets done (32)
+## Tickets done (33)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -1032,6 +1041,48 @@ GitHub pushes).
   `just verify` green 603 passed, 0 failed, attempt 2 (attempt
   1 failed on fmt, fixed; no flakes).
 
+- **P1-021 — Token revocation cache** (`018fa88`): epoch
+  (`users.revoked_before`, migration
+  `20261113120835_users_revoked_before`, NULL = never
+  revoked) + jti denylist (Redis
+  `pf:revocation:jti:{jti}` → `"1"`, TTL = the token's
+  remaining life clamped [1, 900] s). The extractor consults
+  the epoch first (0 extra queries) then the jti (1 Redis
+  GET, fail-open on error). Password-change bumps the epoch
+  in the same tx as the session revocation (P1-018's
+  service); logout-all denylists the PRESENTED token's jti
+  (re-verified in the handler; fail-open with warn) and does
+  NOT bump the epoch (spec names password-change only —
+  follow-up for P1-022/P1-024 or an owner decision). Both
+  rejections are 401 PF-1010. **Bug found by the epoch
+  tests:** the comparison was strict `<` against the floored
+  second, which has a one-second hole — a token minted in the
+  same second as the bump shares the bump's second (`iat ==
+  floor(bump)` is not `< bump`), so the pre-change token
+  survived; the comparison is now `<=` (fail closed on the
+  boundary second — a post-change token minted in the same
+  second is denied too and self-heals via refresh). Tests: 4
+  new in `tests/revocation.rs` (epoch kills pre-change
+  tokens + fresh login after a 1.1 s sleep works, jti kills
+  exactly the listed token, logout-all kills the presented
+  token only, legacy token without jti skips the denylist but
+  the epoch covers it) + the epoch assertion added to all 3
+  password-sessions tests + 2 revocation unit tests (TTL
+  clamp). Perf measured (local Redis, 200 sequential calls):
+  denylist GET mean ~127 µs, p50 ~114 µs, p99 ~378 µs (miss
+  p50 ~111 µs, p99 ~500 µs) — ~0.1–0.5 ms per authenticated
+  request, negligible next to the Postgres user lookup; the
+  epoch adds no query. Docs: api-spec revocation paragraph
+  + logout/password-change updates, security-testing P1-021
+  bullets, threat model T22 extended + update-log row,
+  data-model users `revoked_before` row, runbook Redis
+  key-table row. `just verify` green 609 passed, 0 failed,
+  attempt 3 (attempt 1: clippy `doc_lazy_continuation` on the
+  revocation test module doc; attempt 2: `job_events_retry`
+  scratch schema lacked the new column — the P1-005 lesson,
+  fixed by adding the P1-021 migration to its stem list; no
+  flakes).
+
 ## Tickets partially done
 
 - **P0-034 / P0-046 / P0-083**: implemented but unverified —
@@ -1065,9 +1116,44 @@ GitHub pushes).
 
 - **DOCKER-001** (open): containers still cannot start on this VM.
   Dev fallback used all run: native Postgres 16 + native redis.
-- **CI-WORKFLOWS-001** (open): `.github/workflows/` still cannot reach
-  GitHub (App 403). The `fixtures-check`, `templates-check` and
-  nightly `prop` jobs added this run have never run remotely.
+- **CI-WORKFLOWS-001** (CHANGED STATE, verify next run): the
+  App-403 push path is RETIRED — the workflows reached GitHub
+  through the deploy-key git route instead (all 4 workflows
+  are on main: ci.yml, commits.yml, nightly.yml,
+  security-audit.yml). The repo went PUBLIC ~18:13 IST 13 Nov
+  (user's decision — GitHub Actions minutes were exhausted
+  while private) and CI #3 was triggered ~18:17 IST by
+  3a8528c ('ci(repo): P0-013 add workflow_dispatch trigger
+  for manual CI runs'), verified In progress on the public
+  Actions page. DO NOT close this item until a CI run goes
+  green — the next coordinator checks CI #3's result. If it
+  is green, the `fixtures-check` / `templates-check` /
+  nightly `prop` jobs have run remotely for the first time,
+  and the P0-034/046/083 live ACs + exit gates can move off
+  the deferred list. If it is red, the failure is the next
+  coordinator's first job (read the Actions log, do not
+  guess).
+- **Remote state, 13 Nov evening (for the next
+  coordinator):** remote main == local main at 35925df after
+  a ONE-TIME user-approved force-push ~18:11 IST (user:
+  "Main ko bhi 131 commits wala banao") — the old snapshot
+  commits, the `full-history` branch and the `detag-sync`
+  worktree are all GONE; remote has ONE branch (main).
+  NEVER force-push again without the user explicitly asking.
+  Pushes are now plain `git push origin main` (fast-forward,
+  deploy key "Detag VM", no approvals) and the DRIVER cron
+  does them — this coordinator still commits locally only.
+  The P1-021 commit (`018fa88`) is local until the driver's
+  next push run. **Branch-based work from the next handoff:**
+  user ~18:13 IST ("aage se dhyaan rakhna, branches ke base
+  par kaam karna") — each phase gets its own branch, main
+  only receives merges. This coordinator stayed on main for
+  P1-021 (mid-ticket; switching would be disruptive — the
+  user explicitly sanctioned that). The 10th coordinator
+  starts P1-022 on a phase branch, NOT on main. Note for the
+  user: a laptop clone made before the 18:11 IST force-push
+  diverges and needs a fresh clone (or reset to
+  origin/main).
 - **FLAKY-001** (open): 10 more failures this run (worst run yet in
   P0-092: two streaks of 3). Same signature, no new evidence.
 - **FLAKY-002** (open): 4 more occurrences this run (8 total).
@@ -1150,7 +1236,8 @@ GitHub pushes).
   → **585 passed, 0 failed** (P1-017; +7 logout)
   → **588 passed, 0 failed** (P1-018; +3 password-sessions)
   → **600 passed, 0 failed** (P1-019; +12: 6 sessions-list + 6 user-agent unit)
-  → **603 passed, 0 failed** (P1-020; +3: 1 login-IP + 1 register + 1 service-bucket race).
+  → **603 passed, 0 failed** (P1-020; +3: 1 login-IP + 1 register + 1 service-bucket race)
+  → **609 passed, 0 failed** (P1-021; +6: 4 revocation integration + 2 revocation unit).
   Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
@@ -1233,6 +1320,12 @@ GitHub pushes).
   P1-020: 2 (attempt 1 failed on fmt — three files needed
   rustfmt after hand-edits; attempt 2 green, ~11.5 min, no
   flakes).
+  P1-021: 3 (attempt 1: clippy `doc_lazy_continuation` on the
+  revocation test module doc — the unindented paragraph after
+  the list; attempt 2: `job_events_retry` scratch schema
+  lacked the new column — the P1-005 lesson, fixed by adding
+  the P1-021 migration to its stem list; attempt 3 green,
+  ~7 min, no flakes).
   Every red run was a known flake, a lint fix, or a
   test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
@@ -1252,11 +1345,11 @@ GitHub pushes).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-021 — Token revocation cache.
-2. P1-022 — JWT verification extractor.
-3. P1-023 — Auth integration suite.
-4. P1-024 — Auth design notes.
-5. P1-025 — Forgot/reset flow.
+1. P1-022 — JWT verification extractor.
+2. P1-023 — Auth integration suite.
+3. P1-024 — Auth design notes.
+4. P1-025 — Forgot/reset flow.
+5. P1-026 — Password policy + pwned check.
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never

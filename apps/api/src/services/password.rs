@@ -5,12 +5,27 @@
 //!
 //! [`revoke_sessions_on_password_change`] revokes every live
 //! session of the user EXCEPT the current one, in one
-//! transaction with the audit + the digest email:
+//! transaction with the audit + the digest email, AND bumps the
+//! revocation epoch (P1-021): `users.revoked_before = now()`,
+//! so every access token issued before the password change dies
+//! at the extractor (`iat < revoked_before`) — the session
+//! revocation alone cannot kill a stateless token, and the
+//! epoch is what closes that window. The bump is in the same
+//! tx, so the epoch and the revoked sessions commit or roll
+//! back together (they can never diverge: an epoch without the
+//! revocations, or revocations without the epoch).
 //! - `current_session_id = Some(id)`: the change-password
 //!   case — the caller keeps the session the request came
 //!   from (the session behind the presented refresh cookie,
 //!   read the way the logout handler reads it) so the user
-//!   is not signed out of the device they are holding.
+//!   is not signed out of the device they are holding. The
+//!   KEPT session's refresh token still rotates — and the
+//!   rotation mints fresh access tokens with a NEW `iat`
+//!   (after the bump), so the user stays signed in while every
+//!   pre-change token dies. A rotation in the same second as
+//!   the bump is denied by the `<=` epoch comparison and
+//!   self-heals on the next refresh (see
+//!   `users::set_revoked_before`).
 //! - `current_session_id = None`: the reset case — there is
 //!   no current session (a reset happens logged-out), so
 //!   every session is revoked.
@@ -79,11 +94,13 @@ enum PasswordSessionsTxError {
 
 /// Revoke every live session of the user except
 /// `current_session_id` (or every session when it is `None` —
-/// the reset case). Returns how many sessions were revoked.
-/// The user is loaded first (for the digest mail's recipient
-/// hash); a missing user is [`PasswordSessionsError::Internal`]
-/// (the caller always passes a user that exists — P1-025's
-/// reset flow loads it before calling).
+/// the reset case), bump the revocation epoch (P1-021), audit,
+/// and queue the digest mail — one transaction. Returns how
+/// many sessions were revoked. The user is loaded first (for
+/// the digest mail's recipient hash); a missing user is
+/// [`PasswordSessionsError::Internal`] (the caller always
+/// passes a user that exists — P1-025's reset flow loads it
+/// before calling).
 pub async fn revoke_sessions_on_password_change(
     state: &AppState,
     user_id: Uuid,
@@ -109,6 +126,12 @@ pub async fn revoke_sessions_on_password_change(
                     .await
                     .map_err(PasswordSessionsTxError::Db)?,
             };
+            // The epoch bump (P1-021): every access token issued
+            // before now dies at the extractor. In the same tx
+            // as the revocations, so the two can never diverge.
+            users::set_revoked_before(&mut *conn, user.id)
+                .await
+                .map_err(PasswordSessionsTxError::Db)?;
             if revoked > 0 {
                 audit_logs::insert(
                     &mut *conn,

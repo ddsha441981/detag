@@ -30,6 +30,7 @@ use crate::{
         logout::{logout_all as logout_all_service, logout_current, LogoutError},
         refresh::{refresh_session, RefreshError},
         register::{register_user, RegisterError, RegisterRequest, UserResponse},
+        revocation::revoke_jti,
         verification::{
             confirm_email_change as confirm_email_change_service,
             resend_verification as resend_verification_service,
@@ -47,7 +48,7 @@ use axum::{
     Router,
 };
 use detag_core::error::{AppError, Problem, Profile};
-use detag_core::jwt::REFRESH_TOKEN_TTL_SECS;
+use detag_core::jwt::{verify_access_token, REFRESH_TOKEN_TTL_SECS};
 
 use crate::routes::extractors::{MaybeConnectInfo, ValidatedJson};
 
@@ -520,6 +521,34 @@ pub async fn logout_all(
     let actor = auth.audit_actor_id(user);
     match logout_all_service(&state, user, actor).await {
         Ok(_) => {
+            // Denylist the PRESENTED token's jti (P1-021): the
+            // access token in hand dies immediately instead of
+            // living out its ≤ 15-minute residual window. The
+            // token is re-verified here to read its `jti` +
+            // `exp` — the extractor verified it milliseconds
+            // ago, so this cannot fail in practice (the secret
+            // does not change mid-request); a failure is logged
+            // and the denylist skipped, never a logout failure
+            // (the sessions are already revoked — no NEW token
+            // can be minted, so only this token's immediate
+            // death is lost). A Redis error is the same:
+            // warn + continue (fail-open — the P0-103 rule).
+            // Only the PRESENTED token dies: other devices'
+            // tokens live until exp (their jtis are unknown).
+            if let Credential::Bearer(token) = &auth.credential {
+                match verify_access_token(&state.settings.jwt_secret, token) {
+                    Ok(claims) => {
+                        if let Some(jti) = claims.jti {
+                            if let Err(err) = revoke_jti(&state, &jti, claims.exp).await {
+                                tracing::warn!(error = ?err, "logout-all: jti denylist write failed, failing open");
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        tracing::error!(error = ?err, "logout-all: presented token failed re-verify; jti not denylisted");
+                    }
+                }
+            }
             let mut res = StatusCode::NO_CONTENT.into_response();
             res.headers_mut()
                 .insert(header::SET_COOKIE, clear_refresh_cookie());

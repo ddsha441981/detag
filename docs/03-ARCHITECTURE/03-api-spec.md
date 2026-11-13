@@ -229,7 +229,59 @@ token presented after logout-all is still a reuse detection
 logout-all does not erase the rotation history). The access
 token already issued stays valid until it expires (≤ 15
 min — the documented residual window: logout revokes the
-SESSION, not the stateless token).
+SESSION, not the stateless token) — EXCEPT the token
+presented to logout-all itself: logout-all denylists its
+`jti` (P1-021), so that one token dies immediately; the
+single logout (cookie-only, no token in hand) cannot do
+the same, and its residual window stands.
+
+Token revocation (P1-021, FR-A-01): a live access token can
+die before its 15-minute expiry through two mechanisms, and
+the extractor consults both on every authenticated request:
+- the epoch (`users.revoked_before`, NULL = never revoked):
+a token whose `iat` is at or before the epoch's second is
+dead (`iat <= revoked_before.timestamp()`). The comparison
+is `<=`, not `<`: `iat` is whole seconds while the epoch is
+microsecond-precise, so a token minted in the same second
+as the bump (before OR after it) shares the bump's second
+— strict `<` against the floored second has a one-second
+hole there (a pre-change token in that second survives;
+caught by the revocation tests). A post-change token
+minted in the same second is denied too and self-heals via
+refresh (its refresh token is still valid; the next mint
+lands in a later second). The epoch costs zero extra
+queries (the column rides the user row the extractor
+already loads). Only a password change bumps it — the
+bump is in the same transaction as the session revocation
+(P1-018's service), so the epoch and the revoked sessions
+commit or roll back together and can never diverge.
+- the jti denylist (Redis `pf:revocation:jti:{jti}` →
+`"1"`, TTL = the token's remaining life, clamped to
+[1, 900] s): a listed `jti` is dead. The only writer today
+is `POST /v1/auth/logout-all`, which denylists the
+PRESENTED token's `jti` (re-verified in the handler to read
+its `jti` + `exp`); other devices' tokens live until
+expiry — their jtis are unknown, and logout-all does NOT
+bump the epoch (the spec names password-change as the
+bumper; a logout-all epoch bump would kill every
+outstanding access token and belongs to P1-022/P1-024 or
+an owner decision). A token without a `jti` (pre-P1-013
+legacy) skips the denylist check — the epoch still covers
+it via `iat`. A Redis error on the READ fails OPEN (warn
+logged — the P0-103 rule): the epoch is the durable
+backstop, the denylist is the fast path; a Redis error on
+the WRITE at logout-all is the same (warn + continue —
+the sessions are already revoked, so no NEW token can be
+minted; only the presented token's immediate death is
+lost). Both rejections are 401 `PF-1010` — a revoked token
+is indistinguishable from a forged one.
+Perf (measured 13 Nov 2026, local Redis on this VM, 200
+sequential calls): the denylist GET is mean ~127 µs, p50
+~114 µs, p99 ~378 µs (miss: p50 ~111 µs, p99 ~500 µs) —
+one GET adds ~0.1–0.5 ms to an authenticated request,
+negligible next to the Postgres user lookup the extractor
+already does; the p99 is unaffected in any meaningful
+sense. The epoch check adds no query at all.
 
 Revoke on password change (P1-018, FR-A-01): when the
 password changes, every live session except the current
@@ -253,7 +305,15 @@ behind the presented refresh cookie (read the way the
 logout handler reads it), so the user is not signed out
 of the device they are holding. The reset case passes no
 current session — a reset happens logged-out, so every
-session is revoked. The mechanism is the shared service
+session is revoked. The same call ALSO bumps the
+revocation epoch (`users.revoked_before = now()`, P1-021)
+in the same transaction — a password change kills the
+access tokens, not just the sessions: every token issued
+before the change dies at the extractor (`iat <= epoch`),
+and the bump happens even when nothing was revoked (an
+orphaned access token — its session already revoked, the
+token still inside its 15 minutes — dies with it). The
+mechanism is the shared service
 `services::password::revoke_sessions_on_password_change`;
 the HTTP wiring is NOT this ticket's: the reset flow
 (P1-025) calls it when it lands, and no change-password

@@ -412,6 +412,7 @@ a runtime one.
 | `cache` | `pf:cache:{kind}:{id}` | `get_or_set` cache entries (P0-049) |
 | `pubsub` | `pf:pubsub:job:{job_id}` | Job event channels (P0-050) |
 | `idempotency` | `pf:idempotency:{key}` | Idempotency response cache |
+| `revocation` | `pf:revocation:jti:{jti}` | Token-revocation denylist (P1-021): `"1"`, TTL = the token's remaining life, clamped to [1, 900] s; written by logout-all for the presented token only; a Redis outage fails the READ open (the DB epoch is the backstop) and the WRITE open (warn + continue) |
 | `jobs` | `pf:jobs:{job_id}` | Job status/progress cache |
 
 ### TTL conventions

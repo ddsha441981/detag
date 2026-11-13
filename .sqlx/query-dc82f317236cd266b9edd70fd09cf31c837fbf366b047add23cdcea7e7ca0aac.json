@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE users SET\n             status = 'deletion_pending',\n             deleted_at = now(),\n             updated_at = now()\n         WHERE id = $1\n         RETURNING id, email, password_hash, email_verified_at, role, status,\n             tos_version, deleted_at, display_name, pending_email, settings, created_at, updated_at",
+  "query": "UPDATE users SET status = 'active', deleted_at = NULL, updated_at = now()\n         WHERE id = $1\n         RETURNING id, email, password_hash, email_verified_at, role, status,\n             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -98,6 +98,17 @@
       },
       {
         "ordinal": 8,
+        "name": "revoked_before",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "revoked_before"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
         "name": "display_name",
         "type_info": "Text",
         "origin": {
@@ -108,7 +119,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "pending_email",
         "type_info": {
           "Custom": {
@@ -124,7 +135,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "settings",
         "type_info": "Jsonb",
         "origin": {
@@ -135,7 +146,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -146,7 +157,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -173,10 +184,11 @@
       true,
       true,
       true,
+      true,
       false,
       false,
       false
     ]
   },
-  "hash": "b98b9fa5a00cc3a08a8564d86642f32eab1295b16c61b2012b5fa27cd6c31260"
+  "hash": "dc82f317236cd266b9edd70fd09cf31c837fbf366b047add23cdcea7e7ca0aac"
 }

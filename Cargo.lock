@@ -1422,10 +1422,12 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
+ "deadpool-redis",
  "detag-core",
  "detag-engine",
  "detag-storage",
  "detag-validator",
+ "jsonwebtoken",
  "libc",
  "serde",
  "serde_json",
