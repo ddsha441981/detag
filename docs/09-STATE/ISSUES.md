@@ -47,6 +47,13 @@
 - Fix: install curl + ca-certificates in a RUN before `cargo chef cook` in both Dockerfiles; the later RUN keeps binutils only.
 - Status: fixed (0ae112f) — waits on CI #6.
 
+### CI-FAIL-007 [bug] CI #7 verify fails at fixtures-check — ffmpeg not on the runner PATH
+- Date: 2026-11-13 · Ticket: P0-093 · Severity: S1 (CI red on main)
+- Symptom: CI run #7, verify step 16: `python3 scripts/fixtures_gen.py --check` → `fixtures_gen: ffmpeg not found on PATH — videos need it`, exit 1. (The Python 3.12 fix from CI-FAIL-005 worked — pillow/numpy installed cleanly this time; the job got far enough to hit the next missing tool.)
+- Cause: `fixtures_gen.py generate()` hard-fails when ffmpeg is absent (it generates the 3 video fixtures). ubuntu-latest runners do not ship ffmpeg, and no CI step installed it — the failure was hidden behind the numpy build error in CI #5 and behind config-table-check in CI #6.
+- Fix: install ffmpeg in the verify job before fixtures-check (`sudo apt-get update && sudo apt-get install -y ffmpeg`). templates-check needs no ffmpeg (0 references in templates_gen.py).
+- Status: fixed (this commit) — waits on CI #8.
+
 ### CI-FAIL-008 [bug] CI #6/#7 smoke fails — Garage server never starts, container stays unhealthy
 - Date: 2026-11-13 · Ticket: P0-090 · Severity: S1 (CI red on main)
 - Symptom: CI runs #6 and #7, smoke step: all images build, postgres/redis/mailhog/web go healthy, but `detag-garage` stays `Up (unhealthy)` and compose aborts at ~55 s with `dependency failed to start: container detag-garage is unhealthy`; `smoke: FAILED — compose stack did not go healthy in 120s`. The pasted CI #6 log was truncated mid-build and showed no error; the CI #7 logs zip showed the same symptom with no garage logs (smoke.sh printed only api/worker logs).
