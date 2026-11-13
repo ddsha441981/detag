@@ -209,6 +209,7 @@ in a real inbox.
 | `PF_S3_ENDPOINT`, `PF_S3_BUCKET`, `PF_S3_ACCESS_KEY`, `PF_S3_SECRET_KEY`, `PF_S3_REGION` | storage | MinIO localhost:9000 | private bucket required |
 | `PF_JWT_SECRET` | api | dev-fixed | 64B in prod; rotation = dual-verify window |
 | `PF_ARGON2_M_COST_KIB`, `PF_ARGON2_T_COST`, `PF_ARGON2_P_COST` | api | 19456 / 2 / 1 | Argon2id password-hashing costs, OWASP first choice (P1-001); m 4096..=1048576 KiB, t/p 1..=16 |
+| `PF_PASSWORD_PWNED_CHECK`, `PF_PASSWORD_PWNED_URL` | api | off, https://api.pwnedpasswords.com | HIBP k-anonymity check on register + reset (P1-026); off by default (third-party call per registration/reset); fails open on transport error |
 | `PF_TOS_CURRENT_VERSION` | api | v1 | ToS version a registration must accept (P1-001); any other `accept_tos_version` is a 422 |
 | `PF_DISPOSABLE_EMAIL_DOMAINS` | api | mailinator.com, guerrillamail.com, 10minutemail.com, tempmail.com, yopmail.com | comma-separated disposable domains rejected at registration (P1-001); empty = no denylist |
 | `PF_RATE_LIMIT_IP_BURST`, `PF_RATE_LIMIT_IP_REFILL_PER_MIN`, `PF_RATE_LIMIT_ROUTE_BURST`, `PF_RATE_LIMIT_ROUTE_REFILL_PER_MIN` | api | 120 / 120 / 600 / 600 | token-bucket caps, per-IP + per-route (P0-103); refill 0 = never refills |

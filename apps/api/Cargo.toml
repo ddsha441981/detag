@@ -25,6 +25,7 @@ detag-core = { path = "../../crates/core" }
 detag-storage = { path = "../../crates/storage" }
 detag-engine = { path = "../../crates/engine" }
 detag-validator = { path = "../../crates/validator" }
+reqwest.workspace = true
 utoipa.workspace = true
 utoipa-swagger-ui.workspace = true
 
@@ -33,3 +34,4 @@ tracing-subscriber.workspace = true
 libc.workspace = true
 testcontainers.workspace = true
 jsonwebtoken.workspace = true
+detag-testkit = { path = "../../crates/testkit" }

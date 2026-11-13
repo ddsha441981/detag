@@ -60,6 +60,11 @@
 **Decision:** The dev placeholders in `.env.example` are real 32-byte-hex values (dev-only, same standing as minioadmin; generate fresh ones for prod with `openssl rand -hex 32`). The admin token takes the same format. smoke.sh validates the RPC-secret format before `up` so a future bad placeholder fails fast with a clear message instead of a 120 s timeout, and prints the garage logs on failure.
 **Consequences:** Any future change to the GARAGE_* placeholders must keep the 64-hex-char format, or the smoke job (locally and in CI) fails at the guard. The guard does not validate the admin token (Garage accepts any non-empty bearer token there); both are hex here for uniformity.
 
+## ADR-0021 — Password blocklist: zxcvbn's embedded dictionary, not a SecLists download (2026-11-13, Phase 1)
+**Context:** P1-026 needs a top-10k common-password blocklist. The natural source is the SecLists top-10000 list from raw.githubusercontent.com, but that host needed the owner's download approval (pending) and the fetch to it timed out on this VM anyway. zxcvbn was already the strength library and embeds a 30,000-entry ranked passwords dictionary (RockYou lineage — the same lineage as the SecLists list).
+**Decision:** Blocklist = zxcvbn's embedded dictionary, top 10k by rank: a password is `common_password` when zxcvbn matches it as a single dictionary word covering the whole password with rank <= 10,000 (identified by the feedback warning). Strength gate is zxcvbn score >= 3 (the crate's own "too weak" line). The optional HIBP k-anonymity check stays behind `PF_PASSWORD_PWNED_CHECK` (default off, fail-open on any error) because it contacts a third party per registration/reset.
+**Consequences:** No external list file to fetch, version, or bundle — the blocklist ships with the zxcvbn crate. A rank boundary is pinned by test (rank 10023 is NOT blocklisted). If the owner later approves the SecLists import, the swap is one function + a data file; the error code and callers do not change. Recorded as ASSUMPTION-014 in ISSUES.md.
+
 ## owner-input-needed queue
 
 | # | Date | Question | Temporary default in use | Owner answer |

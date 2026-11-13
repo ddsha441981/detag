@@ -100,6 +100,8 @@ pub enum PasswordResetError {
     InvalidToken,
     #[error("expired reset token")]
     ExpiredToken,
+    #[error("reset request invalid")]
+    Invalid(ValidationErrors),
     #[error("too many reset attempts for this email")]
     RateLimited(RateLimit, u64),
     #[error("password reset failed")]
@@ -319,6 +321,16 @@ pub async fn reset_password(
     state: &AppState,
     req: &ResetPasswordRequest,
 ) -> Result<(), PasswordResetError> {
+    // Pwned-password check (P1-026): behind
+    // PF_PASSWORD_PWNED_CHECK (default off). Before the hash and
+    // before the token lookup — validation precedes auth here,
+    // the same order as register (rate limit, then policy, then
+    // work). Fails open on HIBP errors (the service logs).
+    if let Err(errors) = super::pwned::check_pwned_policy(&state.settings, &req.new_password).await
+    {
+        return Err(PasswordResetError::Invalid(errors));
+    }
+
     // Hash before any DB write (CPU work, no transaction
     // held) — the register pattern.
     let params = Argon2Params::from_settings(&state.settings);

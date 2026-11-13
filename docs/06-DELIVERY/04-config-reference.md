@@ -28,6 +28,8 @@
 | `PF_METRICS_HOST` | `127.0.0.1` | api, worker |
 | `PF_METRICS_PORT` | `9090` | api |
 | `PF_OTEL_ENDPOINT` | (empty) | all |
+| `PF_PASSWORD_PWNED_CHECK` | `false` | api |
+| `PF_PASSWORD_PWNED_URL` | `https://api.pwnedpasswords.com` | api |
 | `PF_POSTGRES_DB` | `pf` | postgres (compose) |
 | `PF_POSTGRES_PASSWORD` | `pf` | postgres (compose) |
 | `PF_POSTGRES_USER` | `pf` | postgres (compose) |

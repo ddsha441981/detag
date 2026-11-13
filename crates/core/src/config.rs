@@ -96,6 +96,24 @@ pub struct Settings {
     /// Env: PF_ARGON2_P_COST — Argon2id parallelism. Default 1
     /// (OWASP first choice); validated 1..=16.
     pub argon2_p_cost: u32,
+    /// Env: PF_PASSWORD_PWNED_CHECK — Have I Been Pwned
+    /// k-anonymity check on register + reset (P1-026). Default
+    /// false (off): when on, the api sends only the first 5 hex
+    /// chars of the password's SHA-1 to `password_pwned_url` and
+    /// rejects a password whose suffix appears in the returned
+    /// range. Opt-in because it contacts a third party
+    /// (Cloudflare, which fronts the API) on every registration
+    /// and reset — the full hash and the password never leave the
+    /// machine, but the 5-char prefix narrows the password to
+    /// ~2^20 candidates and reveals that a check happened.
+    /// Fails open: any transport error or non-200 answer lets
+    /// the registration/reset continue (a warn is logged).
+    pub password_pwned_check: bool,
+    /// Env: PF_PASSWORD_PWNED_URL — base URL of the HIBP range
+    /// API (P1-026). Default `https://api.pwnedpasswords.com`.
+    /// Override for a self-hosted mirror, and for tests (a local
+    /// stub server). The path `/range/{prefix}` is appended.
+    pub password_pwned_url: String,
     /// Env: PF_TOS_CURRENT_VERSION — the ToS version a
     /// registration must accept (P1-001). Default "v1"; the
     /// register handler rejects any other `accept_tos_version`
@@ -325,6 +343,8 @@ impl Default for Settings {
             argon2_m_cost_kib: 19_456,
             argon2_t_cost: 2,
             argon2_p_cost: 1,
+            password_pwned_check: false,
+            password_pwned_url: "https://api.pwnedpasswords.com".to_string(),
             tos_current_version: "v1".to_string(),
             disposable_email_domains: String::new(),
             public_base_url: "http://localhost:8080".to_string(),
@@ -391,6 +411,8 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("argon2_m_cost_kib", "PF_ARGON2_M_COST_KIB"),
     ("argon2_t_cost", "PF_ARGON2_T_COST"),
     ("argon2_p_cost", "PF_ARGON2_P_COST"),
+    ("password_pwned_check", "PF_PASSWORD_PWNED_CHECK"),
+    ("password_pwned_url", "PF_PASSWORD_PWNED_URL"),
     ("tos_current_version", "PF_TOS_CURRENT_VERSION"),
     ("disposable_email_domains", "PF_DISPOSABLE_EMAIL_DOMAINS"),
     ("public_base_url", "PF_PUBLIC_BASE_URL"),
@@ -534,6 +556,8 @@ impl Settings {
             argon2_m_cost_kib: field!(argon2_m_cost_kib, u32),
             argon2_t_cost: field!(argon2_t_cost, u32),
             argon2_p_cost: field!(argon2_p_cost, u32),
+            password_pwned_check: field!(password_pwned_check, bool),
+            password_pwned_url: field!(password_pwned_url, String),
             tos_current_version: field!(tos_current_version, String),
             disposable_email_domains: field!(disposable_email_domains, String),
             public_base_url: field!(public_base_url, String),
@@ -1057,6 +1081,8 @@ mod tests {
         assert_eq!(s.argon2_m_cost_kib, 19_456);
         assert_eq!(s.argon2_t_cost, 2);
         assert_eq!(s.argon2_p_cost, 1);
+        assert!(!s.password_pwned_check);
+        assert_eq!(s.password_pwned_url, "https://api.pwnedpasswords.com");
         assert_eq!(s.tos_current_version, "v1");
         // No assertion for disposable_email_domains: the code
         // default is "" (no denylist) while .env.example seeds a

@@ -255,6 +255,15 @@ pub async fn register_user(state: &AppState, req: &RegisterRequest) -> Result<Us
         return Err(RegisterError::Invalid(errors));
     }
 
+    // Pwned-password check (P1-026): behind
+    // PF_PASSWORD_PWNED_CHECK (default off). After the rate limit
+    // + policy checks, before the Argon2 hash — a rejected
+    // password costs no hashing, and a denied request has done no
+    // DB work yet. Fails open on HIBP errors (the service logs).
+    if let Err(errors) = super::pwned::check_pwned_policy(settings, &req.password).await {
+        return Err(RegisterError::Invalid(errors));
+    }
+
     // Hash before any DB write (CPU work, no transaction held).
     let params = Argon2Params::from_settings(settings);
     let hash = hash_password(&req.password, &params).map_err(|err: PasswordError| {

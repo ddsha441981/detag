@@ -8,5 +8,7 @@ description = "Input validation rules for Detag (P0-101): email, filename saniti
 [dependencies]
 detag-core = { path = "../core" }
 url.workspace = true
+zxcvbn.workspace = true
+sha1.workspace = true
 
 [dev-dependencies]
