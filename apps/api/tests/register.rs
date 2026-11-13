@@ -6,8 +6,8 @@
 //! for real, not mocked. The disposable-email denylist and the
 //! ToS version come from the test's settings (the harness
 //! builds the app from fixtures + explicit settings); the
-//! Argon2id params are the OWASP defaults (one real hash per
-//! test — ~50 ms each, cheap enough for an integration suite).
+//! Argon2id params are the P1-027 defaults (one real hash per
+//! test — ~200 ms each at m=64 MiB/t=3/p=4).
 
 mod common;
 
@@ -308,14 +308,14 @@ async fn malformed_json_is_a_plain_422() {
 }
 
 #[tokio::test]
-async fn settings_defaults_are_the_owasp_values() {
+async fn settings_defaults_are_the_p1_027_values() {
     // The register path uses the real defaults unless the test
     // overrides them — prove the defaults are what the config
     // test claims (a drift here would silently weaken hashing).
     let settings = Settings::default();
-    assert_eq!(settings.argon2_m_cost_kib, 19_456);
-    assert_eq!(settings.argon2_t_cost, 2);
-    assert_eq!(settings.argon2_p_cost, 1);
+    assert_eq!(settings.argon2_m_cost_kib, 65_536);
+    assert_eq!(settings.argon2_t_cost, 3);
+    assert_eq!(settings.argon2_p_cost, 4);
     assert_eq!(settings.tos_current_version, "v1");
 }
 

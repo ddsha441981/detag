@@ -10,9 +10,9 @@
 | --- | --- | --- |
 | `PF_API_HOST` | `127.0.0.1` | api |
 | `PF_API_PORT` | `8080` | api |
-| `PF_ARGON2_M_COST_KIB` | `19456` | api |
-| `PF_ARGON2_P_COST` | `1` | api |
-| `PF_ARGON2_T_COST` | `2` | api |
+| `PF_ARGON2_M_COST_KIB` | `65536` | api |
+| `PF_ARGON2_P_COST` | `4` | api |
+| `PF_ARGON2_T_COST` | `3` | api |
 | `PF_DATABASE_URL` | `postgres://pf:pf@localhost:5432/pf` | api, worker |
 | `PF_DISPOSABLE_EMAIL_DOMAINS` | `mailinator.com,guerrillamail.com,10minutemail.com,tempmail.com,yopmail.com` | api |
 | `PF_DOMAIN` | `localhost` | caddy (compose) |

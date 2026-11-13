@@ -405,7 +405,7 @@ enumeration); already revoked → no-op 204.
 Register behavior (P1-001, FR-A-01): the email is trimmed +
 lowercased before storage (the column is citext, so the match
 is case-insensitive either way); the password is Argon2id-hashed
-(params from `PF_ARGON2_*`, OWASP defaults m=19 MiB/t=2/p=1) and
+(params from `PF_ARGON2_*`, defaults m=64 MiB/t=3/p=4 — P1-027) and
 never stored, logged, or echoed — the 201 body is the user
 without any hash field. Password rule (P1-001, extended P1-026):
 minimum 12 characters (NIST SP 800-63B), never trimmed; the

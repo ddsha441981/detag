@@ -102,6 +102,20 @@
 //! correct password the service returns 403 `PF-1003`
 //! (`account_suspended`) — a wrong password is still the
 //! generic 401, so probing an address learns nothing new.
+//!
+//! A successful login also upgrades a stale password hash
+//! (P1-027, rehash-on-login): when the stored PHC params
+//! differ from the current `PF_ARGON2_*` policy, the password
+//! just verified is rehashed with the current params and the
+//! new hash is written in the same transaction as the session
+//! row. Old hashes migrate lazily, one login at a time — no
+//! bulk rewrite, and a user who never logs in keeps a valid
+//! (if weaker) hash that still verifies. The rehash is
+//! opportunistic: if it fails (hash error), the login still
+//! succeeds and a warn is logged — the upgrade is not
+//! load-bearing. The extra hash costs one Argon2id run and
+//! happens at most once per user per params change (see the
+//! runbook benchmark note for the cost on the target VPS).
 
 use chrono::Duration;
 use detag_core::{
@@ -110,7 +124,7 @@ use detag_core::{
     error::FieldError,
     jwt::{issue_access_token_at, ACCESS_TOKEN_TTL_SECS, REFRESH_TOKEN_TTL_SECS},
     lockout::LOCKOUT_THRESHOLD,
-    password::{verify_password, PasswordError},
+    password::{hash_password, needs_rehash, verify_password, Argon2Params, PasswordError},
     redis::ratelimit::RateLimit,
     repos::{
         audit_logs::{self, NewAuditLog},
@@ -481,6 +495,31 @@ pub async fn login_user(
         return Err(LoginError::Suspended);
     }
 
+    // Rehash-on-login (P1-027): a stored hash whose params
+    // predate the current PF_ARGON2_* policy is upgraded with
+    // the password just verified. The hash runs BEFORE the
+    // transaction (CPU-heavy — it must not hold a pool
+    // connection), and the write lands inside it, with the
+    // session row. Opportunistic: a hash failure only logs —
+    // the login still succeeds on the old hash.
+    let current_params = Argon2Params::from_settings(&state.settings);
+    let rehashed: Option<String> = match needs_rehash(&user.password_hash, &current_params) {
+        Ok(true) => match hash_password(&req.password, &current_params) {
+            Ok(hash) => Some(hash),
+            Err(err) => {
+                tracing::warn!(user_id = %user.id, error = ?err, "login: rehash failed, keeping old hash");
+                None
+            }
+        },
+        Ok(false) => None,
+        Err(err) => {
+            // Cannot happen: verify_password just succeeded on
+            // the same string, so it parses. Log and continue.
+            tracing::warn!(user_id = %user.id, error = ?err, "login: stored hash unparseable for rehash check");
+            None
+        }
+    };
+
     // One transaction: reset both counters (a success clears
     // the lockout state) + the session row + the success audit.
     // The refresh token is generated here, inside the service
@@ -501,6 +540,7 @@ pub async fn login_user(
         let user = user.clone();
         let email_hash = email_hash.clone();
         let ip_hash = ip_hash.clone();
+        let rehashed = rehashed.clone();
         Box::pin(async move {
             // A success clears the lockout state for both the
             // account and the client IP (P1-004).
@@ -519,6 +559,14 @@ pub async fn login_user(
             // first is not an error (already active).
             if user.status == "deletion_pending" {
                 cancel_deletion_in_tx(&mut *conn, &user)
+                    .await
+                    .map_err(LoginTxError::Db)?;
+            }
+            // Rehash-on-login (P1-027): persist the upgraded
+            // hash with the session row, atomically — a
+            // rollback keeps the old (still valid) hash.
+            if let Some(hash) = &rehashed {
+                users::set_password_hash(&mut *conn, user.id, hash)
                     .await
                     .map_err(LoginTxError::Db)?;
             }

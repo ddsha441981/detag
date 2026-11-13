@@ -21,6 +21,7 @@ use detag_api::services::login::REFRESH_COOKIE_NAME;
 use detag_core::{
     checksum::sha256_hex,
     jwt::verify_access_token,
+    password::{hash_password, verify_password, Argon2Params},
     repos::{audit_logs, sessions, users},
 };
 use serde_json::json;
@@ -533,6 +534,63 @@ async fn login_structural_failures_are_422() {
         res.text()
     );
     assert_eq!(res.json()["code"], "PF-2002");
+}
+
+#[tokio::test]
+async fn login_rehashes_stale_params_hash_on_success() {
+    // P1-027: a user whose hash was made under the pre-P1-027
+    // defaults (m=19 MiB, t=2, p=1) logs in and leaves with
+    // the current policy's hash — the upgrade path.
+    let app = login_app().await;
+    let email = unique_email();
+    let old_hash = hash_password(PASSWORD, &Argon2Params::previous_defaults()).unwrap();
+    assert!(old_hash.contains("m=19456,t=2,p=1"), "{old_hash}");
+    let user = app.seed_user(&email, &old_hash).await;
+
+    let res = app.request(post_login(&email, PASSWORD)).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+
+    let updated = users::by_email(&app.state.pool, &email)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated.id, user.id);
+    assert_ne!(
+        updated.password_hash, old_hash,
+        "the hash must be replaced on login"
+    );
+    assert!(
+        updated.password_hash.contains("m=65536,t=3,p=4"),
+        "upgraded to the P1-027 defaults: {}",
+        updated.password_hash
+    );
+    assert!(
+        verify_password(PASSWORD, &updated.password_hash).unwrap(),
+        "the upgraded hash still verifies the same password"
+    );
+}
+
+#[tokio::test]
+async fn login_leaves_current_params_hash_untouched() {
+    // P1-027: a user already on the current params logs in
+    // and the stored hash is byte-identical afterwards — no
+    // pointless rehash (and no new salt) on every login.
+    let app = login_app().await;
+    let email = unique_email();
+    let current_hash = hash_password(PASSWORD, &Argon2Params::defaults()).unwrap();
+    app.seed_user(&email, &current_hash).await;
+
+    let res = app.request(post_login(&email, PASSWORD)).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+
+    let after = users::by_email(&app.state.pool, &email)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        after.password_hash, current_hash,
+        "a current hash must not be rewritten on login"
+    );
 }
 
 #[tokio::test]

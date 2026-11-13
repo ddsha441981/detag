@@ -87,14 +87,14 @@ pub struct Settings {
     /// Env: PF_JWT_SECRET
     pub jwt_secret: String,
     /// Env: PF_ARGON2_M_COST_KIB — Argon2id memory cost for
-    /// password hashing (P1-001, FR-A-01). Default 19456 (19 MiB,
-    /// the OWASP first choice); validated 4096..=1048576.
+    /// password hashing (P1-001, FR-A-01). Default 65536 (64 MiB,
+    /// P1-027); validated 4096..=1048576.
     pub argon2_m_cost_kib: u32,
     /// Env: PF_ARGON2_T_COST — Argon2id time cost (iterations).
-    /// Default 2 (OWASP first choice); validated 1..=16.
+    /// Default 3 (P1-027); validated 1..=16.
     pub argon2_t_cost: u32,
-    /// Env: PF_ARGON2_P_COST — Argon2id parallelism. Default 1
-    /// (OWASP first choice); validated 1..=16.
+    /// Env: PF_ARGON2_P_COST — Argon2id parallelism. Default 4
+    /// (P1-027); validated 1..=16.
     pub argon2_p_cost: u32,
     /// Env: PF_PASSWORD_PWNED_CHECK — Have I Been Pwned
     /// k-anonymity check on register + reset (P1-026). Default
@@ -340,9 +340,9 @@ impl Default for Settings {
             s3_secret_key: "minioadmin".to_string(),
             s3_region: "us-east-1".to_string(),
             jwt_secret: "dev-fixed".to_string(),
-            argon2_m_cost_kib: 19_456,
-            argon2_t_cost: 2,
-            argon2_p_cost: 1,
+            argon2_m_cost_kib: 65_536,
+            argon2_t_cost: 3,
+            argon2_p_cost: 4,
             password_pwned_check: false,
             password_pwned_url: "https://api.pwnedpasswords.com".to_string(),
             tos_current_version: "v1".to_string(),
@@ -1078,9 +1078,9 @@ mod tests {
         assert_eq!(s.s3_secret_key, "minioadmin");
         assert_eq!(s.s3_region, "us-east-1");
         assert_eq!(s.jwt_secret, "dev-fixed");
-        assert_eq!(s.argon2_m_cost_kib, 19_456);
-        assert_eq!(s.argon2_t_cost, 2);
-        assert_eq!(s.argon2_p_cost, 1);
+        assert_eq!(s.argon2_m_cost_kib, 65_536);
+        assert_eq!(s.argon2_t_cost, 3);
+        assert_eq!(s.argon2_p_cost, 4);
         assert!(!s.password_pwned_check);
         assert_eq!(s.password_pwned_url, "https://api.pwnedpasswords.com");
         assert_eq!(s.tos_current_version, "v1");
@@ -1310,16 +1310,16 @@ mod tests {
     }
 
     /// P1-001: auth hashing + registration policy defaults
-    /// (OWASP Argon2id first choice, ToS "v1", no disposable
-    /// denylist); out-of-range argon2 params and an empty ToS
-    /// version fail naming the var.
+    /// (P1-027 Argon2id m = 64 MiB, t = 3, p = 4; ToS "v1", no
+    /// disposable denylist); out-of-range argon2 params and an
+    /// empty ToS version fail naming the var.
     #[test]
     fn auth_defaults_and_bounds() {
         let _env = clean_env();
         let settings = Settings::load_from(None).expect("defaults must load");
-        assert_eq!(settings.argon2_m_cost_kib, 19_456);
-        assert_eq!(settings.argon2_t_cost, 2);
-        assert_eq!(settings.argon2_p_cost, 1);
+        assert_eq!(settings.argon2_m_cost_kib, 65_536);
+        assert_eq!(settings.argon2_t_cost, 3);
+        assert_eq!(settings.argon2_p_cost, 4);
         assert_eq!(settings.tos_current_version, "v1");
         assert_eq!(settings.disposable_email_domains, "");
         env::set_var("PF_ARGON2_M_COST_KIB", "1024");
