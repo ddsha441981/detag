@@ -4,3 +4,4 @@
 //! `detag_core::repos`, and the service owns the transaction.
 
 pub mod register;
+pub mod verification;

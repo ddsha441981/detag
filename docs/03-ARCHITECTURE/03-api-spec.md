@@ -48,6 +48,32 @@ Conventions first; endpoint tables are the contract. OpenAPI is generated from c
 | --- | --- | --- | --- |
 | POST | `/v1/auth/register` | none | email, password, accept_tos_version → 201 user + verification email sent |
 | POST | `/v1/auth/verify-email` | none | token → 204 |
+| POST | `/v1/auth/resend-verification` | none | email → always 204 (no enumeration) |
+
+Verify behavior (P1-002, FR-A-01): the token is a 32-byte
+random string, base64url-encoded (43 characters), valid 24
+hours, single-use, stored as its sha256 only — the raw token
+exists only in the outbox payload (`{user_id, token}`) and
+in the email itself. Consuming is one atomic
+`UPDATE ... SET used_at = now() WHERE ... AND used_at IS NULL
+AND expires_at > now()` (the database decides single-use,
+not the app): unknown or already-used token → 401 `PF-1010`
+`invalid_token`; expired token → 401 `PF-1011`
+`expired_token`. Success sets `email_verified_at` and audits
+`verify-email.success` in the same transaction. Minting a
+token deletes the user's previous unused tokens — one live
+token per user, so a resend invalidates the earlier link.
+Resend: at most 3 tokens minted per user per hour (counted
+from the token table, not from emails sent); unknown email,
+already-verified user, and over-limit resend all answer 204
+with no mail (no enumeration, mirroring forgot-password),
+audited as `verify-email.resend` only when a mail is actually
+queued. Unverified users cannot create jobs: the job-create
+handler calls the `require_verified` guard first — `PF-1009`
+`email_not_verified`, 403. (Note: `POST
+/v1/auth/resend-verification` is not in the original spec —
+the spec says "resend rate-limited (3/hour)" but names no
+route; P1-002 added it.)
 
 Register behavior (P1-001, FR-A-01): the email is trimmed +
 lowercased before storage (the column is citext, so the match
@@ -65,8 +91,9 @@ Conflict with the generic `conflict` body — the body never names
 the email (no enumeration detail), though the status itself
 distinguishes duplicate (409) from new (201). The verification
 mail is *queued* in the outbox (template `verify-email`, payload
-`{user_id}`, recipient as sha256 only) — the token that makes it
-sendable is P1-002's scope. Audit: `register.attempt` (anonymous,
+`{user_id, token}` — the token is minted by P1-002's
+`issue_verification`, recipient as sha256 only) in the same
+transaction as the user row. Audit: `register.attempt` (anonymous,
 email as sha256) + `register.success`, in the same transaction as
 the user row and the outbox enqueue.
 | POST | `/v1/auth/login` | none | email, password → access_token, expires_in (+ sets refresh cookie) |

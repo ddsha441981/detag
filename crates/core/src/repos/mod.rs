@@ -25,6 +25,7 @@
 pub mod artifacts;
 pub mod audit_logs;
 pub mod email_outbox;
+pub mod email_verification_tokens;
 pub mod error;
 pub mod job_events;
 pub mod jobs;

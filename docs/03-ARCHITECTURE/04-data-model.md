@@ -9,6 +9,7 @@ users 1─* sessions        users 1─* api_keys       users 1─1 subscriptions
 users 1─* uploads 1─1 jobs 1─* job_events          plans 1─* subscriptions
 jobs 1─* artifacts        jobs 1─1 quality_reports  users 1─* usage_counters(daily)
 users 1─* attestations    users 1─* webhook_endpoints 1─* webhook_deliveries
+users 1─* email_verification_tokens (single-use, 24h)
 audit_logs (actor: users, action, target)           abuse_reports ─ jobs
 feature_flags   idempotency_keys   email_outbox     plans (catalog)
 ```
@@ -16,6 +17,7 @@ feature_flags   idempotency_keys   email_outbox     plans (catalog)
 ## Tables
 
 **users** — id, email (citext, unique), password_hash (argon2id), email_verified_at, role (user|support|admin), status (active|suspended|deletion_pending), tos_version, deleted_at (grace), settings jsonb.
+**email_verification_tokens** (P1-002) — id, user_id, token_hash (sha256, unique — the raw token lives only in the outbox payload + the email), expires_at (24h), used_at (set on consume; single-use), created_at. Minting deletes the user's previous unused tokens (one live token per user). The resend rate limit (3/hour) counts `email_outbox` rows for the user + template, not token rows — minting deletes token history, but every mint enqueues exactly one outbox row in the same transaction.
 **sessions** — id, user_id, refresh_hash (sha256), family_id (rotation lineage), device (ua, ip-hashed), expires_at, revoked_at, replaced_by.
 **api_keys** — id, user_id, name, prefix, secret_hash, scopes text[], last_used_at, revoked_at, rate_limit_tier.
 **plans** — id, code (free|pro|business), stripe_price_id, currency, amount, entitlements jsonb (daily_images, daily_video_seconds, max_bytes, result_ttl_hours, concurrency, lane, features jsonb).

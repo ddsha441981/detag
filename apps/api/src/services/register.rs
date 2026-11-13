@@ -5,10 +5,12 @@
 //! here, not in the DTO's structural validation) → Argon2id
 //! hash (params from config) → audit `register.attempt` → one
 //! transaction: create the user (recording the accepted ToS
-//! version) + audit `register.success` + enqueue the
-//! verification mail in the outbox. The transaction is the
-//! atomicity: no user without its verification mail queued,
-//! and no mail for a user that was not created.
+//! version) + audit `register.success` + mint the verification
+//! token and queue its mail (P1-002's `issue_verification` —
+//! the outbox payload carries `{user_id, token}`). The
+//! transaction is the atomicity: no user without its
+//! verification mail queued, and no mail for a user that was
+//! not created.
 //!
 //! No enumeration, by the taxonomy's design: a duplicate email
 //! is `409 PF-2011 Conflict` with the generic `conflict` body —
@@ -43,7 +45,6 @@ use detag_core::{
     password::{hash_password, Argon2Params, PasswordError},
     repos::{
         audit_logs::{self, NewAuditLog},
-        email_outbox::{self, NewOutboxMail},
         users::{self, User},
         RepoError,
     },
@@ -54,11 +55,6 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use utoipa::ToSchema;
 use uuid::Uuid;
-
-/// Outbox template for the verification mail. The mailer drain
-/// (E1.12) sends rows with this template; P1-002 adds the token
-/// to the payload.
-pub const VERIFY_EMAIL_TEMPLATE: &str = "verify-email";
 
 /// The register request body (api-spec: email, password,
 /// accept_tos_version → 201 user + verification email sent).
@@ -269,17 +265,14 @@ pub async fn register_user(
             )
             .await
             .map_err(RegisterTxError::Db)?;
-            email_outbox::enqueue(
-                &mut *conn,
-                &NewOutboxMail {
-                    to_hash: email_hash,
-                    template: VERIFY_EMAIL_TEMPLATE.to_string(),
-                    payload: serde_json::json!({ "user_id": user.id }),
-                    scheduled_at: None,
-                },
-            )
-            .await
-            .map_err(RegisterTxError::Db)?;
+            // Mint the verification token + queue its mail (P1-002):
+            // the outbox payload carries {user_id, token} — the raw
+            // token lives only there and in the email; the DB holds
+            // its hash. The token itself is discarded here
+            // (register never returns it to a client).
+            let _token = crate::services::verification::issue_verification(&mut *conn, &user)
+                .await
+                .map_err(RegisterTxError::Db)?;
             Ok(user)
         })
     })

@@ -19,6 +19,7 @@ pub mod seed;
 pub mod shutdown;
 pub mod state_machine;
 pub mod telemetry;
+pub mod tokens;
 pub mod tx;
 pub mod types;
 

@@ -8,14 +8,16 @@
 //! committed spec drifts from the code — regenerate, never edit
 //! the JSON by hand.
 //!
-//! Coverage today is the two real handlers (`/healthz`,
-//! `/readyz`) plus the shared error schema (`Problem`). The 62
-//! stub routes are NOT in the spec yet: each endpoint ticket adds
-//! its `#[utoipa::path]` annotation and its path to this
-//! `#[openapi]` list when its handler becomes real (see the
-//! repo-layout doc: "New endpoint: routes/ + service + repo +
-//! OpenAPI derive + integration test"). A spec that listed 62
-//! stubs would document endpoints that do not exist.
+//! Coverage today is the five real handlers (`/healthz`,
+//! `/readyz`, `/v1/auth/register`, `/v1/auth/verify-email`,
+//! `/v1/auth/resend-verification`) plus the shared error
+//! schema (`Problem`). The 59 stub routes are NOT in the spec
+//! yet: each endpoint ticket adds its `#[utoipa::path]`
+//! annotation and its path to this `#[openapi]` list when its
+//! handler becomes real (see the repo-layout doc: "New
+//! endpoint: routes/ + service + repo + OpenAPI derive +
+//! integration test"). A spec that listed 59 stubs would
+//! document endpoints that do not exist.
 //!
 //! `/openapi.json` is public in every environment — the console
 //! viewer (P4-064) fetches it in prod too. Only the interactive
@@ -32,9 +34,10 @@ use detag_core::error::Problem;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::{Config, SwaggerUi, Url};
 
-use crate::routes::auth::__path_register;
+use crate::routes::auth::{__path_register, __path_resend_verification, __path_verify_email};
 use crate::routes::meta::{__path_healthz, __path_readyz};
 use crate::services::register::{RegisterRequest, UserResponse};
+use crate::services::verification::{ResendVerificationRequest, VerifyEmailRequest};
 use crate::AppState;
 
 /// The API document (utoipa derive). `info.version` is the API
@@ -46,8 +49,16 @@ use crate::AppState;
         version = "1.0.0",
         description = "Detag — watermark removal for images and videos you own. All errors are RFC 7807 problem+json with a stable PF-code (see the Problem schema)."
     ),
-    paths(healthz, readyz, register),
-    components(schemas(Problem, Readiness, ComponentHealth, RegisterRequest, UserResponse)),
+    paths(healthz, readyz, register, verify_email, resend_verification),
+    components(schemas(
+        Problem,
+        Readiness,
+        ComponentHealth,
+        RegisterRequest,
+        UserResponse,
+        VerifyEmailRequest,
+        ResendVerificationRequest
+    )),
     tags(
         (name = "meta", description = "Liveness and readiness"),
         (name = "auth", description = "Registration, sessions, API keys")

@@ -5,7 +5,9 @@
 //! path a request takes):
 //!
 //! 1. The table itself has no duplicate (method, path) pairs
-//!    and has the 62 entries the API spec lists.
+//!    and has the 64 entries the API spec lists (63 from the
+//!    spec + `POST /v1/auth/resend-verification`, added by
+//!    P1-002 — the spec names no resend route).
 //! 2. Every table entry resolves to the 501 stub (never 404):
 //!    the route exists and its handler is the shared stub.
 //!    A duplicate or overlapping route would already have
@@ -14,8 +16,9 @@
 //!    check. Negative controls (paths that must NOT exist)
 //!    assert 404, proving the probes are not vacuously passing.
 //!    Exception: routes whose handler is real (P1-001
-//!    `/v1/auth/register`) answer with their real behavior for
-//!    the empty-body probe — 422 PF-2002 for register, since
+//!    `/v1/auth/register`; P1-002 `/v1/auth/verify-email` +
+//!    `/v1/auth/resend-verification`) answer with their real
+//!    behavior for the empty-body probe — 422 PF-2002, since
 //!    `ValidatedJson` rejects the empty body — and the probe
 //!    asserts that instead of 501.
 //!
@@ -59,8 +62,8 @@ fn route_table_has_no_duplicates() {
     }
     assert_eq!(
         ROUTE_TABLE.len(),
-        63,
-        "ROUTE_TABLE must list the spec's 63 routes (auth 16 + uploads 4 + jobs 9 + billing 12 + admin 20 + meta 2)"
+        64,
+        "ROUTE_TABLE must list the spec's 64 routes (auth 17 + uploads 4 + jobs 9 + billing 12 + admin 20 + meta 2)"
     );
 }
 
@@ -101,14 +104,20 @@ async fn every_table_entry_resolves_to_the_stub() {
             continue;
         }
         // Real handlers (not stubs) answer with their real
-        // behavior for the empty-body probe. P1-001 register:
-        // the empty body fails ValidatedJson → 422 PF-2002
-        // with the probe id echoed (the route exists; the
-        // handler's own test covers the 201/409 paths).
-        if *method == "POST" && *path == "/v1/auth/register" {
+        // behavior for the empty-body probe. P1-001 register +
+        // P1-002 verify-email / resend-verification: the empty
+        // body fails ValidatedJson → 422 PF-2002 with the probe
+        // id echoed (the route exists; each handler's own test
+        // covers its success paths).
+        if *method == "POST"
+            && matches!(
+                *path,
+                "/v1/auth/register" | "/v1/auth/verify-email" | "/v1/auth/resend-verification"
+            )
+        {
             let req = Request::builder()
                 .method(Method::POST)
-                .uri("/v1/auth/register")
+                .uri(*path)
                 .header("x-request-id", PROBE_ID)
                 .body(axum::body::Body::empty())
                 .unwrap();
@@ -116,23 +125,20 @@ async fn every_table_entry_resolves_to_the_stub() {
                 .clone()
                 .oneshot(req)
                 .await
-                .expect("oneshot POST /v1/auth/register");
+                .unwrap_or_else(|err| panic!("oneshot POST {path} failed: {err:?}"));
             assert_eq!(
                 res.status(),
                 StatusCode::UNPROCESSABLE_ENTITY,
-                "POST /v1/auth/register with an empty body must be 422, got {}",
+                "POST {path} with an empty body must be 422, got {}",
                 res.status()
             );
             let body = axum::body::to_bytes(res.into_body(), usize::MAX)
                 .await
                 .expect("read body");
             let json: serde_json::Value =
-                serde_json::from_slice(&body).expect("register body is JSON");
-            assert_eq!(json["code"], "PF-2002", "POST /v1/auth/register: {json}");
-            assert_eq!(
-                json["request_id"], PROBE_ID,
-                "POST /v1/auth/register: {json}"
-            );
+                serde_json::from_slice(&body).expect("real-handler body is JSON");
+            assert_eq!(json["code"], "PF-2002", "POST {path}: {json}");
+            assert_eq!(json["request_id"], PROBE_ID, "POST {path}: {json}");
             continue;
         }
         let uri = probe_path(path);

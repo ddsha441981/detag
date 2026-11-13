@@ -76,8 +76,7 @@ pub async fn by_id(
     .map_err(RepoError::from_sqlx)
 }
 
-/// Fetch by email. The column is citext, so the match is
-/// case-insensitive (`Alice@Example.com` finds `alice@example.com`).
+/// Fetch by email. The column is citext, so the match is/// case-insensitive (`Alice@Example.com` finds `alice@example.com`).
 ///
 /// The `$1::citext` cast is load-bearing: a bound `text` parameter
 /// makes Postgres resolve `email = $1` as case-sensitive `text =
@@ -98,4 +97,28 @@ pub async fn by_email(
     .fetch_optional(pool)
     .await
     .map_err(RepoError::from_sqlx)
+}
+
+/// Mark the user's email verified (P1-002). Sets
+/// `email_verified_at = now()`; idempotent — calling it on an
+/// already-verified user refreshes the timestamp, which is why
+/// the verify service only calls it after atomically consuming
+/// a token. Returns `NotFound` when the user does not exist.
+pub async fn set_email_verified(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> Result<User, RepoError> {
+    sqlx::query_as!(
+        User,
+        "UPDATE users SET email_verified_at = now() WHERE id = $1
+         RETURNING id, email, password_hash, email_verified_at, role, status,
+             tos_version, deleted_at, settings, created_at, updated_at",
+        id
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|err| match err {
+        sqlx::Error::RowNotFound => RepoError::NotFound,
+        other => RepoError::from_sqlx(other),
+    })
 }

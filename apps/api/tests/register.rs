@@ -13,7 +13,7 @@ mod common;
 
 use axum::http::{Method, Request, StatusCode};
 use common::{TestApp, TestFixtures};
-use detag_api::services::register::VERIFY_EMAIL_TEMPLATE;
+use detag_api::services::verification::VERIFY_EMAIL_TEMPLATE;
 use detag_core::{
     checksum::sha256_hex,
     config::Settings,
@@ -103,21 +103,44 @@ async fn happy_path_creates_user_audits_and_queues_mail() {
     assert_eq!(successes[0].actor_user_id, Some(user_id));
 
     // One unsent verification mail, no raw email anywhere in it.
+    // The payload carries {user_id, token} (P1-002): the token
+    // is a 43-char base64url string, and a token row exists for
+    // its hash (unused, ~24h expiry).
     let mail = email_outbox::unsent_for_template(&app.state.pool, VERIFY_EMAIL_TEMPLATE)
         .await
         .unwrap();
     let ours: Vec<_> = mail
         .iter()
-        .filter(|row| row.payload == json!({ "user_id": user_id }))
+        .filter(|row| row.payload["user_id"] == json!(user_id))
         .collect();
     assert_eq!(ours.len(), 1, "{mail:?}");
     assert_eq!(
         ours[0].to_hash.as_deref(),
         Some(sha256_hex(email.as_bytes()).as_str())
     );
+    let token = ours[0].payload["token"]
+        .as_str()
+        .expect("payload carries the raw token");
+    assert_eq!(token.len(), 43, "base64url 32-byte token");
+    let stored = detag_core::repos::email_verification_tokens::by_hash(
+        &app.state.pool,
+        &detag_core::tokens::hash_token(token),
+    )
+    .await
+    .unwrap()
+    .expect("a token row exists for the queued mail");
+    assert_eq!(stored.user_id, user_id);
+    assert!(stored.used_at.is_none());
+    assert!(
+        stored.expires_at > chrono::Utc::now() + chrono::Duration::hours(23),
+        "expiry is ~24h out"
+    );
     // The row's email-bearing fields carry a hash and an id, never
     // the raw address.
-    let rendered = format!("{:?} {}", ours[0].to_hash, ours[0].payload);
+    let rendered = format!(
+        "{:?} {} {}",
+        ours[0].to_hash, ours[0].payload, stored.token_hash
+    );
     assert!(
         !rendered.contains(&email),
         "the outbox row must not contain the raw email"
@@ -161,7 +184,7 @@ async fn duplicate_email_is_a_generic_409() {
         .unwrap();
     assert_eq!(
         mail.iter()
-            .filter(|row| row.payload == json!({ "user_id": user.id }))
+            .filter(|row| row.payload["user_id"] == json!(user.id))
             .count(),
         1
     );

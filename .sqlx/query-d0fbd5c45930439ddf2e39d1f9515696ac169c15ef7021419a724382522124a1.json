@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*) AS \"count!\"\n           FROM email_outbox\n           WHERE template = $1\n             AND payload ->> 'user_id' = $2\n             AND created_at >= now() - make_interval(secs => $3)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "d0fbd5c45930439ddf2e39d1f9515696ac169c15ef7021419a724382522124a1"
+}

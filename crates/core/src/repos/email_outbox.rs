@@ -8,9 +8,9 @@
 //! time); the payload carries ids, never a raw email address.
 //! The template name is the contract with the mailer
 //! (`verify-email`, ...); the payload shape is the template's
-//! own — `verify-email` carries `{user_id}` until P1-002 mints
-//! the verification token (the token is P1-002's scope, not
-//! this ticket's).
+//! own — `verify-email` carries `{user_id, token}` (P1-002:
+//! the token is minted with the user row, in the same
+//! transaction that enqueues this row — one mint, one row).
 
 use super::error::RepoError;
 use chrono::{DateTime, Utc};
@@ -85,4 +85,39 @@ pub async fn unsent_for_template(
     .fetch_all(pool)
     .await
     .map_err(RepoError::from_sqlx)
+}
+
+/// Count mails queued for one user + template in the last
+/// `window_secs` seconds (sent or unsent — the mailer marks
+/// rows sent, it never deletes them).
+///
+/// P1-002: this is the resend-rate-limit counter. It lives
+/// here, not on the token table, on purpose: minting deletes
+/// the user's previous unused tokens (one live token per
+/// user), so the token table cannot count history — but every
+/// mint enqueues exactly one outbox row in the same
+/// transaction, so the outbox count IS the mint count, 1:1.
+/// (The token repo's `count_recent_for_user` counted rows
+/// that minting deletes; it was removed — see the P1-002
+/// status — rather than left to silently under-count.)
+pub async fn count_recent_for_user(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    template: &str,
+    user_id: Uuid,
+    window_secs: i64,
+) -> Result<i64, RepoError> {
+    let row = sqlx::query!(
+        r#"SELECT COUNT(*) AS "count!"
+           FROM email_outbox
+           WHERE template = $1
+             AND payload ->> 'user_id' = $2
+             AND created_at >= now() - make_interval(secs => $3)"#,
+        template,
+        user_id.to_string(),
+        window_secs as f64,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(row.count)
 }
