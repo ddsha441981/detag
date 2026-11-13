@@ -61,6 +61,9 @@ utoipa = { version = "6", features = ["axum_extras", "uuid", "chrono"] }
 utoipa-swagger-ui = { version = "10", features = ["axum"] }
 apalis = "0.6"
 apalis-redis = "0.6"
+zxcvbn = "3"
+sha1 = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 [profile.release]
 lto = "thin"

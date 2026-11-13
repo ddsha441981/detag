@@ -429,6 +429,68 @@ impl TestCtx {
     }
 }
 
+/// Serve one canned HTTP response, repeatedly, until aborted (P1-026).
+///
+/// Binds `127.0.0.1:0` and returns the base URL
+/// (`http://127.0.0.1:<port>`) + the server task. The server answers
+/// EVERY request with `status` + `body` (a fixed `Content-Length`,
+/// `Connection: close`) — the same canned answer each time, so a
+/// test whose flow calls the origin more than once (register +
+/// reset both run the pwned check) gets a deterministic answer on
+/// every call. Abort the task when the test is done.
+///
+/// Used by the HIBP pwned-check tests (the stub stands in for
+/// `api.pwnedpasswords.com`); any test that needs a fake HTTP
+/// origin can use it.
+pub async fn serve_one_http_response(
+    status: u16,
+    body: String,
+) -> (String, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("stub: bind 127.0.0.1:0");
+    let addr = listener.local_addr().expect("stub: local addr");
+    let handle = tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            // Read until the end of the request headers (or EOF / a
+            // full buffer): answering before the client has finished
+            // sending risks a reset on some stacks.
+            let mut buf = [0u8; 8192];
+            loop {
+                match socket.read(&mut buf).await {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if buf[..n].windows(4).any(|w| w == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            let reason = match status {
+                200 => "OK",
+                400 => "Bad Request",
+                404 => "Not Found",
+                500 => "Internal Server Error",
+                503 => "Service Unavailable",
+                _ => "Status",
+            };
+            let response = format!(
+                "HTTP/1.1 {status} {reason}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = socket.write_all(response.as_bytes()).await;
+            let _ = socket.flush().await;
+            let _ = socket.shutdown().await;
+        }
+    });
+    (format!("http://{addr}"), handle)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

@@ -28,6 +28,8 @@
 | `PF_METRICS_HOST` | `127.0.0.1` | api, worker |
 | `PF_METRICS_PORT` | `9090` | api |
 | `PF_OTEL_ENDPOINT` | (empty) | all |
+| `PF_PASSWORD_PWNED_CHECK` | `false` | api |
+| `PF_PASSWORD_PWNED_URL` | `https://api.pwnedpasswords.com` | api |
 | `PF_POSTGRES_DB` | `pf` | postgres (compose) |
 | `PF_POSTGRES_PASSWORD` | `pf` | postgres (compose) |
 | `PF_POSTGRES_USER` | `pf` | postgres (compose) |
@@ -56,7 +58,7 @@
 | `PF_S3_BUCKET` | `detag-dev` | storage |
 | `PF_S3_ENDPOINT` | `http://localhost:9000` | storage |
 | `PF_S3_REGION` | `us-east-1` | storage |
-| `PF_S3_SECRET_KEY` | `minioadmin` | storage |
+| `PF_S3_SECRET_KEY` | `minioadmin-secret-key` | storage |
 | `PF_SMTP_HOST` | `localhost` | mailer |
 | `PF_SMTP_PASS` | (empty) | mailer |
 | `PF_SMTP_PORT` | `1025` | mailer |

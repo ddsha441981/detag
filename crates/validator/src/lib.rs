@@ -18,7 +18,14 @@
 //!   control chars, leading dots) or rejects it when nothing usable
 //!   remains.
 //! - [`validate_password`] — minimum 12 characters (NIST
-//!   SP 800-63B); never trimmed, counted in characters.
+//!   SP 800-63B); never trimmed, counted in characters. P1-026
+//!   adds the blocklist (whole password in the top 10k most
+//!   common, via zxcvbn's ranked passwords dictionary) and the
+//!   strength rule (zxcvbn score >= 3).
+//! - [`hibp_sha1_prefix_suffix`] / [`hibp_range_contains`] —
+//!   Have I Been Pwned k-anonymity helpers (P1-026): the SHA-1
+//!   prefix/suffix split and the range-response match. Pure; the
+//!   transport lives in the api's `services/pwned.rs`.
 //! - [`validate_public_url`] — http(s) URL whose host is public:
 //!   no localhost, no private/loopback/link-local IP literal, no
 //!   single-label hostname. DNS names are NOT resolved here — a
@@ -30,6 +37,7 @@
 pub mod display_name;
 pub mod email;
 pub mod filename;
+pub mod hibp;
 pub mod password;
 pub mod public_url;
 pub mod reason;
@@ -37,7 +45,10 @@ pub mod reason;
 pub use display_name::{validate_display_name, MAX_DISPLAY_NAME_LEN};
 pub use email::validate_email;
 pub use filename::sanitize_filename;
-pub use password::{validate_password, MIN_PASSWORD_LEN};
+pub use hibp::{hibp_range_contains, hibp_sha1_prefix_suffix};
+pub use password::{
+    is_blocklisted, validate_password, BLOCKLIST_MAX_RANK, MIN_PASSWORD_LEN, MIN_PASSWORD_SCORE,
+};
 pub use public_url::validate_public_url;
 pub use reason::{validate_reason, MAX_REASON_LEN};
 

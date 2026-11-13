@@ -381,3 +381,88 @@ async fn register_email_rate_limit_trips_with_headers() {
         .expect("user lookup");
     assert!(users.is_some(), "the first attempt created the user");
 }
+
+#[tokio::test]
+async fn weak_password_is_a_422_field_error() {
+    // P1-026: "123456789012" is 12 characters (length passes) and
+    // not one top-10k dictionary word (blocklist passes) — but
+    // zxcvbn scores a digit sequence 1, so the strength rule
+    // rejects it with too_weak. The user is not created.
+    let app = register_app().await;
+    let email = unique_email();
+    let res = app
+        .request(post_register(&email, "123456789012", "v1"))
+        .await;
+    assert_eq!(
+        res.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        res.text()
+    );
+    let json = res.json();
+    assert_eq!(json["code"], "PF-2002", "{json}");
+    let fields = json["field_errors"].as_array().expect("field_errors");
+    assert!(
+        fields
+            .iter()
+            .any(|f| f["field"] == "password" && f["code"] == "too_weak"),
+        "password/too_weak among {fields:?}"
+    );
+    assert!(users::by_email(&app.state.pool, &email)
+        .await
+        .expect("lookup")
+        .is_none());
+}
+
+#[tokio::test]
+async fn common_password_is_a_422_field_error() {
+    // P1-026: "qwerty123456" is one dictionary word (rank 1850,
+    // inside the top 10k) — the blocklist fires before the
+    // strength rule, so the code is common_password.
+    let app = register_app().await;
+    let email = unique_email();
+    let res = app
+        .request(post_register(&email, "qwerty123456", "v1"))
+        .await;
+    assert_eq!(
+        res.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        res.text()
+    );
+    let json = res.json();
+    assert_eq!(json["code"], "PF-2002", "{json}");
+    let fields = json["field_errors"].as_array().expect("field_errors");
+    assert!(
+        fields
+            .iter()
+            .any(|f| f["field"] == "password" && f["code"] == "common_password"),
+        "password/common_password among {fields:?}"
+    );
+    assert!(users::by_email(&app.state.pool, &email)
+        .await
+        .expect("lookup")
+        .is_none());
+}
+
+#[tokio::test]
+async fn pwned_check_defaults_off() {
+    // P1-026: the flag defaults to off (see the config snapshot
+    // test), so registration never contacts HIBP unless the
+    // operator opts in. "letmein2024!!" passes the local policy
+    // (zxcvbn 3) and is registered here — with the flag on and a
+    // stub HIBP that reports it breached, the same password is
+    // 422 (see tests/pwned.rs).
+    let settings = Settings::default();
+    assert!(!settings.password_pwned_check);
+    assert_eq!(
+        settings.password_pwned_url,
+        "https://api.pwnedpasswords.com"
+    );
+    let app = register_app().await;
+    let email = unique_email();
+    let res = app
+        .request(post_register(&email, "letmein2024!!", "v1"))
+        .await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+}

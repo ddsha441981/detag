@@ -28,6 +28,8 @@ use detag_core::{
     repos::{audit_logs, email_outbox, email_verification_tokens, users},
     tokens::{generate_token, hash_token},
 };
+use detag_testkit::serve_one_http_response;
+use detag_validator::hibp_sha1_prefix_suffix;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -583,4 +585,91 @@ async fn reset_works_for_unverified_user() {
     let res = app.request(post_reset(&token, NEW_PASSWORD)).await;
     assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
     let (_access, _refresh) = login_tokens(&app, &email, NEW_PASSWORD).await;
+}
+
+/// App with the pwned check on, pointed at `hibp_url` (P1-026).
+async fn reset_app_with_pwned(hibp_url: &str) -> TestApp {
+    let fixtures = TestFixtures::from_env().await;
+    let mut settings = fixtures.settings();
+    settings.disposable_email_domains = String::new();
+    settings.tos_current_version = "v1".to_string();
+    settings.password_pwned_check = true;
+    settings.password_pwned_url = hibp_url.to_string();
+    TestApp::spawn_with_fixtures_and_settings(fixtures, settings).await
+}
+
+#[tokio::test]
+async fn reset_with_weak_password_is_422() {
+    // P1-026: the new password goes through the same policy as
+    // registration — "123456789012" is 12 characters but scores
+    // 1, so the handler's sync validation rejects it before the
+    // service ever sees the token.
+    let app = reset_app().await;
+    let email = unique_email("weak-reset");
+    let user_id = register_user(&app, &email).await;
+    let res = app.request(post_forgot(&email)).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+    let token = reset_token_for_user(&app, user_id).await;
+    let res = app.request(post_reset(&token, "123456789012")).await;
+    assert_eq!(
+        res.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        res.text()
+    );
+    let json = res.json();
+    assert_eq!(json["code"], "PF-2002", "{json}");
+    let fields = json["field_errors"].as_array().expect("field_errors");
+    assert!(
+        fields
+            .iter()
+            .any(|f| f["field"] == "new_password" && f["code"] == "too_weak"),
+        "new_password/too_weak among {fields:?}"
+    );
+}
+
+#[tokio::test]
+async fn reset_with_breached_password_is_422_and_token_survives() {
+    // P1-026: "letmein2024!!" passes the local policy (zxcvbn 3),
+    // so the pwned check is the only rejection — the stub reports
+    // it breached. The token is NOT consumed (the service rejects
+    // before the consume transaction), so a second reset with a
+    // clean password still works with the same token.
+    let new_password = "letmein2024!!";
+    let (_, suffix) = hibp_sha1_prefix_suffix(new_password);
+    let (url, server) = serve_one_http_response(
+        200,
+        format!("{suffix}:12345\n0018A45C4D1DEF81644B54AB7F969B88D65:1"),
+    )
+    .await;
+    let app = reset_app_with_pwned(&url).await;
+    let email = unique_email("breached-reset");
+    let user_id = register_user(&app, &email).await;
+    let res = app.request(post_forgot(&email)).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+    let token = reset_token_for_user(&app, user_id).await;
+    let res = app.request(post_reset(&token, new_password)).await;
+    assert_eq!(
+        res.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        res.text()
+    );
+    let json = res.json();
+    assert_eq!(json["code"], "PF-2002", "{json}");
+    let fields = json["field_errors"].as_array().expect("field_errors");
+    assert!(
+        fields
+            .iter()
+            .any(|f| f["field"] == "password" && f["code"] == "pwned_password"),
+        "password/pwned_password among {fields:?}"
+    );
+    server.abort();
+    // The old password still logs in (nothing changed), and the
+    // token still works: a clean reset with the same token is 204.
+    // (The stub server is gone, but the flag is on — the second
+    // reset's check fails open on the dead stub and proceeds.)
+    let (_access, _refresh) = login_tokens(&app, &email, PASSWORD).await;
+    let res = app.request(post_reset(&token, NEW_PASSWORD)).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
 }

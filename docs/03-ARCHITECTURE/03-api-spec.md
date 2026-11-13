@@ -407,8 +407,27 @@ lowercased before storage (the column is citext, so the match
 is case-insensitive either way); the password is Argon2id-hashed
 (params from `PF_ARGON2_*`, OWASP defaults m=19 MiB/t=2/p=1) and
 never stored, logged, or echoed — the 201 body is the user
-without any hash field. Password rule: minimum 12 characters
-(NIST SP 800-63B), never trimmed. `accept_tos_version` must equal
+without any hash field. Password rule (P1-001, extended P1-026):
+minimum 12 characters (NIST SP 800-63B), never trimmed; the
+whole password must not be one of the 10,000 most commonly used
+passwords (422 `common_password` — the blocklist is zxcvbn's
+embedded ranked passwords dictionary, top 10k by rank; no
+external list is downloaded); zxcvbn score >= 3 (422
+`too_weak` — the crate's own "too weak" line). The same three
+rules gate the reset flow's new password (P1-025's
+`POST /v1/auth/reset-password` — a weak new password is 422
+before the token is consumed). Optional HIBP k-anonymity check
+(P1-026, `PF_PASSWORD_PWNED_CHECK`, default off): when on, the
+register + reset services send only the first 5 hex chars of the
+password's SHA-1 to `PF_PASSWORD_PWNED_URL` (default
+`https://api.pwnedpasswords.com`) and reject a password whose
+suffix is in the returned range (422 `pwned_password`); any
+transport error or non-2xx answer fails open (warn logged, the
+registration/reset continues). Opt-in because it contacts a
+third party per registration/reset — the full hash and the
+password never leave the machine, but the 5-char prefix narrows
+the password to ~2^20 candidates and reveals that a check
+happened. `accept_tos_version` must equal
 the current version (`PF_TOS_CURRENT_VERSION`, default "v1") and
 is recorded on the user row. A disposable-email domain (config
 `PF_DISPOSABLE_EMAIL_DOMAINS`) is a 422 field error

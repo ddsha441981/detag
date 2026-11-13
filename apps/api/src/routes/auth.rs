@@ -270,12 +270,15 @@ pub async fn forgot_password(
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
                 .into_response()
         }
-        // InvalidToken / ExpiredToken are unreachable here:
-        // the forgot flow never consumes a token.
-        Err(PasswordResetError::InvalidToken | PasswordResetError::ExpiredToken) => {
-            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
-                .into_response()
-        }
+        // InvalidToken / ExpiredToken / Invalid are unreachable here:
+        // the forgot flow never consumes a token or validates a
+        // password (the pwned check runs at reset, not at forgot).
+        Err(
+            PasswordResetError::InvalidToken
+            | PasswordResetError::ExpiredToken
+            | PasswordResetError::Invalid(_),
+        ) => ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+            .into_response(),
     }
 }
 
@@ -312,6 +315,9 @@ pub async fn reset_password(
             AppError::ExpiredToken.to_problem(Profile::Production, request_id, None),
         )
         .into_response(),
+        Err(PasswordResetError::Invalid(errors)) => {
+            ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
+        }
         Err(PasswordResetError::Internal) => {
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
                 .into_response()
