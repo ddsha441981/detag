@@ -90,9 +90,11 @@ use crate::AppState;
 /// The refresh cookie (web session, httpOnly). The name is
 /// P1-003's confirmation of the P0-070 provisional name: the
 /// login handler sets it, the `AuthContext` extractor reads
-/// it. P1-015 owns the final cookie posture (Secure /
-/// SameSite); this ticket sets `HttpOnly; Secure; SameSite=Lax;
-/// Path=/v1/auth; Max-Age=2592000` (30d, matching the session).
+/// it. P1-016 confirms the final cookie posture (Secure /
+/// SameSite / Path=/v1/auth — the cookie is refresh-only, not
+/// an access credential; see `auth.rs`); this ticket sets
+/// `HttpOnly; Secure; SameSite=Lax; Path=/v1/auth;
+/// Max-Age=2592000` (30d, matching the session).
 pub const REFRESH_COOKIE_NAME: &str = "detag_refresh";
 
 /// The login request body (api-spec: email, password → 200

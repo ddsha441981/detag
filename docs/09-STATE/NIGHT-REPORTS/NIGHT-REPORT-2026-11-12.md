@@ -22,13 +22,14 @@ P0-106/107/108 (Phase 0 ticket work done, 105/108); updated
 ~14:19 IST 13 Nov after P1-012 (Phase 1, 12/111); updated
 ~14:44 IST 13 Nov after P1-013 (Phase 1, 13/111); updated
 ~15:30 IST 13 Nov after P1-014 (Phase 1, 14/111); updated
-~15:55 IST 13 Nov after P1-015 (Phase 1, 15/111). Resumed
+~15:55 IST 13 Nov after P1-015 (Phase 1, 15/111); updated
+~15:50 IST 13 Nov after P1-016 (Phase 1, 16/111). Resumed
 from the 8th coordinator's interruption (~23:21 IST, P0-092 in
 progress with uncommitted work). Local HEAD at this update:
-`9bb2001` (P1-015). No push (local-only by rule; parent handles
+`b1244b2` (P1-016). No push (local-only by rule; parent handles
 GitHub pushes).
 
-## Tickets done (27)
+## Tickets done (28)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -857,6 +858,32 @@ GitHub pushes).
   `sessions.rs` module doc cited P1-007 for the session
   list — it is P1-019. `just verify` green 571 passed, 0
   failed, attempt 1 (no flakes).
+- **P1-016 — Cookie + bearer dual auth** (`b1244b2`):
+  The extractor's behavior did NOT change — the bare-cookie
+  rejection was already correct, and this ticket proves why
+  instead of changing it: the cookie is `HttpOnly; Secure;
+  SameSite=Lax; Path=/v1/auth`, so a browser sends it only
+  to `/v1/auth/*` (never to a protected route) and it holds
+  a REFRESH token, not an access credential. `auth.rs`:
+  module doc rewritten (Bearer verified / cookie leg FINAL /
+  API keys E1.4), `REFRESH_COOKIE` confirmed final (no
+  longer "provisional"), precedence final (Bearer wins; the
+  cookie is then ignored, never validated), new CSRF posture
+  section (SameSite=Lax + no state-changing GET + Path +
+  HttpOnly limits stated honestly + Secure/localhost note).
+  Tests: 6 new in `tests/dual_auth.rs` (Bearer-only → 200;
+  a genuine, live refresh token as the sole credential → 401
+  PF-1001; Bearer + cookie → 200; valid Bearer + forged
+  cookie → 200; Bearer API key → 401 PF-1001 until E1.4;
+  GET /v1/auth/refresh → 405) + 1 new unit test
+  (`bearer_jwt_wins_over_cookie`). Docs: api-spec dual-auth
+  paragraph + extractor paragraph, security-testing
+  dual-auth bullets, threat model T23 (CSRF — LIVE) +
+  update-log row; T21's stale "P1-014's refresh must reject
+  it" corrected (it does reject it). Also fixed in passing:
+  the `login.rs` doc pointer said P1-015 owns the cookie
+  posture — it is P1-016. `just verify` green 578 passed, 0
+  failed, attempt 1 (no flakes).
 
 ## Tickets partially done
 
@@ -971,7 +998,8 @@ GitHub pushes).
   (P1-007; +9: 5 api deletion + 3 gc purge + 1 migration)
   → **561 passed, 0 failed** (P1-013; +4 new core jwt)
   → **569 passed, 0 failed** (P1-014; +8 refresh integration)
-  → **571 passed, 0 failed** (P1-015; +2 gc session-purge).
+  → **571 passed, 0 failed** (P1-015; +2 gc session-purge)
+  → **578 passed, 0 failed** (P1-016; +7: 6 dual-auth + 1 auth unit).
   Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
@@ -1039,6 +1067,7 @@ GitHub pushes).
   took ~13 min at load ~2, just slow, not stuck).
   P1-015: 1 (no flakes — the full verify took ~12.5 min,
   same slow-machine shape as P1-014).
+  P1-016: 1 (no flakes — the full verify took ~10.3 min).
   Every red run was a known flake, a lint fix, or a
   test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
@@ -1058,11 +1087,11 @@ GitHub pushes).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-016 — Cookie + bearer dual auth.
-2. P1-017 — Logout endpoints.
-3. P1-018 — Revoke on password change.
-4. P1-019 — Session listing.
-5. P1-020 — Brute-force limiter wiring.
+1. P1-017 — Logout endpoints.
+2. P1-018 — Revoke on password change.
+3. P1-019 — Session listing.
+4. P1-020 — Brute-force limiter wiring.
+5. P1-021 — Token revocation cache.
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never

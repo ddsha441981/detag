@@ -257,14 +257,44 @@ Auth extractor, Bearer leg (P1-005, FR-A-02): the extractor
 verifies a `Bearer <jwt>` (HS256 signature + expiry, leeway 0)
 against `PF_JWT_SECRET`, loads the `sub` as a user, and yields
 a verified context carrying that user + the role from the user
-row. A Bearer API key or a session cookie is 401 `PF-1001`
-for now (no key table is read yet; the refresh cookie is not
-an access credential — the refresh rotation is P1-014, the
-cookie leg is P1-016, which also owns precedence + CSRF posture
-docs). User status is NOT checked here — suspension revokes
-sessions at suspend time (P1-008); a token issued before
-suspension staying valid until expiry (≤ 15 min) is that
-ticket's design space, not this extractor's.
+row. A Bearer API key is 401 `PF-1001` (no key table is read
+yet — API keys are E1.4, a later epic). A session cookie,
+alone, is 401 `PF-1001` — FINAL (P1-016): the `detag_refresh`
+cookie holds a refresh token, which is not an access
+credential. User status is NOT checked here — suspension
+revokes sessions at suspend time (P1-008); a token issued
+before suspension staying valid until expiry (≤ 15 min) is
+that ticket's design space, not this extractor's.
+
+Cookie + bearer dual auth (P1-016, FR-A-02): the web client
+holds TWO things — the access token in memory (sent as
+`Authorization: Bearer <jwt>` on API calls, exactly like an
+API client) and the refresh token in the httpOnly cookie
+(`detag_refresh`: `HttpOnly; Secure; SameSite=Lax;
+Path=/v1/auth; Max-Age=2592000`). The cookie exists only for
+`POST /v1/auth/refresh` (P1-014). Precedence is Bearer wins:
+a request carrying both is authenticated by the Bearer token
+and the cookie is ignored, never validated as an access
+credential (a forged cookie alongside a valid Bearer token
+does not fail the request; a valid refresh token alongside a
+Bearer token adds nothing). The cookie's `Path=/v1/auth`
+means a browser sends it only to `/v1/auth/*` — never to a
+protected route (`/v1/me`, `/v1/admin/*`) — so the extractor
+never sees it there from a real browser at all. CSRF
+posture: `SameSite=Lax` means a cross-site `fetch`/XHR POST
+does not carry the cookie, so `POST /v1/auth/refresh` from
+another origin has no token to rotate; a top-level GET
+navigation DOES carry it — but there is no state-changing
+GET (every mutation is POST/PATCH/DELETE, every GET is a
+read, and `GET /v1/auth/refresh` is 405), so a navigated GET
+cannot rotate a session or change anything. `HttpOnly` keeps
+the refresh token out of JavaScript (defense-in-depth, not a
+cure for XSS — same-origin XSS can still call `/refresh`
+itself); `Secure` keeps it off plain HTTP in production
+(`http://localhost` is a secure context, so dev still works).
+The access token is never a cookie: a stolen one is worth at
+most 15 minutes, and the refresh token that mints the next
+one never appears in a request body or a log line.
 
 Email change (P1-006, FR-A-01): setting a NEW `pending_email`
 via `PATCH /v1/me` triggers, in the same transaction as the

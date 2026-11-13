@@ -8,7 +8,7 @@
 //! declares it as a parameter and the framework runs it before
 //! the handler body.
 //!
-//! # Phase 1 status — the Bearer leg is verified (P1-005)
+//! # Phase 1 status — Bearer verified, cookie final, API keys later
 //!
 //! A `Bearer <jwt>` is verified (HS256 signature + expiry, leeway 0)
 //! against `PF_JWT_SECRET` and the `sub` claim is loaded as a user:
@@ -19,16 +19,23 @@
 //!   an expired one → 401 `PF-1011`;
 //! - a valid JWT for an unknown user id → 401 `PF-1001` (the token
 //!   is well-formed but the account is gone);
-//! - a Bearer API key or a session cookie → 401 `PF-1001` for now:
-//!   API keys are a later ticket (no key table is read yet) and
-//!   the refresh cookie is not an access credential (the refresh
-//!   rotation is P1-014; the cookie leg is P1-016).
+//! - a Bearer API key → 401 `PF-1001` (no key table is read yet —
+//!   API keys are E1.4, a later epic, not this ticket);
+//! - a session cookie, alone → 401 `PF-1001` — and that is FINAL,
+//!   not a placeholder (P1-016): the `detag_refresh` cookie holds
+//!   a REFRESH token, which is not an access credential. The web
+//!   client holds its access token in memory and sends it as
+//!   `Bearer` on API calls; the cookie exists only for
+//!   `POST /v1/auth/refresh` (P1-014). A genuine, live refresh
+//!   token presented as the sole credential still 401s — proven
+//!   by `tests/dual_auth.rs`, so a stolen refresh token cannot
+//!   walk straight into the API as if it were an access token.
 //!
-//! P1-016 owns the rest: the cookie + API-key legs, the precedence
-//! (Bearer wins today, and stays winning), and the CSRF posture
-//! documentation. A suspended/deleted user is NOT rejected here:
-//! suspension revokes sessions at suspend time (P1-008), and the
-//! stateless access token's remaining lifetime (≤ 15 min) is that
+//! P1-016 owns the rest: the precedence (Bearer wins, and stays
+//! winning — see below) and the CSRF posture documentation. A
+//! suspended/deleted user is NOT rejected here: suspension
+//! revokes sessions at suspend time (P1-008), and the stateless
+//! access token's remaining lifetime (≤ 15 min) is that
 //! ticket's design space, not this extractor's.
 //!
 //! The admin guard is [`AdminContext`] (P1-008): it wraps this
@@ -40,21 +47,66 @@
 //! [`AdminReadContext`] (P1-009), which admits admin + support
 //! and rejects a verified plain user with the same 403.
 //!
-//! # Credential sources (precedence)
+//! # Credential sources (precedence — FINAL, P1-016)
 //!
 //! 1. `Authorization: Bearer <token>` — a JWT (two dots:
 //!    `header.payload.signature`) or an API key (anything else
 //!    in the Bearer slot). The two-dot shape is the Phase 0
 //!    heuristic; Phase 1 may switch to an API-key prefix.
 //! 2. The `detag_refresh` cookie (web session, httpOnly refresh
-//!    token — FR-A-02). The cookie NAME is provisional: Phase 1
-//!    owns both sides (login sets it, this extractor reads it)
-//!    and confirms or renames it then.
+//!    token — FR-A-02). The cookie name is `detag_refresh`,
+//!    confirmed final by P1-016 (login sets it, the refresh
+//!    handler reads it, this extractor classifies it).
 //!
 //! A Bearer token wins over a cookie when both are present: an
-//! API client that sends a Bearer token means it. A non-Bearer
-//! `Authorization` scheme (e.g. `Basic`) is ignored — the spec
-//! defines Bearer only.
+//! API client that sends a Bearer token means it — and the
+//! cookie is then IGNORED, never validated as an access
+//! credential (a forged or stale cookie alongside a valid
+//! Bearer token does not fail the request; a valid refresh
+//! token alongside a Bearer token does not add anything).
+//! A non-Bearer `Authorization` scheme (e.g. `Basic`) is
+//! ignored — the spec defines Bearer only.
+//!
+//! # CSRF posture (P1-016)
+//!
+//! The only cookie the api ever sets is the refresh cookie —
+//! `HttpOnly; Secure; SameSite=Lax; Path=/v1/auth;
+//! Max-Age=2592000` — and the posture is the combination, not
+//! any one attribute:
+//! - `SameSite=Lax`: a cross-site `fetch`/XHR POST (the classic
+//!   CSRF shape — a form on evil.com posting to the api) does
+//!   NOT carry the cookie, so `POST /v1/auth/refresh` from
+//!   another origin has no token to rotate. A top-level GET
+//!   navigation DOES carry it — but there is no state-changing
+//!   GET: every mutation is POST/PATCH/DELETE, every GET is a
+//!   read, and `GET /v1/auth/refresh` is 405 (proven by
+//!   `tests/dual_auth.rs`), so a navigated GET cannot rotate a
+//!   session or change anything.
+//! - `Path=/v1/auth`: the browser sends the cookie only to
+//!   `/v1/auth/*` — never to a protected route (`/v1/me`,
+//!   `/v1/admin/*`), so the cookie cannot be an access
+//!   credential for the API even by accident. This is why the
+//!   extractor's bare-cookie rejection is not a limitation to
+//!   be fixed later: from a real browser the extractor never
+//!   sees the cookie on a protected route at all.
+//! - `HttpOnly`: JavaScript cannot read the refresh token, so
+//!   an XSS payload cannot exfiltrate it. Honest limit: that
+//!   is defense-in-depth, not a cure — XSS running on the
+//!   same origin can still call `/v1/auth/refresh` itself (the
+//!   browser attaches the cookie same-site) and use the
+//!   access token it gets. The refresh token staying out of
+//!   JS keeps it out of `localStorage` dumps and stolen-page
+//!   scripts; it does not make XSS harmless.
+//! - `Secure`: the cookie only travels over HTTPS in
+//!   production. In dev the api runs on plain HTTP —
+//!   `http://localhost` is a secure context, so browsers
+//!   still send a `Secure` cookie there; a non-localhost
+//!   plain-HTTP dev host would not get the cookie (by design).
+//! - The access token is never a cookie: it lives in the web
+//!   client's memory and travels as `Bearer`. A stolen access
+//!   token is worth at most 15 minutes (P1-013 claims shape),
+//!   and the refresh token that mints the next one never
+//!   appears in a request body or a log line.
 //!
 //! # Never logged
 //!
@@ -170,8 +222,11 @@ pub struct AuthContext {
     pub impersonator_id: Option<uuid::Uuid>,
 }
 
-/// The web session cookie name (provisional — Phase 1 confirms it;
-/// see the module docs).
+/// The web session cookie name (confirmed final by P1-016:
+/// `detag_refresh`, `HttpOnly; Secure; SameSite=Lax;
+/// Path=/v1/auth` — login sets it, the refresh handler reads
+/// it, this extractor classifies it and rejects it as an
+/// access credential; see the module docs).
 pub const REFRESH_COOKIE: &str = "detag_refresh";
 
 impl AuthContext {
@@ -249,8 +304,12 @@ pub(crate) fn parse_session_cookie(headers: &HeaderMap) -> Option<Credential> {
 /// problem+json 401 — never an `Ok` unverified context. A
 /// handler that declares `AuthContext` therefore only ever
 /// runs for a verified caller; the `user` is `Some` exactly
-/// when `verified` is true. API keys and session cookies
-/// reject with `PF-1001` until their tickets land (P1-016).
+/// when `verified` is true. API keys reject with `PF-1001`
+/// until E1.4 (no key table yet); a bare session cookie
+/// rejects with `PF-1001` as a FINAL decision (P1-016 — the
+/// refresh token is not an access credential, and its
+/// `Path=/v1/auth` means a browser never sends it to a
+/// protected route anyway; see the module docs).
 impl FromRequestParts<AppState> for AuthContext {
     type Rejection = Response;
 
@@ -456,7 +515,7 @@ mod tests {
         assert_eq!(ctx.credential, Credential::Bearer(JWT.to_string()));
         assert_eq!(ctx.credential.kind(), "bearer");
         assert_eq!(ctx.role, Role::Anonymous);
-        assert!(!ctx.verified, "nothing is verified in Phase 0");
+        assert!(!ctx.verified, "from_headers parses; the extractor verifies");
     }
 
     #[test]
@@ -500,6 +559,22 @@ mod tests {
             Credential::Session("refresh-token-abc".to_string())
         );
         assert_eq!(ctx.credential.kind(), "session");
+    }
+
+    #[test]
+    fn bearer_jwt_wins_over_cookie() {
+        // Precedence, P1-016: a Bearer JWT beats the session
+        // cookie even when the cookie is present — the cookie
+        // is then ignored, never validated as an access
+        // credential (the integration tests in tests/dual_auth.rs
+        // prove the same thing end to end, with a real refresh
+        // token in the cookie).
+        let ctx = AuthContext::from_headers(&headers(&[
+            ("authorization", &format!("Bearer {JWT}")),
+            ("cookie", "detag_refresh=refresh-token-abc"),
+        ]));
+        assert_eq!(ctx.credential, Credential::Bearer(JWT.to_string()));
+        assert_eq!(ctx.credential.kind(), "bearer");
     }
 
     #[test]
@@ -551,7 +626,10 @@ mod tests {
     /// expired JWT) never reach it and answer problem+json 401s
     /// with the taxonomy codes. The happy path (a valid JWT for
     /// a real user) needs a database, so it lives in the
-    /// integration tests (`tests/profile.rs`), not here.
+    /// integration tests (`tests/profile.rs`), not here. The
+    /// cookie case below uses a fake token; the REAL-token case
+    /// (a live refresh token presented as the sole credential
+    /// still 401s) is `tests/dual_auth.rs` (P1-016).
     #[tokio::test]
     async fn extractor_rejects_unverified_callers() {
         async fn probe(ctx: AuthContext) -> impl IntoResponse {
