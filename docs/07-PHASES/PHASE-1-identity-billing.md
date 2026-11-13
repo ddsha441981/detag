@@ -137,11 +137,12 @@
 
 ## E1.2 — Sessions & JWT (area: auth/sessions)
 
-- [ ] **P1-013** — JWT claims + issuance
+- [x] **P1-013** — JWT claims + issuance
   - **Type:** feat · **Area:** auth/sessions · **Est:** M · **Deps:** — · **Prio:** P1
   - **Spec:** jsonwebtoken: claims {sub, role, ver, impersonator?, jti, exp 15m, iat, iss, aud, kid}; key from PF_JWT_SECRET; errors map to PF-1010/1011.
   - **AC:**
-    - [ ] claims shape locked by test
+    - [x] claims shape locked by test
+  - **Status:** DONE 2026-11-13. Core `jwt.rs`: claims are now `{sub, role, ver, impersonator?, jti, exp, iat, iss, aud}` + JOSE header `kid` — `iss = "detag"`, `aud = "detag-api"` (product-policy constants, not config — Detag has no domain yet, and a URL issuer would be a lie; this supersedes P1-003's "no iss/aud" decision, which the spec now defines), `ver = 1` (`TOKEN_VERSION`), `jti = Uuid::now_v7()` per issuance, `kid` = first 16 hex chars of the secret's sha256 (`key_fingerprint`). The verifier enforces `iss` + `aud` (jsonwebtoken issuer/audience validation → PF-1010), `ver == 1`, and a present `kid` matching this secret's fingerprint (foreign `kid` → PF-1010); `jti` is never required (legacy tokens have none — it exists for future revocation/debugging, e.g. P1-018). Backward compat: a pre-P1-013 token (`{sub, role, exp, iat}` only, no header `kid`) still verifies — the new fields default on decode (`ver` → 1, `iss`/`aud` → the constants, `jti`/`impersonator_id` → None). The `kid` fingerprint lets a future dual-verify (P0-105, Phase 5) pick the key from a key set instead of trying every secret; today there is one key. Tests: 4 new in `jwt::tests` (`claims_shape_is_locked` — raw payload has exactly the 8 keys + the header has alg/typ/kid; `impersonation_token_shape_includes_impersonator`; `verify_rejects_wrong_issuer_audience_version_kid`; `verify_accepts_legacy_token_without_new_fields`) — 12 JWT tests green. Docs: api-spec login paragraph (locked shape), security-testing JWT claims bullets. `just verify` green: 561 passed, 0 failed, attempt 3 (attempts 1–2: FLAKY-002 `slow_consumer_drops_safely` streak of 2, green after a 60 s settle — the same streak shape as P1-006).
 
 - [ ] **P1-014** — Refresh rotation
   - **Type:** feat · **Area:** auth/sessions · **Est:** M · **Deps:** P1-013 · **Prio:** P1

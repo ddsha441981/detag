@@ -19,13 +19,14 @@ P0-106/107/108 (Phase 0 ticket work done, 105/108); updated
 ~13:41 IST 13 Nov after P1-009 (Phase 1, 9/111); updated
 ~13:58 IST 13 Nov after P1-010 (Phase 1, 10/111); updated
 ~14:10 IST 13 Nov after P1-011 (Phase 1, 11/111); updated
-~14:19 IST 13 Nov after P1-012 (Phase 1, 12/111). Resumed
+~14:19 IST 13 Nov after P1-012 (Phase 1, 12/111); updated
+~14:44 IST 13 Nov after P1-013 (Phase 1, 13/111). Resumed
 from the 8th coordinator's interruption (~23:21 IST, P0-092 in
 progress with uncommitted work). Local HEAD at this update:
-`9aea132` (P1-012). No push (local-only by rule; parent handles
+`958b27b` (P1-013). No push (local-only by rule; parent handles
 GitHub pushes).
 
-## Tickets done (24)
+## Tickets done (25)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -755,6 +756,39 @@ GitHub pushes).
   passed, 0 failed, attempt 1 (no flakes — docs only, no
   code change).
 
+- **P1-013 — JWT claims + issuance** (`958b27b`):
+  Core `jwt.rs`: claims are now `{sub, role, ver,
+  impersonator?, jti, exp, iat, iss, aud}` + JOSE header
+  `kid` — `iss = "detag"`, `aud = "detag-api"`
+  (product-policy constants, not config — Detag has no
+  domain yet, and a URL issuer would be a lie; this
+  supersedes P1-003's "no iss/aud" decision, which the spec
+  now defines), `ver = 1` (`TOKEN_VERSION`), `jti =
+  Uuid::now_v7()` per issuance, `kid` = first 16 hex chars
+  of the secret's sha256 (`key_fingerprint`). The verifier
+  enforces `iss` + `aud` (jsonwebtoken issuer/audience
+  validation → PF-1010), `ver == 1`, and a present `kid`
+  matching this secret's fingerprint (foreign `kid` →
+  PF-1010); `jti` is never required (legacy tokens have none
+  — it exists for future revocation/debugging, e.g. P1-018).
+  Backward compat: a pre-P1-013 token (`{sub, role, exp,
+  iat}` only, no header `kid`) still verifies — the new
+  fields default on decode (`ver` → 1, `iss`/`aud` → the
+  constants, `jti`/`impersonator_id` → None). The `kid`
+  fingerprint lets a future dual-verify (P0-105, Phase 5)
+  pick the key from a key set instead of trying every
+  secret; today there is one key. Tests: 4 new in
+  `jwt::tests` (`claims_shape_is_locked` — raw payload has
+  exactly the 8 keys + the header has alg/typ/kid;
+  `impersonation_token_shape_includes_impersonator`;
+  `verify_rejects_wrong_issuer_audience_version_kid`;
+  `verify_accepts_legacy_token_without_new_fields`) — 12
+  JWT tests green. Docs: api-spec login paragraph (locked
+  shape), security-testing JWT claims bullets. `just verify`
+  green 561 passed, 0 failed, attempt 3 (attempts 1–2:
+  FLAKY-002 `slow_consumer_drops_safely` streak of 2, green
+  after a 60 s settle — the same streak shape as P1-006).
+
 ## Tickets partially done
 
 - **P0-034 / P0-046 / P0-083**: implemented but unverified —
@@ -866,8 +900,7 @@ GitHub pushes).
   display-name unit) → **498 passed, 0 failed** (P1-006; +12
   email-change integration) → **507 passed, 0 failed**
   (P1-007; +9: 5 api deletion + 3 gc purge + 1 migration)
-  → **557 passed, 0 failed** (P1-012; docs only, no code
-  change).
+  → **561 passed, 0 failed** (P1-013; +4 new core jwt).
   Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
@@ -927,6 +960,9 @@ GitHub pushes).
   P1-011: 1 (no flakes — the admin_impersonate_audit binary
   ran green on its first run before the full verify).
   P1-012: 1 (no flakes — docs only).
+  P1-013: 3 (attempts 1–2: FLAKY-002
+  `slow_consumer_drops_safely` streak of 2, green after a
+  60 s settle — the same streak shape as P1-006).
   Every red run was a known flake, a lint fix, or a
   test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
@@ -946,11 +982,11 @@ GitHub pushes).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-013 — JWT claims + issuance.
-2. P1-014 — Refresh rotation.
-3. P1-015 — Sessions table + repo.
-4. P1-016 — Cookie + bearer <redacted> auth.
-5. P1-017 — Logout endpoints.
+1. P1-014 — Refresh rotation.
+2. P1-015 — Sessions table + repo.
+3. P1-016 — Cookie + bearer <redacted> auth.
+4. P1-017 — Logout endpoints.
+5. P1-018 — Revoke on password change.
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never

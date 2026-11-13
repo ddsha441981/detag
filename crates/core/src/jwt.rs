@@ -5,13 +5,42 @@
 //! this module so the algorithm and claims shape have exactly
 //! one definition.
 //!
-//! Claims (minimal, nothing invented): `sub` = the user id,
-//! `role` = the user's role string, `exp` / `iat` = unix
-//! seconds, `impersonator_id` = the admin's id when the token
-//! is an impersonation token (P1-010 — absent on a normal
-//! login token). No `iss`/`aud` — no issuer or audience is
-//! defined anywhere in the docs, and inventing one would be a
-//! lie the verifier would then have to enforce.
+//! Claims (P1-013 — the shape is locked by test, see the
+//! `claims_shape_is_locked` test): `sub` = the user id,
+//! `role` = the user's role string, `ver` = the token
+//! version (1), `impersonator_id` = the admin's id when the
+//! token is an impersonation token (P1-010 — absent on a
+//! normal login token), `jti` = the token's unique id (one
+//! UUID per issuance), `exp` / `iat` = unix seconds,
+//! `iss` = `"detag"`, `aud` = `"detag-api"`. The JOSE header
+//! carries `kid` = the signing key's fingerprint (the first
+//! 16 hex chars of the secret's sha256) + `alg: HS256`.
+//!
+//! The values are product-policy constants, not config (the
+//! P1-001 precedent): `iss` is the service name, not a URL —
+//! Detag has no domain yet, and a URL issuer would be a lie
+//! today; `aud` is the API the token is for. P1-003's "no
+//! `iss`/`aud`" decision is superseded by this ticket: the
+//! spec (P1-013) defines them, so they are defined here and
+//! enforced by the verifier.
+//!
+//! Backward compatibility: a token issued before P1-013
+//! (claims `{sub, role, exp, iat}` only, no header `kid`)
+//! still verifies — the new fields default on decode
+//! (`ver` → 1, `iss` → `"detag"`, `aud` → `"detag-api"`,
+//! `jti` / `impersonator_id` → `None`, missing `kid` →
+//! accepted). A token that CARRIES a wrong value is
+//! rejected: wrong `iss`/`aud` → Invalid (jsonwebtoken's
+//! issuer/audience validation), `ver` ≠ 1 → Invalid, a
+//! `kid` that is not this secret's fingerprint → Invalid.
+//! `jti` is never required by the verifier (legacy tokens
+//! have none) — it exists for future revocation/debugging
+//! (e.g. P1-018, revoke on password change).
+//!
+//! Key rotation (P0-105's dual-verify draft, Phase 5): the
+//! `kid` fingerprint lets a future verifier pick the key
+//! from a key set instead of trying every secret. Today
+//! there is one key, so the verifier knows one fingerprint.
 //!
 //! Impersonation (P1-010): an impersonation token is a normal
 //! access token whose claims carry `impersonator_id`. It acts
@@ -50,6 +79,7 @@
 //! — an `alg: none` or RS256 token can never verify against an
 //! HMAC key, and the `exp` check is on by default.
 
+use crate::checksum::sha256_hex;
 use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
@@ -60,28 +90,73 @@ use uuid::Uuid;
 pub const ACCESS_TOKEN_TTL_SECS: i64 = 15 * 60;
 /// Refresh-token / session lifetime: 30 days (P1-014).
 pub const REFRESH_TOKEN_TTL_SECS: i64 = 30 * 24 * 60 * 60;
+/// The token issuer (P1-013): the service name, not a URL
+/// (Detag has no domain yet).
+pub const TOKEN_ISSUER: &str = "detag";
+/// The token audience (P1-013): the API the token is for.
+pub const TOKEN_AUDIENCE: &str = "detag-api";
+/// The token version (P1-013): 1. The verifier rejects any
+/// other version — a future shape change bumps this and the
+/// verifier learns to accept both during the migration.
+pub const TOKEN_VERSION: u32 = 1;
 
-/// The access-token claims. `sub` is the user id (UUID
-/// string); `role` is the user's role string (`user`,
-/// `support`, `admin`). `impersonator_id` is `Some` only on
-/// an impersonation token (P1-010) — it is omitted from the
-/// JSON on a normal token, and a token issued before P1-010
-/// (without the field) still verifies, because the field
-/// defaults to `None`.
+/// The signing key's fingerprint (P1-013): the first 16 hex
+/// chars of the secret's sha256. This is the JOSE header
+/// `kid` on every issued token. It identifies the key without
+/// revealing it (a truncated hash is not reversible); the
+/// verifier accepts a missing `kid` (a pre-P1-013 token) and
+/// rejects a `kid` that is not this secret's fingerprint.
+pub fn key_fingerprint(secret: &str) -> String {
+    sha256_hex(secret.as_bytes())[..16].to_string()
+}
+
+fn default_token_version() -> u32 {
+    TOKEN_VERSION
+}
+
+fn default_issuer() -> String {
+    TOKEN_ISSUER.to_string()
+}
+
+fn default_audience() -> String {
+    TOKEN_AUDIENCE.to_string()
+}
+
+/// The access-token claims (P1-013 — the shape is locked by
+/// the `claims_shape_is_locked` test). `sub` is the user id
+/// (UUID string); `role` is the user's role string (`user`,
+/// `support`, `admin`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccessTokenClaims {
     /// The user id.
     pub sub: String,
     /// The user's role.
     pub role: String,
+    /// The token version (1). Defaults to 1 on decode, so a
+    /// pre-P1-013 token (no `ver`) still verifies.
+    #[serde(default = "default_token_version")]
+    pub ver: u32,
     /// The impersonating admin's id, when this token is an
     /// impersonation token (P1-010).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub impersonator_id: Option<Uuid>,
+    /// The token's unique id (one UUID per issuance). Defaults
+    /// to `None` on decode — pre-P1-013 tokens have none, and
+    /// the verifier never requires it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jti: Option<Uuid>,
     /// Expiry (unix seconds).
     pub exp: i64,
     /// Issued at (unix seconds).
     pub iat: i64,
+    /// The issuer (`"detag"`). Defaults on decode, so a
+    /// pre-P1-013 token (no `iss`) still verifies.
+    #[serde(default = "default_issuer")]
+    pub iss: String,
+    /// The audience (`"detag-api"`). Defaults on decode, so a
+    /// pre-P1-013 token (no `aud`) still verifies.
+    #[serde(default = "default_audience")]
+    pub aud: String,
 }
 
 /// What issuing / verifying a token can fail with. The two
@@ -112,7 +187,10 @@ impl From<jsonwebtoken::errors::Error> for JwtError {
 /// Issue an access token for `user_id` + `role`, valid
 /// `ttl_secs` seconds from now. The caller passes
 /// [`ACCESS_TOKEN_TTL_SECS`] in production; tests pass short
-/// (or negative) TTLs to prove expiry without a clock.
+/// (or negative) TTLs to prove expiry without a clock. The
+/// header carries `kid` = this secret's fingerprint; the
+/// claims carry the locked P1-013 shape (`ver`, `jti`, `iss`,
+/// `aud` — no `impersonator_id` on a normal token).
 pub fn issue_access_token(
     secret: &str,
     user_id: Uuid,
@@ -123,12 +201,18 @@ pub fn issue_access_token(
     let claims = AccessTokenClaims {
         sub: user_id.to_string(),
         role: role.to_string(),
+        ver: TOKEN_VERSION,
         impersonator_id: None,
+        jti: Some(Uuid::now_v7()),
         exp: (now + Duration::seconds(ttl_secs)).timestamp(),
         iat: now.timestamp(),
+        iss: TOKEN_ISSUER.to_string(),
+        aud: TOKEN_AUDIENCE.to_string(),
     };
+    let mut header = Header::new(Algorithm::HS256);
+    header.kid = Some(key_fingerprint(secret));
     encode(
-        &Header::new(Algorithm::HS256),
+        &header,
         &claims,
         &EncodingKey::from_secret(secret.as_bytes()),
     )
@@ -155,12 +239,18 @@ pub fn issue_impersonation_token(
     let claims = AccessTokenClaims {
         sub: user_id.to_string(),
         role: role.to_string(),
+        ver: TOKEN_VERSION,
         impersonator_id: Some(impersonator_id),
+        jti: Some(Uuid::now_v7()),
         exp: (now + Duration::seconds(ttl_secs)).timestamp(),
         iat: now.timestamp(),
+        iss: TOKEN_ISSUER.to_string(),
+        aud: TOKEN_AUDIENCE.to_string(),
     };
+    let mut header = Header::new(Algorithm::HS256);
+    header.kid = Some(key_fingerprint(secret));
     encode(
-        &Header::new(Algorithm::HS256),
+        &header,
         &claims,
         &EncodingKey::from_secret(secret.as_bytes()),
     )
@@ -175,14 +265,36 @@ pub fn issue_impersonation_token(
 /// clock skew to tolerate — a token is dead the second it
 /// expires, and tests can prove expiry with a 1-second-old
 /// token instead of waiting out jsonwebtoken's 60 s default.
+///
+/// P1-013 enforcement, in order: the signature + `exp`
+/// (jsonwebtoken); `iss` + `aud` (jsonwebtoken's issuer /
+/// audience validation — a wrong value is `Invalid`, i.e.
+/// PF-1010); `ver` must be [`TOKEN_VERSION`] (a token from
+/// a future shape is not one this verifier understands);
+/// a header `kid`, when present, must be this secret's
+/// fingerprint (a `kid` for another key is not this key's
+/// token — the Phase 5 dual-verify extends this to a key
+/// set). A missing `kid`, `ver`, `iss`, `aud`, or `jti` is a
+/// pre-P1-013 token and still verifies (the claims default
+/// on decode).
 pub fn verify_access_token(secret: &str, token: &str) -> Result<AccessTokenClaims, JwtError> {
     let mut validation = Validation::new(Algorithm::HS256);
     validation.leeway = 0;
+    validation.set_issuer(&[TOKEN_ISSUER]);
+    validation.set_audience(&[TOKEN_AUDIENCE]);
     let data = decode::<AccessTokenClaims>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),
         &validation,
     )?;
+    if data.claims.ver != TOKEN_VERSION {
+        return Err(JwtError::Invalid);
+    }
+    if let Some(kid) = &data.header.kid {
+        if kid != &key_fingerprint(secret) {
+            return Err(JwtError::Invalid);
+        }
+    }
     Ok(data.claims)
 }
 
@@ -278,5 +390,180 @@ mod tests {
             .expect("issue succeeds");
         let err = verify_access_token(SECRET, &token).expect_err("expired must fail");
         assert!(matches!(err, JwtError::Expired));
+    }
+
+    /// Decode a token's raw JSON payload (no verification —
+    /// the shape test reads what was issued, not what verifies).
+    fn payload_of(token: &str) -> serde_json::Value {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+        let parts: Vec<&str> = token.split('.').collect();
+        assert_eq!(parts.len(), 3, "a JWT has three segments");
+        let bytes = URL_SAFE_NO_PAD
+            .decode(parts[1])
+            .expect("payload is base64url");
+        serde_json::from_slice(&bytes).expect("payload is JSON")
+    }
+
+    /// Decode a token's raw JOSE header.
+    fn header_of(token: &str) -> serde_json::Value {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+        let parts: Vec<&str> = token.split('.').collect();
+        let bytes = URL_SAFE_NO_PAD
+            .decode(parts[0])
+            .expect("header is base64url");
+        serde_json::from_slice(&bytes).expect("header is JSON")
+    }
+
+    /// A valid claims value, for tests that mutate one field
+    /// and prove the verifier rejects it.
+    fn base_claims() -> AccessTokenClaims {
+        let now = Utc::now();
+        AccessTokenClaims {
+            sub: user_id().to_string(),
+            role: "user".to_string(),
+            ver: TOKEN_VERSION,
+            impersonator_id: None,
+            jti: Some(Uuid::now_v7()),
+            exp: (now + Duration::seconds(ACCESS_TOKEN_TTL_SECS)).timestamp(),
+            iat: now.timestamp(),
+            iss: TOKEN_ISSUER.to_string(),
+            aud: TOKEN_AUDIENCE.to_string(),
+        }
+    }
+
+    fn encode_with(secret: &str, claims: &AccessTokenClaims, kid: Option<&str>) -> String {
+        let mut header = Header::new(Algorithm::HS256);
+        header.kid = kid.map(str::to_string);
+        encode(
+            &header,
+            claims,
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .expect("encode succeeds")
+    }
+
+    #[test]
+    fn claims_shape_is_locked() {
+        let token = issue_access_token(SECRET, user_id(), "user", ACCESS_TOKEN_TTL_SECS)
+            .expect("issue succeeds");
+        // The header: HS256, typ JWT, kid = this secret's
+        // fingerprint.
+        let header = header_of(&token);
+        assert_eq!(header["alg"], "HS256");
+        assert_eq!(header["typ"], "JWT");
+        assert_eq!(header["kid"], key_fingerprint(SECRET));
+        // The payload: exactly the locked key set — no more,
+        // no fewer (a stray claim would be a shape change).
+        // Sorted: serde_json's map order is an implementation
+        // detail, not part of the shape.
+        let payload = payload_of(&token);
+        let mut keys: Vec<&str> = payload
+            .as_object()
+            .expect("payload is an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            ["aud", "exp", "iat", "iss", "jti", "role", "sub", "ver"],
+            "the claims shape is locked: {payload}"
+        );
+        assert_eq!(payload["sub"], user_id().to_string());
+        assert_eq!(payload["role"], "user");
+        assert_eq!(payload["ver"], TOKEN_VERSION);
+        assert_eq!(payload["iss"], TOKEN_ISSUER);
+        assert_eq!(payload["aud"], TOKEN_AUDIENCE);
+        assert_eq!(
+            payload["exp"].as_i64().unwrap() - payload["iat"].as_i64().unwrap(),
+            900
+        );
+        assert!(
+            payload["jti"].as_str().unwrap().parse::<Uuid>().is_ok(),
+            "jti is a UUID: {payload}"
+        );
+        assert!(
+            payload.get("impersonator_id").is_none(),
+            "a normal token has no impersonator"
+        );
+        // And it verifies, with the same values in the claims.
+        let claims = verify_access_token(SECRET, &token).expect("verify succeeds");
+        assert_eq!(claims.ver, TOKEN_VERSION);
+        assert_eq!(claims.iss, TOKEN_ISSUER);
+        assert_eq!(claims.aud, TOKEN_AUDIENCE);
+        assert!(claims.jti.is_some());
+        assert_eq!(claims.impersonator_id, None);
+    }
+
+    #[test]
+    fn impersonation_token_shape_includes_impersonator() {
+        let admin = Uuid::parse_str("019aa1b2-c3d4-7e5f-8000-000000000002").unwrap();
+        let token =
+            issue_impersonation_token(SECRET, user_id(), "user", admin, ACCESS_TOKEN_TTL_SECS)
+                .expect("issue succeeds");
+        let payload = payload_of(&token);
+        assert_eq!(payload["impersonator_id"], admin.to_string());
+        assert_eq!(header_of(&token)["kid"], key_fingerprint(SECRET));
+    }
+
+    #[test]
+    fn verify_rejects_wrong_issuer_audience_version_kid() {
+        // Wrong issuer.
+        let mut claims = base_claims();
+        claims.iss = "evil".to_string();
+        let token = encode_with(SECRET, &claims, Some(&key_fingerprint(SECRET)));
+        assert!(matches!(
+            verify_access_token(SECRET, &token).expect_err("wrong iss must fail"),
+            JwtError::Invalid
+        ));
+        // Wrong audience.
+        let mut claims = base_claims();
+        claims.aud = "other-api".to_string();
+        let token = encode_with(SECRET, &claims, Some(&key_fingerprint(SECRET)));
+        assert!(matches!(
+            verify_access_token(SECRET, &token).expect_err("wrong aud must fail"),
+            JwtError::Invalid
+        ));
+        // Future version.
+        let mut claims = base_claims();
+        claims.ver = TOKEN_VERSION + 1;
+        let token = encode_with(SECRET, &claims, Some(&key_fingerprint(SECRET)));
+        assert!(matches!(
+            verify_access_token(SECRET, &token).expect_err("future ver must fail"),
+            JwtError::Invalid
+        ));
+        // A kid for another key.
+        let claims = base_claims();
+        let token = encode_with(SECRET, &claims, Some("0000000000000000"));
+        assert!(matches!(
+            verify_access_token(SECRET, &token).expect_err("foreign kid must fail"),
+            JwtError::Invalid
+        ));
+    }
+
+    #[test]
+    fn verify_accepts_legacy_token_without_new_fields() {
+        // A pre-P1-013 token: claims {sub, role, exp, iat}
+        // only, no header kid. It still verifies — the new
+        // fields default on decode.
+        let now = Utc::now();
+        let legacy = serde_json::json!({
+            "sub": user_id().to_string(),
+            "role": "user",
+            "exp": (now + Duration::seconds(ACCESS_TOKEN_TTL_SECS)).timestamp(),
+            "iat": now.timestamp(),
+        });
+        let token = encode(
+            &Header::new(Algorithm::HS256),
+            &legacy,
+            &EncodingKey::from_secret(SECRET.as_bytes()),
+        )
+        .expect("encode succeeds");
+        let claims = verify_access_token(SECRET, &token).expect("legacy verifies");
+        assert_eq!(claims.ver, TOKEN_VERSION);
+        assert_eq!(claims.iss, TOKEN_ISSUER);
+        assert_eq!(claims.aud, TOKEN_AUDIENCE);
+        assert_eq!(claims.jti, None);
+        assert_eq!(claims.impersonator_id, None);
     }
 }

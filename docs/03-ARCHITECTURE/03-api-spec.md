@@ -81,8 +81,18 @@ takes email + password and returns 200 `{access_token,
 token_type: "Bearer", expires_in: 900}` plus the
 `detag_refresh` cookie (`HttpOnly; Secure; SameSite=Lax;
 Path=/v1/auth; Max-Age=2592000` — 30d, matching the session
-row). The access token is an HS256 JWT (`sub` = user id,
-`role` = user role, 15 min); the refresh token is a 32-byte
+row). The access token is an HS256 JWT, 15 min, with the
+locked P1-013 claims shape: `sub` = user id, `role` = user
+role, `ver` = 1, `jti` = one UUID per issuance,
+`iss` = `"detag"`, `aud` = `"detag-api"`, `exp` / `iat` =
+unix seconds, `impersonator_id` only on an impersonation
+token (P1-010); the JOSE header carries `kid` = the first 16
+hex chars of the signing secret's sha256. The verifier
+enforces `iss` + `aud` (wrong value → 401 `PF-1010`),
+`ver` = 1, and a `kid` that matches this secret (a foreign
+`kid` → 401 `PF-1010`); a token issued before P1-013
+(`{sub, role, exp, iat}` only, no `kid`) still verifies —
+the new fields default on decode. The refresh token is a 32-byte
 random string, stored as its sha256 only, one session row
 per login with a fresh `family_id` and device `{ua,
 ip_hash}` (the user-agent + the sha256 of the socket IP).
