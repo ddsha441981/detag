@@ -9,7 +9,10 @@
 //! `POST /v1/auth/confirm-email-change`, real since P1-006,
 //! `POST /v1/auth/refresh`, real since P1-014,
 //! `POST /v1/auth/logout` + `/v1/auth/logout-all`, real since
-//! P1-017, and `GET`/`PATCH`/`DELETE /v1/me`, real since
+//! P1-017, `GET /v1/me/sessions` +
+//! `DELETE /v1/me/sessions/{id}`, real since P1-019 — in
+//! `routes/sessions.rs`, the handlers live there, the nest
+//! lives here — and `GET`/`PATCH`/`DELETE /v1/me`, real since
 //! P1-005 (GET + PATCH) and P1-007 (DELETE) — in
 //! `routes/profile.rs`, the handlers live there, the nest
 //! lives here.
@@ -553,8 +556,8 @@ pub fn router() -> Router<AppState> {
                         .patch(super::profile::patch_me)
                         .delete(super::profile::delete_me),
                 )
-                .route("/sessions", get(stub))
-                .route("/sessions/{id}", delete(stub))
+                .route("/sessions", get(super::sessions::list_sessions))
+                .route("/sessions/{id}", delete(super::sessions::delete_session))
                 .route("/export", post(stub)),
         )
         .nest(

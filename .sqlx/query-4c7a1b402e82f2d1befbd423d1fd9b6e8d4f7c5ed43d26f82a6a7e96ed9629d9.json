@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO sessions (user_id, refresh_hash, family_id, device, expires_at)\n           VALUES ($1, $2, $3, $4, $5)\n           RETURNING id, user_id, refresh_hash, family_id, device,\n               expires_at, revoked_at, replaced_by, created_at",
+  "query": "SELECT id, user_id, refresh_hash, family_id, device,\n                  expires_at, revoked_at, replaced_by, last_seen, created_at\n           FROM sessions\n           WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > $2\n           ORDER BY created_at DESC, id DESC",
   "describe": {
     "columns": [
       {
@@ -93,6 +93,17 @@
       },
       {
         "ordinal": 8,
+        "name": "last_seen",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "sessions",
+            "name": "last_seen"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -106,9 +117,6 @@
     "parameters": {
       "Left": [
         "Uuid",
-        "Text",
-        "Uuid",
-        "Jsonb",
         "Timestamptz"
       ]
     },
@@ -121,8 +129,9 @@
       false,
       true,
       true,
+      true,
       false
     ]
   },
-  "hash": "5437a077fc37f6b3b93d7c4933a8f29019cd1616fb02d8c50161d5fe979090ab"
+  "hash": "4c7a1b402e82f2d1befbd423d1fd9b6e8d4f7c5ed43d26f82a6a7e96ed9629d9"
 }

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE sessions SET last_seen = $2\n         WHERE id = $1 AND (last_seen IS NULL OR last_seen < $3)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fbab24b902eb3faa2a3d8754ae6066fee4d4e291f55aff1c1bfbf3421e5cdc3f"
+}

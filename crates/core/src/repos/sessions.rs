@@ -29,6 +29,16 @@
 //! revoke the family. The token is expired, so it cannot
 //! mint anything; the window is bounded by the 30-day TTL,
 //! and the spec (P1-015) says to purge expired rows.
+//!
+//! `last_seen` (P1-019): the last time the session was
+//! presented (the refresh flow advances it, throttled —
+//! `touch_last_seen`, at most one write per session per
+//! throttle window). NULL for rows created before the P1-019
+//! migration (no activity was recorded for them); new rows
+//! set it at creation (`create` sets `last_seen = now()`).
+//! The session list (`GET /v1/me/sessions`) shows it per
+//! live session, so the user can tell which device was last
+//! active when.
 
 use super::error::RepoError;
 use chrono::{DateTime, Utc};
@@ -50,8 +60,19 @@ pub struct Session {
     pub expires_at: DateTime<Utc>,
     pub revoked_at: Option<DateTime<Utc>>,
     pub replaced_by: Option<Uuid>,
+    /// Last time the session was presented (P1-019) — NULL
+    /// for rows created before the migration.
+    pub last_seen: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }
+
+/// How often `last_seen` may advance (P1-019): 5 minutes, a
+/// product-policy constant, not config. A refresh presents
+/// the token at most every 15 minutes (the access-token
+/// lifetime), so a 5-minute throttle still records every
+/// normal refresh while bounding the write rate if a client
+/// hammers the endpoint; `touch_last_seen` enforces it.
+pub const LAST_SEEN_THROTTLE_SECS: i64 = 300;
 
 /// What a login inserts.
 #[derive(Debug, Clone)]
@@ -72,10 +93,10 @@ pub async fn create(
 ) -> Result<Session, RepoError> {
     sqlx::query_as!(
         Session,
-        r#"INSERT INTO sessions (user_id, refresh_hash, family_id, device, expires_at)
-           VALUES ($1, $2, $3, $4, $5)
+        r#"INSERT INTO sessions (user_id, refresh_hash, family_id, device, expires_at, last_seen)
+           VALUES ($1, $2, $3, $4, $5, now())
            RETURNING id, user_id, refresh_hash, family_id, device,
-               expires_at, revoked_at, replaced_by, created_at"#,
+               expires_at, revoked_at, replaced_by, last_seen, created_at"#,
         new.user_id,
         new.refresh_hash,
         new.family_id,
@@ -97,13 +118,88 @@ pub async fn list_for_user(
     sqlx::query_as!(
         Session,
         r#"SELECT id, user_id, refresh_hash, family_id, device,
-                  expires_at, revoked_at, replaced_by, created_at
+                  expires_at, revoked_at, replaced_by, last_seen, created_at
            FROM sessions WHERE user_id = $1 ORDER BY created_at DESC, id DESC"#,
         user_id,
     )
     .fetch_all(pool)
     .await
     .map_err(RepoError::from_sqlx)
+}
+
+/// List a user's LIVE sessions, newest first (P1-019 — the
+/// `GET /v1/me/sessions` listing): not revoked and not
+/// expired. A revoked or expired session is not a session
+/// the user has anymore — it is history (in `audit_logs`),
+/// and the user can only act on (revoke) a live one.
+pub async fn list_live_for_user(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+    now: DateTime<Utc>,
+) -> Result<Vec<Session>, RepoError> {
+    sqlx::query_as!(
+        Session,
+        r#"SELECT id, user_id, refresh_hash, family_id, device,
+                  expires_at, revoked_at, replaced_by, last_seen, created_at
+           FROM sessions
+           WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > $2
+           ORDER BY created_at DESC, id DESC"#,
+        user_id,
+        now,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
+/// Load one session of one user (P1-019 — the `DELETE
+/// /v1/me/sessions/{id}` handler). `None` when the id does
+/// not exist OR belongs to another user — the caller answers
+/// 404 either way (no enumeration of other users' sessions).
+pub async fn by_id_for_user(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    session_id: Uuid,
+    user_id: Uuid,
+) -> Result<Option<Session>, RepoError> {
+    sqlx::query_as!(
+        Session,
+        r#"SELECT id, user_id, refresh_hash, family_id, device,
+                  expires_at, revoked_at, replaced_by, last_seen, created_at
+           FROM sessions WHERE id = $1 AND user_id = $2"#,
+        session_id,
+        user_id,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
+/// Advance a session's `last_seen` to `now` (P1-019 — the
+/// refresh flow calls this on the presented row, inside the
+/// rotation transaction). Throttled: the write happens only
+/// when the stored value is NULL or older than
+/// `throttle_secs` — a client that presents the token in a
+/// burst must not cause a write per present. Returns `true`
+/// when the row was touched, `false` when the throttle held
+/// it back.
+pub async fn touch_last_seen(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    session_id: Uuid,
+    now: DateTime<Utc>,
+    throttle_secs: i64,
+) -> Result<bool, RepoError> {
+    let cutoff = now - chrono::Duration::seconds(throttle_secs);
+    let result = sqlx::query!(
+        "UPDATE sessions SET last_seen = $2
+         WHERE id = $1 AND (last_seen IS NULL OR last_seen < $3)",
+        session_id,
+        now,
+        cutoff,
+    )
+    .execute(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(result.rows_affected() > 0)
 }
 
 /// Revoke one session (P1-017 — logout). Sets
@@ -193,7 +289,7 @@ pub async fn by_refresh_hash(
     sqlx::query_as!(
         Session,
         r#"SELECT id, user_id, refresh_hash, family_id, device,
-                  expires_at, revoked_at, replaced_by, created_at
+                  expires_at, revoked_at, replaced_by, last_seen, created_at
            FROM sessions WHERE refresh_hash = $1"#,
         refresh_hash,
     )

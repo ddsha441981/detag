@@ -25,13 +25,14 @@ P0-106/107/108 (Phase 0 ticket work done, 105/108); updated
 ~15:55 IST 13 Nov after P1-015 (Phase 1, 15/111); updated
 ~15:50 IST 13 Nov after P1-016 (Phase 1, 16/111); updated
 ~16:10 IST 13 Nov after P1-017 (Phase 1, 17/111); updated
-~16:30 IST 13 Nov after P1-018 (Phase 1, 18/111). Resumed
+~16:30 IST 13 Nov after P1-018 (Phase 1, 18/111); updated
+~17:03 IST 13 Nov after P1-019 (Phase 1, 19/111). Resumed
 from the 8th coordinator's interruption (~23:21 IST, P0-092 in
 progress with uncommitted work). Local HEAD at this update:
-`54b940a` (P1-018). No push (local-only by rule; parent handles
+`75a353c` (P1-019). No push (local-only by rule; parent handles
 GitHub pushes).
 
-## Tickets done (30)
+## Tickets done (31)
 
 - **P0-092 — testcontainers fixtures** (`fd46981`): new `crates/testkit`
   (`detag-testkit`): `TestCtx` — per-test scratch DB (migrated, dropped
@@ -954,6 +955,49 @@ GitHub pushes).
   paragraph, security-testing bullets, threat model T22
   extended + update-log row. `just verify` green 588
   passed, 0 failed, attempt 1 (no flakes).
+- **P1-019 — Session listing** (`75a353c`):
+  Migration `20261113110414_sessions_last_seen` adds
+  `last_seen TIMESTAMPTZ` (NULL for pre-migration rows —
+  honest, not backfilled). Core `sessions.rs`:
+  `Session.last_seen: Option<DateTime>`; `create` sets
+  `last_seen = now()`; `touch_last_seen` (conditional on
+  the throttle — `last_seen IS NULL OR last_seen <
+  cutoff`); `LAST_SEEN_THROTTLE_SECS` = 300 (5 min,
+  product-policy); `list_live_for_user` (live only — not
+  revoked, not expired); `by_id_for_user` (one query, no
+  enumeration). Core `user_agent.rs` (new):
+  `parse_user_agent` — small heuristic table (Edge/Opera
+  before Chrome, Safari via Version/, mobile OS wins over
+  desktop) + 6 unit tests; unknown → `"Unknown device"`,
+  raw UA never echoed. Refresh service: the rotation tx
+  touches the presented row's `last_seen` (throttled; a
+  throttled-out touch is not an error). Service
+  `services/sessions.rs` (new: `list_sessions`,
+  `revoke_session`, `SessionItem` — `{id, device, ip_hash,
+  created_at, last_seen, expires_at}`) + handlers in
+  `routes/sessions.rs`: `GET /v1/me/sessions` (live only,
+  newest first) + `DELETE /v1/me/sessions/{id}`
+  (unknown/foreign → 404 PF-2010; already revoked → no-op
+  204; audited `session.revoked`). No "current" flag — the
+  access token carries no session identity (P1-017's logout
+  has the same limitation), recorded in the service doc +
+  api-spec. Route table 66 routes, 19 live / 47 stubs;
+  OpenAPI gains both paths + the `SessionItem` schema (17
+  paths). Tests: 6 new in `tests/sessions_list.rs`
+  (parsed devices incl. newest-first order, revoked +
+  expired excluded, DELETE revokes + audits + idempotent,
+  404 unknown/foreign, list requires auth, throttled
+  last_seen — backdated 10 min advances, 1 min does not).
+  Docs: api-spec session-listing paragraph, data-model
+  sessions row, security-testing bullets, threat model T22
+  extended + update-log row, ISSUES.md ASSUMPTION-010 9th
+  VM reset (~16:48 IST 13 Nov 2026 — runtime restarted
+  mid-verify; same restore steps; the fresh cluster needed
+  all migrations incl. the new one). `just verify` green
+  600 passed, 0 failed, attempt 3 (attempt 1 killed by the
+  9th VM reset mid-run — no result; attempt 2 failed on
+  FLAKY-001 `sigterm_drains_in_flight_request_and_exits_zero`,
+  then green on re-run; no other flakes).
 
 ## Tickets partially done
 
@@ -1071,7 +1115,8 @@ GitHub pushes).
   → **571 passed, 0 failed** (P1-015; +2 gc session-purge)
   → **578 passed, 0 failed** (P1-016; +7: 6 dual-auth + 1 auth unit)
   → **585 passed, 0 failed** (P1-017; +7 logout)
-  → **588 passed, 0 failed** (P1-018; +3 password-sessions).
+  → **588 passed, 0 failed** (P1-018; +3 password-sessions)
+  → **600 passed, 0 failed** (P1-019; +12: 6 sessions-list + 6 user-agent unit).
   Python script tests:
   119 → 132 → **143 OK**. `just fixtures-check`,
   `just templates-check`, `just snapshots-check`, `just prop`
@@ -1145,6 +1190,12 @@ GitHub pushes).
   variable in the logout tests — both lint fixes; the full
   verify took ~13.3 min, no flakes).
   P1-018: 1 (no flakes — the full verify took ~14 min).
+  P1-019: 3 (attempt 1 killed by the 9th VM reset mid-run —
+  no result; attempt 2 failed on FLAKY-001
+  `sigterm_drains_in_flight_request_and_exits_zero`, then
+  green on re-run; the green run took ~6.5 min — the
+  binaries were already built, so it was faster than the
+  usual ~13 min).
   Every red run was a known flake, a lint fix, or a
   test-isolation fix; no regressions found.
 - Coverage: first live report (P0-098): core 96.7%, engine 99.1%,
@@ -1164,11 +1215,11 @@ GitHub pushes).
 
 ## Next-run plan (first 5, in order)
 
-1. P1-019 — Session listing.
-2. P1-020 — Brute-force limiter wiring.
-3. P1-021 — Token revocation cache.
-4. P1-022 — JWT verification extractor.
-5. P1-023 — Auth integration suite.
+1. P1-020 — Brute-force limiter wiring.
+2. P1-021 — Token revocation cache.
+3. P1-022 — JWT verification extractor.
+4. P1-023 — Auth integration suite.
+5. P1-024 — Auth design notes.
 
 Notes for the next coordinator: the register handler established
 the handler shape — return `Response` directly, never

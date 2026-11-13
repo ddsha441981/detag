@@ -45,6 +45,7 @@ pub mod extractors;
 pub mod jobs;
 pub mod meta;
 pub mod profile;
+pub mod sessions;
 pub mod uploads;
 
 use crate::problem::ProblemResponse;

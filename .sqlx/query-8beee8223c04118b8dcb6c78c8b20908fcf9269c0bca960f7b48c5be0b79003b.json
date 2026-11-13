@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, refresh_hash, family_id, device,\n                  expires_at, revoked_at, replaced_by, created_at\n           FROM sessions WHERE refresh_hash = $1",
+  "query": "SELECT id, user_id, refresh_hash, family_id, device,\n                  expires_at, revoked_at, replaced_by, last_seen, created_at\n           FROM sessions WHERE id = $1 AND user_id = $2",
   "describe": {
     "columns": [
       {
@@ -93,6 +93,17 @@
       },
       {
         "ordinal": 8,
+        "name": "last_seen",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "sessions",
+            "name": "last_seen"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -105,7 +116,8 @@
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Uuid",
+        "Uuid"
       ]
     },
     "nullable": [
@@ -117,8 +129,9 @@
       false,
       true,
       true,
+      true,
       false
     ]
   },
-  "hash": "221f14cd12e13708c42f2c2466fefa23528f5880447843df8ddc1595e41913aa"
+  "hash": "8beee8223c04118b8dcb6c78c8b20908fcf9269c0bca960f7b48c5be0b79003b"
 }

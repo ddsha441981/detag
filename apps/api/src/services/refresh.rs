@@ -10,7 +10,11 @@
 //!   family, and marks the old row replaced (`revoked_at` +
 //!   `replaced_by` = the new row's id). One transaction:
 //!   the new session row + the replacement mark + the
-//!   `session.refreshed` audit.
+//!   `session.refreshed` audit. The presented row's
+//!   `last_seen` is advanced in the same transaction,
+//!   throttled (P1-019 — `sessions::touch_last_seen`, at most
+//!   one write per session per 5 minutes), so the session
+//!   list can show when the session was last active.
 //! - **Reuse:** presenting an ALREADY-REPLACED token means
 //!   the token was stolen (or presented twice at once): the
 //!   whole family is revoked, a `session.refresh_reused`
@@ -47,7 +51,7 @@ use detag_core::{
     repos::{
         audit_logs::{self, NewAuditLog},
         email_outbox::{self, NewOutboxMail},
-        sessions::{self, NewSession, Session},
+        sessions::{self, NewSession, Session, LAST_SEEN_THROTTLE_SECS},
         users, RepoError,
     },
     tokens::generate_token,
@@ -197,6 +201,17 @@ pub async fn refresh_session(
                 // and the caller runs the reuse path.
                 return Err(RefreshTxError::AlreadyRotated);
             }
+            // P1-019: advance the presented row's `last_seen`
+            // (throttled — at most one write per session per
+            // `LAST_SEEN_THROTTLE_SECS`). The new row was just
+            // created with `last_seen = now()`; this records
+            // when the OLD row was last presented, so the
+            // session list can show the last activity of the
+            // family line. A throttled-out touch is not an
+            // error — the row simply keeps its older value.
+            sessions::touch_last_seen(&mut *conn, session.id, Utc::now(), LAST_SEEN_THROTTLE_SECS)
+                .await
+                .map_err(RefreshTxError::Db)?;
             audit_logs::insert(
                 &mut *conn,
                 &NewAuditLog {

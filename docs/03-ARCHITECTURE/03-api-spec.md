@@ -254,6 +254,34 @@ route exists yet (when it lands it calls the same service
 with the current session from the presented cookie) — the
 same land-early pattern as P1-004's lockout `reset`.
 
+Session listing (P1-019, FR-A-01): `GET /v1/me/sessions`
+lists the user's LIVE sessions (not revoked, not expired),
+newest first — each item is `{id, device, ip_hash,
+created_at, last_seen, expires_at}`. The `device` is the
+parsed User-Agent label (`"Chrome on macOS"` — a small
+heuristic table in `detag_core::user_agent`, never the raw
+UA string); `ip_hash` is the sha256 of the client IP at
+login (a hash, not PII); `last_seen` is the last time the
+session was presented (NULL for rows created before the
+P1-019 migration — no activity was recorded for them).
+There is NO "current" flag: the access token carries no
+session identity (P1-017's logout has the same
+limitation), so the handler cannot know which row the
+caller is — the user tells sessions apart by device +
+created + last_seen. `last_seen` advances on refresh
+presentation, throttled to one write per session per 5
+minutes (`LAST_SEEN_THROTTLE_SECS`, a product-policy
+constant — a normal refresh cycle is every 15 minutes, so
+every normal refresh still records while a burst of
+presents cannot cause a write per present). The touch runs
+inside the rotation transaction, on the PRESENTED row
+(the new row is created with `last_seen = now()` anyway);
+a throttled-out touch is not an error. `DELETE
+/v1/me/sessions/{id}` revokes one session (audited
+`session.revoked`, `after: {session_id}`); unknown id, or
+an id belonging to another user → 404 `PF-2010` (no
+enumeration); already revoked → no-op 204.
+
 Register behavior (P1-001, FR-A-01): the email is trimmed +
 lowercased before storage (the column is citext, so the match
 is case-insensitive either way); the password is Argon2id-hashed

@@ -1,0 +1,13 @@
+-- sessions_last_seen (20261113110414, P1-019).
+-- Per docs/03-ARCHITECTURE/03-api-spec.md: GET /v1/me/sessions
+-- lists each session's device, created, and last_seen (sliding,
+-- throttled update).
+--
+-- `last_seen` is NULL for rows created before this migration:
+-- no activity was recorded for them, and NULL says so honestly
+-- (a backfilled `now()` would claim they were all last seen at
+-- migration time). New rows set it at creation (the repo's
+-- INSERT sets `last_seen = now()`); the refresh flow advances
+-- it on presentation, throttled (see `sessions::touch_last_seen`
+-- — at most one write per session per throttle window).
+ALTER TABLE sessions ADD COLUMN last_seen TIMESTAMPTZ;

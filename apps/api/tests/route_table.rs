@@ -31,8 +31,10 @@
 //!    `POST /v1/auth/logout` also answer 401 PF-1001 (no
 //!    cookie — the handler reads the refresh token from the
 //!    cookie, not the body), and P1-017 `POST
-//!    /v1/auth/logout-all` answers 401 PF-1001 (no credential
-//!    — the Bearer extractor rejects before the handler runs).
+//!    /v1/auth/logout-all` + P1-019 `GET /v1/me/sessions` +
+//!    `DELETE /v1/me/sessions/{id}` answer 401 PF-1001 (no
+//!    credential — the Bearer extractor rejects before the
+//!    handler runs).
 //!
 //! The probes send a fixed `x-request-id` and assert the 501
 //! problem body echoes it — that proves the whole chain at
@@ -207,8 +209,9 @@ async fn every_table_entry_resolves_to_the_stub() {
         // P1-005 GET + PATCH /v1/me, P1-007 DELETE /v1/me,
         // P1-008 admin suspend/restore, P1-009 GET
         // /v1/admin/users, P1-010 admin impersonate, and
-        // P1-017 POST /v1/auth/logout-all: real handlers
-        // behind an auth extractor — the probe sends no
+        // P1-017 POST /v1/auth/logout-all, and P1-019 GET
+        // /v1/me/sessions + DELETE /v1/me/sessions/{id}: real
+        // handlers behind an auth extractor — the probe sends no
         // credential, so the extractor rejects with 401 PF-1001
         // (not 501) and echoes the probe id (the route exists;
         // each handler's own test covers its success paths).
@@ -219,6 +222,8 @@ async fn every_table_entry_resolves_to_the_stub() {
                     || *path == "/v1/admin/users/{id}/impersonate"
                     || *path == "/v1/auth/logout-all"))
             || (*method == "GET" && *path == "/v1/admin/users")
+            || (*method == "GET" && *path == "/v1/me/sessions")
+            || (*method == "DELETE" && *path == "/v1/me/sessions/{id}")
         {
             let req = Request::builder()
                 .method(Method::from_bytes(method.as_bytes()).expect("method parses"))
