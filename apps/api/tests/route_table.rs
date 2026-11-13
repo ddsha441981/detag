@@ -17,10 +17,10 @@
 //!    assert 404, proving the probes are not vacuously passing.
 //!    Exception: routes whose handler is real (P1-001
 //!    `/v1/auth/register`; P1-002 `/v1/auth/verify-email` +
-//!    `/v1/auth/resend-verification`) answer with their real
-//!    behavior for the empty-body probe — 422 PF-2002, since
-//!    `ValidatedJson` rejects the empty body — and the probe
-//!    asserts that instead of 501.
+//!    `/v1/auth/resend-verification`; P1-003 `/v1/auth/login`)
+//!    answer with their real behavior for the empty-body probe
+//!    — 422 PF-2002, since `ValidatedJson` rejects the empty
+//!    body — and the probe asserts that instead of 501.
 //!
 //! The probes send a fixed `x-request-id` and assert the 501
 //! problem body echoes it — that proves the whole chain at
@@ -35,6 +35,7 @@ use detag_api::{build_router, AppState};
 use detag_core::config::Settings;
 use detag_core::metrics::Metrics;
 use tower::ServiceExt;
+use uuid::Uuid;
 
 /// The probe id: a fixed UUIDv7-shaped string, echoed by the
 /// middleware and the stub body alike.
@@ -70,6 +71,15 @@ fn route_table_has_no_duplicates() {
 #[tokio::test]
 async fn every_table_entry_resolves_to_the_stub() {
     let router = test_router();
+    // The probes send 62 /v1 requests in one burst through the
+    // rate limiter (P0-103). They use a per-run XFF address so
+    // they never share the oneshot "unknown" bucket with the
+    // other test binaries running in parallel — the aggregate
+    // "unknown" traffic tripped the 120-burst IP bucket once
+    // (P1-003's login tests added ~30 parallel requests).
+    // The middleware treats XFF as an opaque bucket id, so a
+    // UUID suffix is a valid key.
+    let xff = format!("203.0.113.{}", Uuid::now_v7());
     for (method, path) in ROUTE_TABLE {
         // The two meta routes are real handlers, not stubs:
         // /healthz answers 200 "ok", /readyz answers 200-or-503
@@ -105,20 +115,24 @@ async fn every_table_entry_resolves_to_the_stub() {
         }
         // Real handlers (not stubs) answer with their real
         // behavior for the empty-body probe. P1-001 register +
-        // P1-002 verify-email / resend-verification: the empty
-        // body fails ValidatedJson → 422 PF-2002 with the probe
-        // id echoed (the route exists; each handler's own test
-        // covers its success paths).
+        // P1-002 verify-email / resend-verification + P1-003
+        // login: the empty body fails ValidatedJson → 422
+        // PF-2002 with the probe id echoed (the route exists;
+        // each handler's own test covers its success paths).
         if *method == "POST"
             && matches!(
                 *path,
-                "/v1/auth/register" | "/v1/auth/verify-email" | "/v1/auth/resend-verification"
+                "/v1/auth/register"
+                    | "/v1/auth/verify-email"
+                    | "/v1/auth/resend-verification"
+                    | "/v1/auth/login"
             )
         {
             let req = Request::builder()
                 .method(Method::POST)
                 .uri(*path)
                 .header("x-request-id", PROBE_ID)
+                .header("x-forwarded-for", xff.as_str())
                 .body(axum::body::Body::empty())
                 .unwrap();
             let res = router
@@ -146,6 +160,7 @@ async fn every_table_entry_resolves_to_the_stub() {
             .method(Method::from_bytes(method.as_bytes()).expect("method parses"))
             .uri(&uri)
             .header("x-request-id", PROBE_ID)
+            .header("x-forwarded-for", xff.as_str())
             .body(axum::body::Body::empty())
             .unwrap();
         let res = router
@@ -173,6 +188,9 @@ async fn every_table_entry_resolves_to_the_stub() {
 #[tokio::test]
 async fn unknown_paths_are_404() {
     let router = test_router();
+    // Same per-run XFF as the probe test (see above): the /v1
+    // 404s travel the rate limiter too.
+    let xff = format!("203.0.113.{}", Uuid::now_v7());
     for (method, path) in [
         ("GET", "/v1/nope"),
         (
@@ -186,6 +204,7 @@ async fn unknown_paths_are_404() {
         let req = Request::builder()
             .method(Method::from_bytes(method.as_bytes()).expect("method parses"))
             .uri(path)
+            .header("x-forwarded-for", xff.as_str())
             .body(axum::body::Body::empty())
             .unwrap();
         let res = router

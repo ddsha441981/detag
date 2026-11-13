@@ -78,7 +78,9 @@ use detag_core::clock::{Clock, SystemClock};
 use detag_core::config::Settings;
 use detag_core::db::{connect_lazy, DbPool, PoolConfig};
 use detag_core::metrics::Metrics;
+use detag_core::password::{hash_password, Argon2Params, PasswordError};
 use detag_core::redis::{create_pool, RedisPool, RedisPoolConfig, RedisPoolError};
+use detag_core::tokens::generate_token;
 use detag_storage::provider::StorageError;
 use detag_storage::s3::{S3Config, S3Storage};
 use std::sync::Arc;
@@ -102,6 +104,20 @@ pub struct AppState {
     /// Time source: [`SystemClock`] in production, a frozen
     /// [`ManualClock`](detag_core::clock::ManualClock) in tests.
     pub clock: Arc<dyn Clock>,
+    /// The dummy Argon2id hash for constant-time login (P1-003):
+    /// when the login email has no account, the service verifies
+    /// the presented password against THIS hash (and discards
+    /// the result) instead of skipping the verify — so an
+    /// unknown email costs exactly one Argon2id verify, the
+    /// same as a wrong password, and timing cannot tell them
+    /// apart. The preimage is a random 32-byte token generated
+    /// once at boot (nobody knows it; knowing the hash buys
+    /// nothing — the result is discarded either way). Computed
+    /// here, once, with the settings' Argon2 params, so the
+    /// timing matches a real verify by construction; hashing it
+    /// per login would double the unknown-email cost (~100 ms
+    /// vs ~50 ms) and re-open the oracle.
+    pub dummy_password_hash: String,
 }
 
 /// Building the state failed. The `Display` is deliberately a
@@ -118,6 +134,12 @@ pub enum AppStateError {
     /// `PF_REDIS_URL` is malformed.
     #[error("invalid PF_REDIS_URL")]
     Redis(#[from] RedisPoolError),
+
+    /// The dummy password hash (P1-003, constant-time login)
+    /// could not be computed at boot. This is a fail-fast: a
+    /// getrandom failure means the process cannot do its job.
+    #[error("password hashing failed at startup")]
+    Password(#[from] PasswordError),
 
     /// A `PF_S3_*` value is missing or unusable.
     #[error("invalid storage configuration (PF_S3_*)")]
@@ -139,6 +161,11 @@ impl AppState {
             access_key: settings.s3_access_key.clone(),
             secret_key: settings.s3_secret_key.clone(),
         })?;
+        // The dummy hash for constant-time login (P1-003): one
+        // Argon2id hash of a random token, computed once at boot
+        // with the settings' params. ~50 ms, once.
+        let dummy_password_hash =
+            hash_password(&generate_token(), &Argon2Params::from_settings(settings))?;
         Ok(Self {
             pool,
             redis,
@@ -146,6 +173,7 @@ impl AppState {
             settings: Arc::new(settings.clone()),
             rate_limit: rate_limit::RateLimitPolicy::from_settings(settings),
             clock: Arc::new(SystemClock),
+            dummy_password_hash,
         })
     }
 

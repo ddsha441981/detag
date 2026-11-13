@@ -52,6 +52,7 @@ insta = { version = "1.49", features = ["json"] }
 proptest = "1"
 criterion = { version = "0.7", features = ["html_reports"] }
 image = "0.25"
+jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs"] }
 sha2 = "0.11"
 base64 = "0.22"
 argon2 = { version = "0.5", features = ["rand"] }

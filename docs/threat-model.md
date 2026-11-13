@@ -103,6 +103,7 @@ Mitigation status: **LIVE** (in code + tested), **WIRED**
 | T14 | Elevation of privilege — admin invite abuse | Admin CLI | Invite-only admin creation; owner decision item 8 (who owns the CLI) | OPEN (owner) |
 | T15 | Supply chain — compromised crate | Build | `cargo-deny` advisories/bans/licenses in CI + weekly audit (P0-100); 9 no-upgrade-path advisories ignored with per-ID reasons + removal conditions in `deny.toml` | LIVE |
 | T16 | Provenance strip abused to launder AI media | Engine (Phase 2) | C2PA strip + SynthID removal are gated OFF (research only); ownership attestation + AUP enforced | LIVE (policy) |
+| T17 | Spoofing — credential stuffing / brute-force login | `/v1/auth/login` | Generic 401 `PF-1001` (unknown email ≡ wrong password — byte-identical bodies, P1-003) + constant-time verify via the precomputed dummy hash (P1-003) + per-account bucket 10 burst / 1 per min, checked pre-auth (P1-003) + per-IP bucket (P0-103) | LIVE (bucket) / PLANNED (durable lockout, P1-004) |
 
 ## Recorded trade-offs (accepted risks)
 
@@ -147,3 +148,4 @@ Mitigation status: **LIVE** (in code + tested), **WIRED**
 | Date | Change | Ticket |
 | --- | --- | --- |
 | 2026-11-13 | Stub created: assets, actors, entry points, trust boundaries, STRIDE-lite (T1–T16), recorded trade-offs | P0-106 |
+| 2026-11-13 | T17 added (credential stuffing / brute-force login): generic 401 + dummy-hash constant-time verify + per-account bucket live; durable lockout planned | P1-003 |

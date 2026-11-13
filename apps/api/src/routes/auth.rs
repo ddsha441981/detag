@@ -3,15 +3,19 @@
 //! API keys live here (they are credentials; the spec's six
 //! modules leave them no other home). Handlers are the shared
 //! 501 stub until their Phase 1 tickets land — except
-//! `/v1/auth/register`, which is real since P1-001, and
+//! `/v1/auth/register`, which is real since P1-001,
 //! `/v1/auth/verify-email` + `/v1/auth/resend-verification`,
-//! real since P1-002.
+//! real since P1-002, and `/v1/auth/login`, real since P1-003.
 
 use super::extractors::RequestId;
 use super::stub;
 use crate::{
     problem::ProblemResponse,
+    rate_limit::denied_response,
     services::{
+        login::{
+            login_user, DeviceInfo, LoginError, LoginRequest, LoginResponse, REFRESH_COOKIE_NAME,
+        },
         register::{register_user, RegisterError, RegisterRequest, UserResponse},
         verification::{
             resend_verification as resend_verification_service,
@@ -23,14 +27,15 @@ use crate::{
 };
 use axum::{
     extract::{Extension, State},
-    http::StatusCode,
+    http::{header, HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Json, Response},
     routing::{delete, get, post},
     Router,
 };
 use detag_core::error::{AppError, Problem, Profile};
+use detag_core::jwt::REFRESH_TOKEN_TTL_SECS;
 
-use crate::routes::extractors::ValidatedJson;
+use crate::routes::extractors::{MaybeConnectInfo, ValidatedJson};
 
 /// Register a user (P1-001, FR-A-01). Thin handler: the
 /// service owns the flow; this maps its errors to the
@@ -153,6 +158,75 @@ pub async fn resend_verification(
     StatusCode::NO_CONTENT.into_response()
 }
 
+/// Log a user in (P1-003, FR-A-01). Thin handler: the service
+/// owns the flow; this maps its errors to the problem+json
+/// envelope and sets the refresh cookie. Returns `Response`
+/// directly (the P1-001 handler shape — clippy
+/// `result_large_err` forbids `Result<_, ProblemResponse>`).
+///
+/// The device info comes from the request itself: the
+/// `User-Agent` header and the socket address
+/// (`MaybeConnectInfo` — the never-rejecting extractor; oneshot
+/// tests have no socket, so the IP is `"unknown"` there). No
+/// XFF: the device record is the socket IP, not a spoofable
+/// header.
+#[utoipa::path(
+    post,
+    path = "/v1/auth/login",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "Logged in; access token in the body, refresh token in the httpOnly cookie", body = LoginResponse),
+        (status = 401, description = "Invalid email or password (generic — no enumeration)", body = Problem),
+        (status = 422, description = "Validation failed (email shape, password required)", body = Problem),
+        (status = 429, description = "Too many login attempts for this account", body = Problem)
+    ),
+    tag = "auth"
+)]
+pub async fn login(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    headers: HeaderMap,
+    MaybeConnectInfo(addr): MaybeConnectInfo,
+    ValidatedJson(req): ValidatedJson<LoginRequest>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let device = DeviceInfo {
+        user_agent: headers
+            .get(header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string),
+        ip: addr
+            .map(|socket| socket.ip().to_string())
+            .unwrap_or_else(|| "unknown".to_string()),
+    };
+    match login_user(&state, &req, &device).await {
+        Ok(outcome) => {
+            let cookie = format!(
+                "{REFRESH_COOKIE_NAME}={}; HttpOnly; Secure; SameSite=Lax; Path=/v1/auth; Max-Age={REFRESH_TOKEN_TTL_SECS}",
+                outcome.refresh_token
+            );
+            let mut res = (StatusCode::OK, Json(outcome.response)).into_response();
+            if let Ok(value) = HeaderValue::from_str(&cookie) {
+                res.headers_mut().insert(header::SET_COOKIE, value);
+            }
+            res
+        }
+        Err(LoginError::Invalid) => ProblemResponse(AppError::Unauthenticated.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response(),
+        Err(LoginError::RateLimited(result)) => {
+            denied_response(result, state.rate_limit.login_account_burst(), request_id)
+        }
+        Err(LoginError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// The auth nests: registration/login/session management under
 /// `/v1/auth`, the profile + sessions under `/v1/me`, API keys
 /// under `/v1/api-keys`.
@@ -164,7 +238,7 @@ pub fn router() -> Router<AppState> {
                 .route("/register", post(register))
                 .route("/verify-email", post(verify_email))
                 .route("/resend-verification", post(resend_verification))
-                .route("/login", post(stub))
+                .route("/login", post(login))
                 .route("/refresh", post(stub))
                 .route("/logout", post(stub))
                 .route("/forgot-password", post(stub))

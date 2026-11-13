@@ -205,6 +205,20 @@ pub struct Settings {
     /// token-bucket refill (P0-103): tokens per minute (600 = a
     /// sustained 10 req/s). Default 600. 0 = never refills.
     pub rate_limit_route_refill_per_min: u64,
+    /// Env: PF_RATE_LIMIT_LOGIN_ACCOUNT_BURST — per-account
+    /// login-attempt bucket burst (P1-003): how many login
+    /// attempts one account (keyed by the sha256 of its email,
+    /// pre-auth) may make in a burst. Default 10. Must be >= 1.
+    /// The refill is deliberately slow (1/min): a burst of
+    /// guesses then one attempt a minute. P1-004's lockout is
+    /// the durable backstop — this bucket is the cheap,
+    /// Redis-backed first line.
+    pub rate_limit_login_account_burst: u64,
+    /// Env: PF_RATE_LIMIT_LOGIN_ACCOUNT_REFILL_PER_MIN —
+    /// per-account login-attempt bucket refill (P1-003): tokens
+    /// per minute. Default 1. 0 = never refills (a fixed
+    /// allowance until the key expires).
+    pub rate_limit_login_account_refill_per_min: u64,
     /// Env: PF_WORKER_CONCURRENCY — apalis workers per queue. Each
     /// of the four queues (pipeline, cleanup, email, reconciliation)
     /// runs this many workers (P0-075). Default 4. Must be >= 1.
@@ -300,6 +314,8 @@ impl Default for Settings {
             rate_limit_ip_refill_per_min: 120,
             rate_limit_route_burst: 600,
             rate_limit_route_refill_per_min: 600,
+            rate_limit_login_account_burst: 10,
+            rate_limit_login_account_refill_per_min: 1,
             worker_concurrency: 4,
             worker_metrics_port: 9092,
             worker_heartbeat_interval_secs: 15,
@@ -363,6 +379,14 @@ const FIELD_VARS: &[(&str, &str)] = &[
     (
         "rate_limit_route_refill_per_min",
         "PF_RATE_LIMIT_ROUTE_REFILL_PER_MIN",
+    ),
+    (
+        "rate_limit_login_account_burst",
+        "PF_RATE_LIMIT_LOGIN_ACCOUNT_BURST",
+    ),
+    (
+        "rate_limit_login_account_refill_per_min",
+        "PF_RATE_LIMIT_LOGIN_ACCOUNT_REFILL_PER_MIN",
     ),
     ("worker_concurrency", "PF_WORKER_CONCURRENCY"),
     ("worker_metrics_port", "PF_WORKER_METRICS_PORT"),
@@ -472,6 +496,11 @@ impl Settings {
             rate_limit_ip_refill_per_min: field!(rate_limit_ip_refill_per_min, u64),
             rate_limit_route_burst: field!(rate_limit_route_burst, u64),
             rate_limit_route_refill_per_min: field!(rate_limit_route_refill_per_min, u64),
+            rate_limit_login_account_burst: field!(rate_limit_login_account_burst, u64),
+            rate_limit_login_account_refill_per_min: field!(
+                rate_limit_login_account_refill_per_min,
+                u64
+            ),
             worker_concurrency: field!(worker_concurrency, usize),
             worker_metrics_port: field!(worker_metrics_port, u16),
             worker_heartbeat_interval_secs: field!(worker_heartbeat_interval_secs, u64),
@@ -584,6 +613,12 @@ impl Settings {
         }
         if self.rate_limit_route_burst == 0 {
             invalid("PF_RATE_LIMIT_ROUTE_BURST", "must be >= 1".to_string());
+        }
+        if self.rate_limit_login_account_burst == 0 {
+            invalid(
+                "PF_RATE_LIMIT_LOGIN_ACCOUNT_BURST",
+                "must be >= 1".to_string(),
+            );
         }
         if self.worker_concurrency == 0 {
             invalid("PF_WORKER_CONCURRENCY", "must be >= 1".to_string());
@@ -837,6 +872,8 @@ mod tests {
         "PF_RATE_LIMIT_IP_REFILL_PER_MIN",
         "PF_RATE_LIMIT_ROUTE_BURST",
         "PF_RATE_LIMIT_ROUTE_REFILL_PER_MIN",
+        "PF_RATE_LIMIT_LOGIN_ACCOUNT_BURST",
+        "PF_RATE_LIMIT_LOGIN_ACCOUNT_REFILL_PER_MIN",
         "PF_METRICS_PORT",
         "PF_METRICS_HOST",
         "PF_STRIPE_SECRET_KEY",
@@ -1064,6 +1101,8 @@ mod tests {
     /// P0-103: rate-limit defaults are ip 120 burst / 120 per min
     /// and route 600 burst / 600 per min; a zero burst fails
     /// naming the var (a zero refill is legal — a fixed allowance).
+    /// P1-003: the per-account login bucket defaults to 10 burst
+    /// / 1 per min, and its zero burst fails the same way.
     #[test]
     fn rate_limit_defaults_and_zero_burst_fails() {
         let _env = clean_env();
@@ -1072,6 +1111,8 @@ mod tests {
         assert_eq!(settings.rate_limit_ip_refill_per_min, 120);
         assert_eq!(settings.rate_limit_route_burst, 600);
         assert_eq!(settings.rate_limit_route_refill_per_min, 600);
+        assert_eq!(settings.rate_limit_login_account_burst, 10);
+        assert_eq!(settings.rate_limit_login_account_refill_per_min, 1);
         env::set_var("PF_RATE_LIMIT_IP_BURST", "0");
         let err = Settings::load_from(None).expect_err("0 burst must fail");
         assert!(
@@ -1086,11 +1127,20 @@ mod tests {
             "error must name the var, got: {err}"
         );
         env::set_var("PF_RATE_LIMIT_ROUTE_BURST", "3");
+        env::set_var("PF_RATE_LIMIT_LOGIN_ACCOUNT_BURST", "0");
+        let err = Settings::load_from(None).expect_err("0 login burst must fail");
+        assert!(
+            err.to_string()
+                .contains("PF_RATE_LIMIT_LOGIN_ACCOUNT_BURST"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_RATE_LIMIT_LOGIN_ACCOUNT_BURST", "2");
         env::set_var("PF_RATE_LIMIT_IP_REFILL_PER_MIN", "0");
         let settings = Settings::load_from(None).expect("0 refill must load");
         assert_eq!(settings.rate_limit_ip_burst, 5);
         assert_eq!(settings.rate_limit_route_burst, 3);
         assert_eq!(settings.rate_limit_ip_refill_per_min, 0);
+        assert_eq!(settings.rate_limit_login_account_burst, 2);
     }
 
     /// P1-001: auth hashing + registration policy defaults

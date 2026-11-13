@@ -2,7 +2,7 @@
 
 Executed as tickets in Phase 1 (authz), Phase 2/3 (upload abuse), Phase 5 (full sweep). Each item = a named test that lives in CI, not a one-off manual check.
 
-Threat model: `docs/threat-model.md` — the living threat model this plan tests against. If a test here covers a threat, the threat's ID (T1–T16) is the cross-reference.
+Threat model: `docs/threat-model.md` — the living threat model this plan tests against. If a test here covers a threat, the threat's ID (T1–T17) is the cross-reference.
 
 ## Authorization matrix sweep (IDOR)
 
@@ -14,6 +14,7 @@ For every `/v1` endpoint × role {anonymous, user-A, user-B, support, admin, api
 - JWT: alg-confusion attempt (alg:none, HS/RS swap) rejected; exp/nbf enforced; kid confusion rejected.
 - Password flows: reset token single-use; old password invalid after reset; email-verification enforced before jobs.
 - Cookie flags: Secure, HttpOnly, SameSite=Lax asserted in integration tests.
+- Login (P1-003, T17): unknown email and wrong password answer byte-identical 401 `PF-1001` (the test compares the two bodies — no enumeration); constant-time verify via the precomputed dummy hash (an unknown email costs one Argon2id verify, like a wrong password); per-account bucket (10 burst / 1 per min) trips pre-auth — a correct-password attempt after the limit is 429 `PF-3007` with `Retry-After`; per-IP bucket trips on login too (the middleware's bucket, proven with a per-test XFF address).
 
 ## Upload abuse suite
 

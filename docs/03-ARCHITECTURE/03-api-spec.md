@@ -75,6 +75,35 @@ handler calls the `require_verified` guard first — `PF-1009`
 the spec says "resend rate-limited (3/hour)" but names no
 route; P1-002 added it.)
 
+Login behavior (P1-003, FR-A-01): `POST /v1/auth/login`
+takes email + password and returns 200 `{access_token,
+token_type: "Bearer", expires_in: 900}` plus the
+`detag_refresh` cookie (`HttpOnly; Secure; SameSite=Lax;
+Path=/v1/auth; Max-Age=2592000` — 30d, matching the session
+row). The access token is an HS256 JWT (`sub` = user id,
+`role` = user role, 15 min); the refresh token is a 32-byte
+random string, stored as its sha256 only, one session row
+per login with a fresh `family_id` and device `{ua,
+ip_hash}` (the user-agent + the sha256 of the socket IP).
+No enumeration: unknown email and wrong password answer the
+same 401 `PF-1001` with the taxonomy's static detail — the
+bodies are byte-identical. Constant-time verify: an unknown
+email still costs one Argon2id verify, against the state's
+precomputed dummy hash (one hash at boot, same params). A
+malformed stored hash is a 500, never "wrong password".
+Login does NOT require a verified email — verification gates
+job creation (PF-1009), not authentication. Rate limits:
+per-IP via the middleware bucket (P0-103) + per-account via
+the `login_account` bucket (10 burst / 1 per min,
+`PF_RATE_LIMIT_LOGIN_ACCOUNT_*`, keyed by the sha256 of the
+normalized email), checked BEFORE the password verify — a
+denial is 429 `PF-3007` with `Retry-After`. Redis down fails
+open (warn logged, P0-103); the durable lockout is P1-004.
+Audit: `login.attempt` (anonymous, email hash) +
+`login.success` (in the session transaction) +
+`login.failure` (anonymous, email hash + `reason`:
+`unknown_email` / `wrong_password` — internal only).
+
 Register behavior (P1-001, FR-A-01): the email is trimmed +
 lowercased before storage (the column is citext, so the match
 is case-insensitive either way); the password is Argon2id-hashed

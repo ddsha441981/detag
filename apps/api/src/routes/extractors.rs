@@ -29,6 +29,8 @@
 //!   parsed, so there are no fields to report) — the same body
 //!   the error mapper would have produced for the framework
 //!   rejection, so the mapper passes it through untouched.
+//! - [`MaybeConnectInfo`] — the peer's socket address when the
+//!   server provided it (P1-003); never rejects (absent → None).
 //!
 //! Do not invent a per-module auth extractor: a handler that
 //! needs the caller takes [`AuthContext`] from this module.
@@ -82,5 +84,35 @@ where
                 errors.into_problem(Profile::Production, request_id.as_deref()),
             )),
         }
+    }
+}
+
+/// The socket address of the peer, if the server provided it
+/// (`into_make_service_with_connect_info` in main.rs). Always
+/// succeeds: absent → `None` (oneshot tests have no socket).
+/// axum 0.8 has no `FromRequestParts` for
+/// `Option<ConnectInfo<_>>`, and bare `ConnectInfo` rejects
+/// (500) when the extension is absent — a handler that only
+/// *records* the address (login's session device) must not
+/// 500 for that. Added P1-003.
+#[derive(Debug, Clone, Copy)]
+pub struct MaybeConnectInfo(pub Option<std::net::SocketAddr>);
+
+impl<S> axum::extract::FromRequestParts<S> for MaybeConnectInfo
+where
+    S: Send + Sync,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(Self(
+            parts
+                .extensions
+                .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                .map(|axum::extract::ConnectInfo(addr)| *addr),
+        ))
     }
 }

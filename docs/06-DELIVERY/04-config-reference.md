@@ -36,6 +36,8 @@
 | `PF_QUEUE_VISIBILITY_TIMEOUT_SECS` | `300` | worker |
 | `PF_RATE_LIMIT_IP_BURST` | `120` | api |
 | `PF_RATE_LIMIT_IP_REFILL_PER_MIN` | `120` | api |
+| `PF_RATE_LIMIT_LOGIN_ACCOUNT_BURST` | `10` | api |
+| `PF_RATE_LIMIT_LOGIN_ACCOUNT_REFILL_PER_MIN` | `1` | api |
 | `PF_RATE_LIMIT_ROUTE_BURST` | `600` | api |
 | `PF_RATE_LIMIT_ROUTE_REFILL_PER_MIN` | `600` | api |
 | `PF_RAZORPAY_KEY` | `rzp_test_placeholder` | billing |

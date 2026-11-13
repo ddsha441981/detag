@@ -212,6 +212,7 @@ in a real inbox.
 | `PF_TOS_CURRENT_VERSION` | api | v1 | ToS version a registration must accept (P1-001); any other `accept_tos_version` is a 422 |
 | `PF_DISPOSABLE_EMAIL_DOMAINS` | api | mailinator.com, guerrillamail.com, 10minutemail.com, tempmail.com, yopmail.com | comma-separated disposable domains rejected at registration (P1-001); empty = no denylist |
 | `PF_RATE_LIMIT_IP_BURST`, `PF_RATE_LIMIT_IP_REFILL_PER_MIN`, `PF_RATE_LIMIT_ROUTE_BURST`, `PF_RATE_LIMIT_ROUTE_REFILL_PER_MIN` | api | 120 / 120 / 600 / 600 | token-bucket caps, per-IP + per-route (P0-103); refill 0 = never refills |
+| `PF_RATE_LIMIT_LOGIN_ACCOUNT_BURST`, `PF_RATE_LIMIT_LOGIN_ACCOUNT_REFILL_PER_MIN` | api | 10 / 1 | per-account login-attempt bucket (P1-003): burst 10, then 1/min; keyed by the sha256 of the email; P1-004 lockout is the durable backstop |
 | `PF_PUBLIC_BASE_URL` | api | http://localhost:8080 | used in signed URLs |
 | `PF_DOMAIN` | caddy (compose) | localhost | public domain caddy serves (P0-087): localhost = plain HTTP; a public DNS name gets auto-HTTPS; prod sets the real domain and PF_PUBLIC_BASE_URL to match |
 | `PF_API_PORT` | api | 8080 | port the api binds on PF_API_HOST |

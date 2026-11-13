@@ -15,14 +15,17 @@
 //! | ----- | -- | ------ |
 //! | `ip` | client IP | enforced (this ticket) |
 //! | `route` | `METHOD:/v1/<segment>` | enforced (this ticket) |
-//! | `user` | user id | Phase 1 (no auth yet — unresolvable) |
+//! | `user` | user id — or, pre-auth, the sha256 of the login email | enforced for login (P1-003, by the login service); the middleware still skips it (it cannot resolve an account from a request) |
 //! | `api-key` | key prefix | Phase 1 (no auth yet — unresolvable) |
 //!
-//! The `user` and `api-key` scopes exist in [`RateLimitScope`]
-//! so the key shape is settled, but the middleware cannot
-//! resolve them until Phase 1 auth lands — they are skipped,
-//! never enforced on a guessed id. Enforcing a scope on a wrong
-//! id would rate-limit the wrong principal.
+//! The `api-key` scope exists in [`RateLimitScope`] so the key
+//! shape is settled, but the middleware cannot resolve it until
+//! Phase 1 auth lands — it is skipped, never enforced on a
+//! guessed id. Enforcing a scope on a wrong id would rate-limit
+//! the wrong principal. The `user` scope is the same shape with
+//! one exception: the login service (P1-003) resolves it
+//! pre-auth from the normalized email's hash, so the login
+//! handler can spend from it directly.
 //!
 //! Identity resolution (IP): `X-Forwarded-For` first entry,
 //! else the socket address (`ConnectInfo` — the binary wires
@@ -110,6 +113,12 @@ pub struct RateLimitPolicy {
     pub ip: TokenBucket,
     /// Per-route bucket: burst + refill from the settings.
     pub route: TokenBucket,
+    /// Per-account login-attempt bucket (P1-003): burst +
+    /// refill from the settings. Checked by the login service
+    /// (not the middleware — the middleware cannot resolve an
+    /// account from a request; the service keys it by the sha256
+    /// of the normalized email, pre-auth).
+    pub login_account: TokenBucket,
 }
 
 impl RateLimitPolicy {
@@ -129,7 +138,16 @@ impl RateLimitPolicy {
             settings.rate_limit_route_refill_per_min as f64 / 60.0,
         )
         .expect("settings validation guarantees a valid route bucket");
-        RateLimitPolicy { ip, route }
+        let login_account = TokenBucket::new(
+            settings.rate_limit_login_account_burst as f64,
+            settings.rate_limit_login_account_refill_per_min as f64 / 60.0,
+        )
+        .expect("settings validation guarantees a valid login-account bucket");
+        RateLimitPolicy {
+            ip,
+            route,
+            login_account,
+        }
     }
 
     /// The burst capacity of a bucket (for the `X-RateLimit-Limit`
@@ -144,6 +162,11 @@ impl RateLimitPolicy {
     /// The burst capacity of the route bucket.
     pub fn route_burst(&self) -> u64 {
         self.route.capacity() as u64
+    }
+
+    /// The burst capacity of the per-account login bucket.
+    pub fn login_account_burst(&self) -> u64 {
+        self.login_account.capacity() as u64
     }
 }
 
@@ -237,8 +260,10 @@ pub async fn rate_limit_middleware(
 
 /// The 429 answer: the PF-3007 problem body (rendered exactly
 /// like the error mapper renders it) plus `Retry-After` and the
-/// denying bucket's `X-RateLimit-*` trio.
-fn denied_response(result: RateLimit, limit: u64, request_id: Option<&str>) -> Response {
+/// denying bucket's `X-RateLimit-*` trio. Shared with the login
+/// handler (P1-003), whose per-account denial is rendered the
+/// same way.
+pub(crate) fn denied_response(result: RateLimit, limit: u64, request_id: Option<&str>) -> Response {
     let problem = AppError::RateLimited.to_problem(Profile::Production, request_id, None);
     let mut res = ProblemResponse(problem).into_response();
     debug_assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);

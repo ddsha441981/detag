@@ -30,6 +30,7 @@ pub mod error;
 pub mod job_events;
 pub mod jobs;
 pub mod plans;
+pub mod sessions;
 pub mod uploads;
 pub mod users;
 pub mod worker_heartbeats;
