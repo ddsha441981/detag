@@ -25,6 +25,13 @@ VALID_SCHEMA_DOC = (
     "fix(docs): SCHEMA-DOC-001 regenerate schema docs after the migration\n"
     "\nThe drift check compares generated docs (NFR-52).\n"
 )
+# A flaky-test fix carries its FLAKY id (CI-FAIL-019): Commits #22
+# failed on 8a65cd4's `test(core): fix FLAKY-002 ...` subject because
+# the linter only accepted P-/CI-FAIL-/SCHEMA-DOC- ids.
+VALID_FLAKY = (
+    "test(core): FLAKY-002 slow_consumer_drops_safely race (NFR-52)\n"
+    "\nDrain stale Progress events until Done arrives.\n"
+)
 
 
 class TestValidMessages(unittest.TestCase):
@@ -42,6 +49,15 @@ class TestValidMessages(unittest.TestCase):
 
     def test_schema_doc_id_in_ticket_position(self):
         self.assertEqual(check_message(VALID_SCHEMA_DOC), [])
+
+    def test_flaky_id_in_ticket_position(self):
+        self.assertEqual(check_message(VALID_FLAKY), [])
+
+    def test_flaky_id_needs_a_number(self):
+        errors = check_message(
+            "test(core): FLAKY slow_consumer_drops_safely race (NFR-52)\n"
+        )
+        self.assertTrue(any("must match" in e for e in errors))
 
     def test_ci_fail_id_still_needs_requirement_trace(self):
         errors = check_message(

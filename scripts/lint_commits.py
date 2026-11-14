@@ -9,8 +9,9 @@ Rules enforced per commit (merge commits are skipped):
        mailer, docs, repo)
      - id: a ticket id P<phase>-<num> (e.g. P0-006, P1-014) — or, for
        work that has no P-ticket, an issue id CI-FAIL-<n> (a CI failure
-       fix, COMMITS-LINT-001) or SCHEMA-DOC-<n> (a schema-docs drift
-       fix) in the same position.
+       fix, COMMITS-LINT-001), SCHEMA-DOC-<n> (a schema-docs drift
+       fix) or FLAKY-<n> (a flaky-test fix, CI-FAIL-019) in the same
+       position.
   2. The full message (subject + body) references at least one requirement
      id: FR-<area>-<n> (e.g. FR-D-05) or NFR-<n> (e.g. NFR-52).
   3. Subject is at most 100 characters.
@@ -71,7 +72,7 @@ SCOPES = {
 # The id in the ticket position: a P-ticket, or an issue id for work
 # that has no P-ticket (COMMITS-LINT-001 — a CI-fix or schema-docs
 # commit cannot name a P-ticket it does not belong to).
-ID_RE = r"(?:P\d+-\d+|CI-FAIL-\d+|SCHEMA-DOC-\d+)"
+ID_RE = r"(?:P\d+-\d+|CI-FAIL-\d+|SCHEMA-DOC-\d+|FLAKY-\d+)"
 
 SUBJECT_RE = re.compile(
     r"^(?P<type>[a-z]+)"
@@ -98,7 +99,7 @@ def check_message(message: str) -> list[str]:
     if not match:
         errors.append(
             "subject must match '<type>(<scope>): <id> <description>' "
-            "(id: P<phase>-<num>, CI-FAIL-<n> or SCHEMA-DOC-<n>) "
+            "(id: P<phase>-<num>, CI-FAIL-<n>, SCHEMA-DOC-<n> or FLAKY-<n>) "
             "(e.g. 'feat(auth): P1-014 refresh token rotation' or "
             "'fix(ops): CI-FAIL-004 replace dead MinIO with Garage S3')"
         )
@@ -118,7 +119,7 @@ def check_message(message: str) -> list[str]:
     if not TICKET_RE.search(subject):
         errors.append(
             "subject must contain a ticket id "
-            "(P<phase>-<num>, CI-FAIL-<n> or SCHEMA-DOC-<n>)"
+            "(P<phase>-<num>, CI-FAIL-<n>, SCHEMA-DOC-<n> or FLAKY-<n>)"
         )
 
     if not REQUIREMENT_RE.search(message):
