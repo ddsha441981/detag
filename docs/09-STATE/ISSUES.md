@@ -73,7 +73,7 @@
 - Symptom: CI run #8 (dfe50a4) and CI #9 (330769e, logs zip from the user 2026-11-14) both fail the smoke job at `just migrate`: `migrate: pool timed out while waiting for an open connection`, after the whole compose stack went healthy — garage HEALTHY in ~6 s (the CI-FAIL-008 secret fix works), api/worker/postgres/redis/mailhog/web all healthy. The worker logs prove the DB itself is fine: in-network queries reach postgres and fail only with `relation "worker_heartbeats" does not exist` / `relation "email_outbox" does not exist` — the tables are missing because migrations never ran.
 - Cause: the migrate example runs on the RUNNER (host) against `PF_DATABASE_URL=postgres://pf:pf@localhost:5432/pf` (Settings default; the smoke job sets no PF_DATABASE_URL). The dev file publishes 5432 — but `docker compose ps` at failure shows postgres as plain `5432/tcp`, no host mapping. Same for redis (6379), garage (9000), mailhog (8025), worker (9092). The pattern is exact: api (edge+internal) and web (edge) DO show published ports; every service attached ONLY to the `internal: true` network does NOT. Published ports do not take effect for internal-only containers on this setup, so the host-side migrate (and the later smoke-ping polls of worker:9092 / redis:6379) can never connect.
 - Fix: in ops/compose.dev.yml, attach the dev host-access services (postgres, redis, garage, mailhog, worker) to the `edge` network too (in addition to `internal`), so their published ports actually work from the host. Dev-only — prod uses compose.prod.yml and is unaffected; the internal network still isolates the data services from anything not on edge.
-- Status: fix SHIPPED but BROKEN — CI #10 (0ff5852) failed on my edit: the mailhog service in ops/compose.dev.yml ended up with TWO `networks:` keys (the service already had one; the edit added a second). Docker Compose's YAML parser (go-yaml) rejects duplicate keys (`mapping key "networks" already defined at line 71`), so `just smoke` died at `up` in <1 s and verify died at compose-dev-check on the same parse error. My local check (plain `yaml.safe_load`) did NOT catch it — PyYAML silently takes the last duplicate. Repaired in the follow-up commit (single merged `networks:` block for mailhog; all ops/workflow YAML now validated with a strict duplicate-key loader). The edge-network theory itself is still unproven — waits on CI #11.
+- Status: CLOSED — confirmed by CI #11 (e150a37): smoke green, `smoke: compose stack healthy`, `applied migrations: [1, 20261112064220, …]` (14 migrations), `smoke: OK`. The edge-network fix works: the host-side migrate now reaches postgres. (The repair commit's YAML duplicate-key bug is documented in the fix history above.)
 
 ### CI-FAIL-011 [bug] CI #9 verify fails at compose-health-check — PyYAML not installed on the runner
 - Date: 2026-11-14 · Ticket: P0-088 · Severity: S1 (CI red on main)
@@ -87,7 +87,7 @@
 - Symptom: CI run #10 (0ff5852), image-size job: `image-size FAIL: detag-worker:check is 200.8 MB (>= 200 MB limit, NFR-63)`; the api image is fine at 42.2 MB (< 150 MB).
 - Cause (partial): the 200 MB worker ceiling was derived from parts (bookworm-slim ~80 MB + ffmpeg stack ~45 MB + curl/certs ~15 MB + 6.2 MB worker binary ≈ 146 MB). The binary is NOT the growth — Dockerfile.worker strips it (`strip /tmp/detag-worker`, release profile `strip = "symbols"`) — so the ~55 MB growth is in the runtime layer, most likely the ffmpeg package set or the bookworm-slim base image updating since P0-084. Not proven: no layer breakdown was captured.
 - Fix: NOT attempted here — needs a layer inspection on a docker-capable runner (`docker history detag-worker:check`, or a `dive`-style breakdown) to name the fat layer, then trim that layer (or re-derive the ceiling with evidence if a base/ffmpeg update moved it). Do NOT just bump the limit without the breakdown. The image-size job could print `docker history` on failure to make the next diagnosis one-shot.
-- Status: open.
+- Status: open — still failing in CI #11 (e150a37) with the identical 200.8 MB. The api image is still fine (42.2 MB).
 
 ### CI-FAIL-013 [bug] CI #10 commits workflow fails — script unit tests need Pillow/numpy, runner has neither
 - Date: 2026-11-14 · Ticket: P0-006 · Severity: S2 (CI red on main)
@@ -95,6 +95,13 @@
 - Cause: latent — earlier runs never reached this step (they died at lint). The workflow installs no Python deps at all.
 - Fix: pin python 3.12 via actions/setup-python@v5 (same as the verify job) and `pip install pillow==10.2.0 numpy==1.26.4` before the test step.
 - Status: fixed (this commit) — waits on CI #11.
+
+### CI-FAIL-014 [bug] CI #11 verify fails at compose-health-check — script expects stale service names minio/bootstrap
+- Date: 2026-11-14 · Ticket: P0-088 · Severity: S1 (CI red on main)
+- Symptom: CI run #11 (e150a37, logs zip from the user 2026-11-14), verify job: compose-dev-check and compose-prod-check both PASSED (the YAML repair works), then `compose-health-check` FAILED with 10 failures: `dev: service 'api' does not wait for minio service_healthy`, `... does not wait for bootstrap service_completed_successfully`, `dev: service 'bootstrap-lifecycle' has no healthcheck` (same five for prod). The pyyaml install (CI-FAIL-011) worked — the script ran; its expectations are wrong.
+- Cause: `scripts/check_compose_health.py` hardcodes the pre-swap names: `DATA_DEPS = ("postgres", "redis", "minio")` and `ONE_SHOT = {"bootstrap"}` + `depends.get("bootstrap")`. The stack renamed MinIO → Garage (CI-FAIL-004) and the bootstrap service is `bootstrap-lifecycle` (restart "no", one-shot). The real compose is correct — api/worker wait for garage healthy + bootstrap-lifecycle completed — the script just looks for names that no longer exist, and demands a healthcheck on a one-shot container because ONE_SHOT does not contain its real name.
+- Fix: rename in the script (and its docstring): `minio` → `garage`, `bootstrap` → `bootstrap-lifecycle` in ONE_SHOT, DATA_DEPS and the depends_on lookup; same renames in `scripts/test_check_compose_health.py` fixtures. All 16 unit tests pass locally after the rename.
+- Status: fixed (this commit) — waits on CI #12.
 
 ### TESTKIT-MINIO-001 [follow-up] testcontainers live legs + local-dev compose.minio.yml still reference dead MinIO images
 - Date: 2026-11-13 · Severity: S3 (not CI-blocking)

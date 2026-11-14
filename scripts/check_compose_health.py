@@ -11,7 +11,7 @@ script is the gate until then.
 
 It fails (exit 1) when any of these is true:
 
-  - a service other than the one-shot `bootstrap` has no
+  - a service other than the one-shot `bootstrap-lifecycle` has no
     healthcheck. The api/worker healthchecks live in the images
     (Dockerfile.api / Dockerfile.worker HEALTHCHECK), which
     `docker compose config` cannot see until the image is built —
@@ -19,12 +19,12 @@ It fails (exit 1) when any of these is true:
   - a healthcheck's worst case to healthy (start_period +
     interval * retries) exceeds the 120 s budget `just smoke`
     (P0-090) waits with `--wait-timeout 120`;
-  - the api or worker does not wait for postgres/redis/minio
-    `service_healthy` and for the bootstrap
+  - the api or worker does not wait for postgres/redis/garage
+    `service_healthy` and for the bootstrap-lifecycle
     `service_completed_successfully` (the bucket must exist
     before the api serves or the worker consumes jobs), or
     (prod) caddy does not wait for the api `service_healthy`;
-  - the bootstrap is not one-shot (`restart: "no"`).
+  - the bootstrap-lifecycle is not one-shot (`restart: "no"`).
 
 Usage:
   check_compose_health.py [--base PATH] [--dev PATH] [--prod PATH]
@@ -52,7 +52,7 @@ BUDGET_SECS = 120
 # One-shot services have no healthcheck by design — their
 # completion is what `depends_on: service_completed_successfully`
 # waits on. They must stay one-shot (restart "no").
-ONE_SHOT = {"bootstrap"}
+ONE_SHOT = {"bootstrap-lifecycle"}
 
 # Services whose healthcheck lives in the image, not the compose
 # file: `docker compose config` cannot see it until the image is
@@ -60,7 +60,7 @@ ONE_SHOT = {"bootstrap"}
 IMAGE_HEALTHCHECK = {"api": "Dockerfile.api", "worker": "Dockerfile.worker"}
 
 # What the api/worker must wait on before starting.
-DATA_DEPS = ("postgres", "redis", "minio")
+DATA_DEPS = ("postgres", "redis", "garage")
 
 _DURATION = re.compile(r"(\d+(?:\.\d+)?)(ms|s|m|h)")
 _HEALTHCHECK_FLAG = re.compile(r"--(interval|timeout|start-period|retries)=(\S+)")
@@ -143,7 +143,7 @@ def _check_depends_on(name: str, service: dict, failures: list[str]) -> None:
                 failures.append(
                     f"service {name!r} does not wait for {dep} service_healthy"
                 )
-        if depends.get("bootstrap", {}).get("condition") != "service_completed_successfully":
+        if depends.get("bootstrap-lifecycle", {}).get("condition") != "service_completed_successfully":
             failures.append(
                 f"service {name!r} does not wait for bootstrap "
                 "service_completed_successfully"
