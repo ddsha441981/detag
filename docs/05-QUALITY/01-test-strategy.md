@@ -144,6 +144,35 @@ violation). Test targets are not covered by `cargo sqlx
 prepare`, so tests must not use `query!` macros — they use
 untyped `sqlx::query` + `try_get`, or repo functions.
 
+## API-key lifecycle suite (P1-039)
+
+`apps/api/tests/api_key_lifecycle.rs` walks ONE key through
+the whole lifecycle in order, on a frozen clock: create
+(201, the full `pf_live_` secret shown once) → use (both
+scopes reach the jobs stubs, `last_used_at` stamped) →
+rotate (a replacement row, same name + scopes) → old-valid-
+in-window (both secrets authenticate, the old one still 501
+one second before the deadline) → expired (past the window
+the old secret is the generic 401 `PF-1001` while the new
+one keeps working) → revoked (the replacement dies
+immediately, no grace; the old secret stays dead) — and
+asserts the audit trail at the end (exactly one
+`api_key.created` / `api_key.rotated` / `api_key.revoked`
+row, in order, no secret or hash in any of them). Two gaps
+the isolated tests left open are proven here too: a
+directly-expired key (its `expires_at` set in the past, not
+via rotation) is 401 at the HTTP layer and frees its cap
+slot (10 keys + expire one, the 11th create is 201 again);
+and scope enforcement in the ticket's phrasing — a
+`jobs:read`-only key cannot create (POST /v1/jobs and POST
+/v1/api-keys are both 403 `PF-1002`, while GET /v1/jobs is
+501), mirrored by a write-only key that writes but cannot
+read. Re-login after advancing the frozen clock past the
+access token's 15-minute life: the JWT minted at the start
+is expired by the time the revoke step runs (the P1-035
+precedent — read the user's email back from the users row
+if the helper did not return it).
+
 ## Property testing (P0-096)
 
 Property tests live in `crates/core/tests/prop/` (cursor codec,
