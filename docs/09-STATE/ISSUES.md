@@ -138,6 +138,13 @@
 - Fix: extend the linter — add `FLAKY-\d+` to ID_RE, the docstring and both error messages, plus unit tests (`test_flaky_id_in_ticket_position`, `test_flaky_id_needs_a_number`). Verified locally: 19 linter unit tests green; a FLAKY id in ticket position with an NFR trace passes. Do NOT rewrite 8a65cd4 (pushed commits are never rewritten; it also lacks the trace, so it would fail even with the id form fixed) — the Commits workflow lints only each push's range, so the next compliant push goes green.
 - Status: fixed (this commit) — waits on Commits #23.
 
+### CI-FAIL-020 [bug] Commits #23 unit-test step fails — `No module named 'yaml'` (missing PyYAML in commits workflow)
+- Date: 2026-11-14 · Ticket: P0-060 (the scripts test suite) · Severity: S1 (Commits workflow red on main; the CI workflow itself is green)
+- Symptom: Commits #23 (run #23, on 60ecc0f) — the lint step PASSED (CI-FAIL-019 fix worked), then the unit-test step FAILED: 120 tests ran, 12 problems, ALL `No module named 'yaml'` — 3 import ERRORs (check_compose_env, check_compose_health, check_minio_policy) + 1 ERROR + 8 FAILs (validate_prometheus).
+- Cause: `.github/workflows/commits.yml` "Install script-test deps" installs only `pillow==10.2.0` + `numpy==1.26.4`, no PyYAML — while six files import yaml: top-level in `scripts/check_compose_env.py:48`, `scripts/check_compose_health.py:45`, `scripts/check_minio_policy.py:38`; lazy in `scripts/validate_prometheus.py:40` and `scripts/validate_dashboards.py:172`; and `scripts/test_validate_prometheus.py:148`. The CI-FAIL-013 fix was incomplete (it added 3.12 + pillow/numpy but missed yaml) and its gap was invisible in #22 because the lint step failed first and GitHub SKIPS later steps — the unit-test step never ran in #22. Cross-check: `ci.yml:135` already installs `pyyaml==6.0.2` for the verify job, so the same pin is the consistent fix.
+- Fix: add `"pyyaml==6.0.2"` to the pip install in commits.yml.
+- Status: fixed (this commit) — waits on Commits #24.
+
 ### TESTKIT-MINIO-001 [follow-up] testcontainers live legs + local-dev compose.minio.yml still reference dead MinIO images
 - Date: 2026-11-13 · Severity: S3 (not CI-blocking)
 - Cause: CI never sets PF_TEST_CONTAINERS/PF_TEST_LIVE_MINIO, so the live legs skip in CI; compose-minio-check only renders. But anyone running the live legs locally (or `docker compose -f ops/compose.minio.yml up`) hits the same dead MinIO pulls as CI-FAIL-004.

@@ -42,17 +42,18 @@ jobs:
           python3 scripts/lint_commits.py --range "$RANGE"
 
       # CI-FAIL-013: the discover run covers every test_*.py in scripts/,
-      # and two of them need third-party modules (test_fixtures_gen ->
-      # numpy, test_templates_gen -> Pillow). The runner's system python
-      # (3.14) has neither, and numpy 1.26.4 has no 3.14 wheels — so pin
-      # python 3.12 (same as the verify job) and install the two deps.
+      # and several of them need third-party modules (test_fixtures_gen ->
+      # numpy, test_templates_gen -> Pillow, the yaml-importing check
+      # scripts -> PyYAML; CI-FAIL-020). The runner's system python
+      # (3.14) has none of them, and numpy 1.26.4 has no 3.14 wheels — so
+      # pin python 3.12 (same as the verify job) and install the three deps.
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install script-test deps
-        run: python3 -m pip install --quiet "pillow==10.2.0" "numpy==1.26.4"
+        run: python3 -m pip install --quiet "pillow==10.2.0" "numpy==1.26.4" "pyyaml==6.0.2"
 
       - name: Unit-test the linter
         run: python3 -m unittest discover -s scripts -p "test_*.py" -v
