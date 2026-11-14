@@ -50,8 +50,26 @@
 //! not in the extractor's scope table, so a key caller is
 //! 403 `PF-1002` before the handler runs — only the owner's
 //! JWT rotates).
+//!
+//! Revocation (P1-036, FR-A-06) lives here too:
+//! [`revoke_api_key`] stamps the row's `revoked_at` in the
+//! same transaction as the `api_key.revoked` audit, then
+//! denylists the key's sha256 in Redis
+//! (`pf:revocation:api-key:{hash}`, 24 h TTL —
+//! `services::revocation`) so any cached verification entry
+//! dies immediately. The row is dead for auth the moment the
+//! transaction commits: [`verify_api_key`] checks the
+//! denylist before the DB lookup, and the lookup itself
+//! excludes revoked rows — the DB is the authority, the
+//! denylist only accelerates the kill, and both reads
+//! fail-open on a Redis error. Re-revoking your own dead key
+//! is a no-op success (DELETE is idempotent — the P1-019
+//! session convention).
 
-use crate::AppState;
+use crate::{
+    services::revocation::{deny_api_key, is_api_key_revoked},
+    AppState,
+};
 use chrono::{DateTime, TimeDelta, Utc};
 use detag_core::{
     api_keys::{self, API_KEY_LAST_USED_THROTTLE_SECS, API_KEY_MAX_PER_USER},
@@ -101,6 +119,17 @@ pub async fn verify_api_key(
     presented: &str,
 ) -> Result<(ApiKey, User), VerifyApiKeyError> {
     let hash = api_keys::hash_secret(presented);
+    // Denylist first (P1-036): a revoked key's hash is listed
+    // here so a cached verification entry dies immediately.
+    // Fail-open on a Redis error — the DB lookup below is the
+    // authority and still excludes revoked rows (P0-103).
+    match is_api_key_revoked(state, &hash).await {
+        Ok(true) => return Err(VerifyApiKeyError::Unknown),
+        Ok(false) => {}
+        Err(err) => {
+            tracing::warn!(error = ?err, "api-keys: denylist read failed, continuing to DB lookup");
+        }
+    }
     let now = state.clock.now();
     let key = api_keys_repo::by_secret_hash(&state.pool, &hash, now)
         .await
@@ -460,4 +489,119 @@ pub async fn rotate_api_key(
         scopes: key.scopes,
         created_at: key.created_at,
     })
+}
+
+/// What key revocation can fail with. `NotFound` covers an
+/// unknown id and another user's id — both answer 404
+/// `PF-2010` (no enumeration, the same shape as rotate and
+/// the session DELETE). An already-revoked key is NOT
+/// NotFound: DELETE is idempotent, so re-revoking your own
+/// dead key is a no-op success (`Ok(false)`, no second audit
+/// — the P1-019 session convention). `Internal` covers the DB
+/// and the user vanishing between auth and the transaction.
+#[derive(Debug, Error)]
+pub enum RevokeApiKeyError {
+    #[error("api key not found")]
+    NotFound,
+    #[error("api key revocation failed")]
+    Internal,
+}
+
+/// The revocation transaction's inner error: the not-found is
+/// a business outcome, not a DB failure, so it rides its own
+/// variant out of the closure instead of being logged as an
+/// error.
+#[derive(Debug, Error)]
+enum RevokeTxError {
+    #[error("db error: {0}")]
+    Db(#[from] RepoError),
+    #[error("api key not found")]
+    NotFound,
+}
+
+/// Revoke a key for `user`: stamp `revoked_at` and audit as
+/// `api_key.revoked` in one transaction under the user's row
+/// lock, then denylist the key's hash so any cached
+/// verification entry dies immediately. The row is dead for
+/// auth the moment the transaction commits — `by_secret_hash`
+/// excludes revoked rows, and the denylist check in
+/// [`verify_api_key`] rejects the hash before the lookup —
+/// so revocation is immediate even before the denylist write
+/// lands. The denylist write is fail-open (warn + continue):
+/// the DB is the authority, so a Redis outage degrades only
+/// the cache invalidation, never the revocation itself (the
+/// logout-all jti shape, P1-021). Returns whether a live key
+/// was revoked (`false` = it was already revoked: no-op, no
+/// second audit, no denylist write).
+pub async fn revoke_api_key(
+    state: &AppState,
+    user: &User,
+    actor_user_id: Uuid,
+    key_id: Uuid,
+) -> Result<bool, RevokeApiKeyError> {
+    let now = state.clock.now();
+    let user = user.clone();
+    let timeout = PoolConfig::default().transaction_timeout;
+
+    let key = tx::with_tx(&state.pool, timeout, |conn| {
+        let user = user.clone();
+        Box::pin(async move {
+            api_keys_repo::lock_user_for_key_change(&mut *conn, user.id)
+                .await
+                .map_err(RevokeTxError::Db)?;
+            let key = api_keys_repo::by_id_for_user(&mut *conn, key_id, user.id)
+                .await
+                .map_err(RevokeTxError::Db)?
+                .ok_or(RevokeTxError::NotFound)?;
+            if key.revoked_at.is_some() {
+                return Ok(None);
+            }
+            if !api_keys_repo::revoke(&mut *conn, key.id, now)
+                .await
+                .map_err(RevokeTxError::Db)?
+            {
+                // Unreachable under the user's row lock (the
+                // row was live when loaded above) — but a
+                // no-op is the safe answer if it ever happens:
+                // no audit, no denylist write.
+                return Ok(None);
+            }
+            audit_logs::insert(
+                &mut *conn,
+                &NewAuditLog {
+                    actor_user_id: Some(actor_user_id),
+                    actor_client: None,
+                    action: "api_key.revoked".to_string(),
+                    target_type: "user".to_string(),
+                    target_id: Some(user.id.to_string()),
+                    before: None,
+                    after: Some(serde_json::json!({
+                        "api_key_id": key.id,
+                        "name": key.name,
+                        "prefix": key.prefix,
+                    })),
+                    reason: None,
+                },
+            )
+            .await
+            .map_err(RevokeTxError::Db)?;
+            Ok(Some(key))
+        })
+    })
+    .await
+    .map_err(|err| match err {
+        TxError::Inner(RevokeTxError::NotFound) => RevokeApiKeyError::NotFound,
+        other => {
+            tracing::error!(error = ?other, "api-keys: revoke transaction failed");
+            RevokeApiKeyError::Internal
+        }
+    })?;
+
+    let Some(key) = key else {
+        return Ok(false);
+    };
+    if let Err(err) = deny_api_key(state, &key.secret_hash).await {
+        tracing::warn!(error = ?err, key_id = %key.id, "api-keys: denylist write failed, revocation stands (DB is authoritative)");
+    }
+    Ok(true)
 }

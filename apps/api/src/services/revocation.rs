@@ -140,6 +140,79 @@ pub fn denylist_ttl(exp_unix: i64, now_unix: i64) -> Duration {
     Duration::from_secs(denylist_ttl_secs(exp_unix, now_unix))
 }
 
+/// The API-key denylist (P1-036, FR-A-06): the second kill
+/// path for a revoked key. Verification reads Postgres per
+/// request (there is NO verification cache today — the
+/// extractor's `by_secret_hash` lookup already excludes
+/// revoked rows), so `revoked_at` is the authority and this
+/// list is the cache-invalidation signal: a revoked key's
+/// sha256 goes here so any cached verification entry dies
+/// immediately, and the extractor checks it BEFORE the DB
+/// lookup (fail-open on a Redis error — the DB check still
+/// runs, per the P0-103 decision). Keyed by the secret hash,
+/// not the key id: the verifier only ever holds the presented
+/// secret.
+///
+/// TTL: 24 h. A key never expires, so unlike a jti there is
+/// no remaining life to clamp to — the entry lives long
+/// enough to outlive any verification-cache entry (any cache
+/// added later must keep its TTL under this one). The DB
+/// remains the authority after the entry expires, so a stale
+/// cache entry can never resurrect a revoked key past its own
+/// TTL.
+pub fn api_key_revocation_key(secret_hash: &str) -> String {
+    format!("pf:revocation:api-key:{secret_hash}")
+}
+
+/// How long a revoked key's hash stays denylisted: 24 h (see
+/// the module docs above).
+pub const API_KEY_DENYLIST_TTL_SECS: u64 = 86_400;
+
+/// Denylist one key hash until [`API_KEY_DENYLIST_TTL_SECS`]
+/// elapse. The write is `SETEX key ttl "1"` — one command,
+/// atomic, self-expiring (the jti shape).
+pub async fn deny_api_key(state: &AppState, secret_hash: &str) -> Result<(), RevocationError> {
+    let mut conn = state.redis.get().await.map_err(|err| {
+        tracing::error!(error = %err, "revocation: redis pool checkout failed");
+        RevocationError::Internal
+    })?;
+    cmd("SETEX")
+        .arg(api_key_revocation_key(secret_hash))
+        .arg(API_KEY_DENYLIST_TTL_SECS as i64)
+        .arg("1")
+        .query_async::<()>(&mut conn)
+        .await
+        .map_err(|err| {
+            tracing::error!(error = %err, "revocation: SETEX failed");
+            RevocationError::Internal
+        })?;
+    Ok(())
+}
+
+/// Whether a key hash is denylisted. One `GET` on a hot key —
+/// the key is ABSENT in the common case (the key is live), so
+/// the common case is a single round trip returning nil. A
+/// Redis error is `Err` (the caller fails open — see the
+/// module docs); it is never silently "not revoked" here.
+pub async fn is_api_key_revoked(
+    state: &AppState,
+    secret_hash: &str,
+) -> Result<bool, RevocationError> {
+    let mut conn = state.redis.get().await.map_err(|err| {
+        tracing::error!(error = %err, "revocation: redis pool checkout failed");
+        RevocationError::Internal
+    })?;
+    let raw: Option<String> = cmd("GET")
+        .arg(api_key_revocation_key(secret_hash))
+        .query_async(&mut conn)
+        .await
+        .map_err(|err| {
+            tracing::error!(error = %err, "revocation: GET failed");
+            RevocationError::Internal
+        })?;
+    Ok(raw.is_some())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,5 +239,28 @@ mod tests {
         assert_ne!(revocation_key(&a), revocation_key(&b));
         assert!(revocation_key(&a).starts_with("pf:revocation:jti:"));
         assert!(revocation_key(&a).ends_with(&a.to_string()));
+    }
+
+    #[test]
+    fn api_key_revocation_key_is_namespaced_per_hash() {
+        // The key carries the hash, never the secret: the
+        // verifier only ever holds the presented secret's
+        // sha256, and the hash is what the DB row is keyed by.
+        let hash = "a".repeat(64);
+        let other = "b".repeat(64);
+        assert_ne!(
+            api_key_revocation_key(&hash),
+            api_key_revocation_key(&other)
+        );
+        assert!(api_key_revocation_key(&hash).starts_with("pf:revocation:api-key:"));
+        assert!(api_key_revocation_key(&hash).ends_with(&hash));
+        assert!(!api_key_revocation_key(&hash).contains("pf_live_"));
+    }
+
+    #[test]
+    fn api_key_denylist_ttl_is_one_day() {
+        // 24 h: long enough to outlive any verification-cache
+        // entry; the DB stays the authority after it expires.
+        assert_eq!(API_KEY_DENYLIST_TTL_SECS, 86_400);
     }
 }

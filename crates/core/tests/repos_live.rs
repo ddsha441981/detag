@@ -68,6 +68,7 @@ fn drop_db_sql(db: &str) -> &'static str {
         "detag_p133_api_keys" => "DROP DATABASE IF EXISTS detag_p133_api_keys",
         "detag_p134_api_keys_lookup" => "DROP DATABASE IF EXISTS detag_p134_api_keys_lookup",
         "detag_p135_api_keys_expiry" => "DROP DATABASE IF EXISTS detag_p135_api_keys_expiry",
+        "detag_p136_api_keys_revoke" => "DROP DATABASE IF EXISTS detag_p136_api_keys_revoke",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -92,6 +93,7 @@ fn create_db_sql(db: &str) -> &'static str {
         "detag_p133_api_keys" => "CREATE DATABASE detag_p133_api_keys",
         "detag_p134_api_keys_lookup" => "CREATE DATABASE detag_p134_api_keys_lookup",
         "detag_p135_api_keys_expiry" => "CREATE DATABASE detag_p135_api_keys_expiry",
+        "detag_p136_api_keys_revoke" => "CREATE DATABASE detag_p136_api_keys_revoke",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -672,6 +674,72 @@ async fn api_keys_expired_rows_do_not_verify_or_count() {
             .is_none(),
         "another user's id finds nothing (no enumeration)"
     );
+
+    teardown(pool, db).await;
+}
+
+#[tokio::test]
+async fn api_keys_revoke_is_idempotent_and_kills_lookup_and_cap() {
+    // P1-036: `revoke` stamps `revoked_at` and returns whether
+    // a live row was revoked — a second revoke is a no-op
+    // (`false`), so DELETE stays idempotent and the service
+    // audits only the first. A revoked row does not verify
+    // and stops counting toward the cap, while `by_id_for_user`
+    // still reads it (the service decides what a dead row
+    // means — a second revoke is a no-op success, not a 404).
+    let db = "detag_p136_api_keys_revoke";
+    let pool = setup(db).await;
+    let user = users::create(&pool, "keys-revoke@example.com", "h")
+        .await
+        .expect("seed user");
+
+    let key = api_keys::create(
+        &pool,
+        &NewApiKey {
+            user_id: user.id,
+            name: "CI deploy".to_string(),
+            prefix: "pf_live_aB3x".to_string(),
+            secret_hash: "h".repeat(64),
+            scopes: vec!["jobs:read".to_string()],
+        },
+    )
+    .await
+    .expect("create key");
+    assert!(key.revoked_at.is_none(), "a fresh key is live");
+
+    let now = DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
+        .expect("microsecond stamp round-trips");
+    assert!(
+        api_keys::revoke(&pool, key.id, now)
+            .await
+            .expect("revoke live key"),
+        "first revoke revokes"
+    );
+    assert!(
+        !api_keys::revoke(&pool, key.id, now)
+            .await
+            .expect("revoke again"),
+        "second revoke is a no-op"
+    );
+    assert!(
+        api_keys::by_secret_hash(&pool, &"h".repeat(64), Utc::now())
+            .await
+            .expect("lookup revoked key")
+            .is_none(),
+        "a revoked key must not verify"
+    );
+    assert_eq!(
+        api_keys::count_live_for_user(&pool, user.id, Utc::now())
+            .await
+            .expect("count"),
+        0,
+        "a revoked key stops counting"
+    );
+    let by_id = api_keys::by_id_for_user(&pool, key.id, user.id)
+        .await
+        .expect("read revoked key by id")
+        .expect("by_id_for_user reads dead rows too");
+    assert_eq!(by_id.revoked_at, Some(now));
 
     teardown(pool, db).await;
 }

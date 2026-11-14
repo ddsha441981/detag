@@ -138,6 +138,34 @@ pub async fn by_id_for_user(
     .map_err(RepoError::from_sqlx)
 }
 
+/// Revoke a key (P1-036): stamp `revoked_at`, conditional on
+/// the row still being live — a second revoke is a no-op that
+/// reports `false` (DELETE is idempotent; the service answers
+/// 204 both times and audits only the first). Returns whether
+/// a live row was revoked. The caller holds the user's row
+/// lock ([`lock_user_for_key_change`]) across load + revoke,
+/// so two concurrent revokes cannot both audit. Unconditional
+/// on `expires_at`: an expired (rotated-away) row can still
+/// be revoked — it is already dead for auth, but revoking it
+/// records the owner's intent and frees nothing (it stopped
+/// counting at its deadline already).
+pub async fn revoke(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    key_id: Uuid,
+    now: DateTime<Utc>,
+) -> Result<bool, RepoError> {
+    let result = sqlx::query!(
+        r#"UPDATE api_keys SET revoked_at = $1, updated_at = $1
+           WHERE id = $2 AND revoked_at IS NULL"#,
+        now,
+        key_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// Set a key's rotation overlap deadline (P1-035): the old
 /// row stays valid for auth until `expires_at`, then reads
 /// as dead. Unconditional here — the service owns the

@@ -16,8 +16,9 @@ use crate::{
     auth::AuthContext,
     problem::ProblemResponse,
     services::api_keys::{
-        create_api_key as create_api_key_service, rotate_api_key as rotate_api_key_service,
-        ApiKeyError, CreateApiKeyRequest, CreateApiKeyResponse, RotateApiKeyError,
+        create_api_key as create_api_key_service, revoke_api_key as revoke_api_key_service,
+        rotate_api_key as rotate_api_key_service, ApiKeyError, CreateApiKeyRequest,
+        CreateApiKeyResponse, RevokeApiKeyError, RotateApiKeyError,
     },
     AppState,
 };
@@ -123,6 +124,57 @@ pub async fn rotate_api_key(
                 .into_response()
         }
         Err(RotateApiKeyError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
+/// Revoke an API key (P1-036, FR-A-06): `DELETE
+/// /v1/api-keys/{id}` stamps `revoked_at` and denylists the
+/// key's hash — the key dies immediately (its next use is 401
+/// `PF-1001`) and stops counting toward the 10-live-keys cap.
+/// 204 No Content, no body. A key cannot revoke (itself or
+/// any other): the route is not in the extractor's scope
+/// table, so a key caller is 403 `PF-1002` before this
+/// handler runs. Unknown id or another user's id are 404
+/// `PF-2010` (no enumeration); re-revoking your own dead key
+/// is a no-op 204 (DELETE is idempotent — the P1-019 session
+/// convention).
+#[utoipa::path(
+    delete,
+    path = "/v1/api-keys/{id}",
+    responses(
+        (status = 204, description = "Key revoked; the secret dies immediately"),
+        (status = 401, description = "No credential, or an invalid/expired access token (PF-1001/1010/1011)", body = Problem),
+        (status = 403, description = "An API key cannot revoke (PF-1002)", body = Problem),
+        (status = 404, description = "Unknown id or another user's key (PF-2010)", body = Problem)
+    ),
+    tag = "auth"
+)]
+pub async fn revoke_api_key(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    auth: AuthContext,
+    Path(key_id): Path<Uuid>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let Some(ref user) = auth.user else {
+        return ProblemResponse(AppError::Unauthenticated.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
+    let actor = auth.audit_actor_id(user);
+    match revoke_api_key_service(&state, user, actor, key_id).await {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(RevokeApiKeyError::NotFound) => {
+            ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(RevokeApiKeyError::Internal) => {
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
                 .into_response()
         }
