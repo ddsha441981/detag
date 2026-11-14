@@ -15,8 +15,8 @@ Rules, enforced here:
 - The dev-only files (`compose.dev.yml`, `compose.minio.yml`,
   `compose.db.yml`, `compose.redis.yml`): a secret-named var may be
   a bare reference, or one of the documented dev placeholders
-  (`pf`, `minioadmin`, `dev-fixed` — the `.env.example` values).
-  Any other literal fails.
+  (`pf`, `minioadmin`, `dev-fixed`, `minioadmin-secret-key` — the
+  `.env.example` values). Any other literal fails.
 - A compose file not in either list is treated as strict (fail
   closed).
 
@@ -64,7 +64,12 @@ DEV_FILES = {
 # The only literal secret values allowed anywhere (dev-only files):
 # the `.env.example` placeholders. Anything else is a real-looking
 # secret and fails.
-DEV_PLACEHOLDERS = {"pf", "minioadmin", "dev-fixed"}
+# NOTE: `minioadmin-secret-key` is here because Garage refuses secret
+# keys shorter than 16 chars on key import (CI-FAIL-017) — the plain
+# `minioadmin` placeholder (10 chars) kills the smoke stack. Do NOT
+# "simplify" this back to `minioadmin`; the value must stay >= 16
+# chars (see the PF_S3_SECRET_KEY comment in .env.example).
+DEV_PLACEHOLDERS = {"pf", "minioadmin", "dev-fixed", "minioadmin-secret-key"}
 
 
 def classify_value(value: str) -> tuple[str, str | None]:

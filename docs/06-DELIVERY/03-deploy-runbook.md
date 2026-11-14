@@ -651,7 +651,7 @@ credentials only if the keys themselves leak.
 ### Local console (MinIO, dev only)
 
 `http://localhost:9001` — log in with `PF_S3_ACCESS_KEY` /
-`PF_S3_SECRET_KEY` (`minioadmin` / `minioadmin` in dev). Use it
+`PF_S3_SECRET_KEY` (`minioadmin` / `minioadmin-secret-key` in dev). Use it
 to eyeball the bucket: object list, a single object's metadata,
 and the bucket's anonymous policy (must read `none`). The
 console is dev-only: the prod compose file (E0.9) must not

@@ -19,6 +19,12 @@ class TestClassifyValue(unittest.TestCase):
     def test_placeholder_default(self) -> None:
         kind, default = ccs.classify_value("${PF_S3_SECRET_KEY:-minioadmin}")
         self.assertEqual((kind, default), ("placeholder", "minioadmin"))
+        # CI-FAIL-017: the Garage-valid S3 secret placeholder (>= 16
+        # chars) must classify as a placeholder, not a literal.
+        kind, default = ccs.classify_value(
+            "${PF_S3_SECRET_KEY:-minioadmin-secret-key}"
+        )
+        self.assertEqual((kind, default), ("placeholder", "minioadmin-secret-key"))
         self.assertEqual(ccs.classify_value("dev-fixed")[0], "placeholder")
         self.assertEqual(ccs.classify_value("pf")[0], "placeholder")
 
