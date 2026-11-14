@@ -235,6 +235,7 @@ mod tests {
                 lane: "standard",
                 params: serde_json::json!({}),
                 idempotency_key: None,
+                key_id: None,
             },
         )
         .await

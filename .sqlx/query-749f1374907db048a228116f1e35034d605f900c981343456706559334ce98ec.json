@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, upload_id, kind, mode, params, status, stage,\n             progress, priority, lane, attempts, idempotency_key, error, attestation_id,\n             webhook_url, started_at, finished_at, created_at, updated_at\n         FROM jobs WHERE id = $1",
+  "query": "INSERT INTO jobs (user_id, upload_id, kind, mode, status, lane, params, idempotency_key, key_id)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\n         RETURNING id, user_id, upload_id, kind, mode, params, status, stage,\n             progress, priority, lane, attempts, idempotency_key, error, attestation_id,\n             webhook_url, started_at, finished_at, created_at, updated_at, key_id",
   "describe": {
     "columns": [
       {
@@ -222,10 +222,29 @@
             "name": "updated_at"
           }
         }
+      },
+      {
+        "ordinal": 20,
+        "name": "key_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "jobs",
+            "name": "key_id"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Text",
         "Uuid"
       ]
     },
@@ -249,8 +268,9 @@
       true,
       true,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "d58d18e7f00007df9ab3b80d1306def12234616128d1d5f53bf7e19fe2cb0c75"
+  "hash": "749f1374907db048a228116f1e35034d605f900c981343456706559334ce98ec"
 }

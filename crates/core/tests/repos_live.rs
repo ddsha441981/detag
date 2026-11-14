@@ -69,6 +69,10 @@ fn drop_db_sql(db: &str) -> &'static str {
         "detag_p134_api_keys_lookup" => "DROP DATABASE IF EXISTS detag_p134_api_keys_lookup",
         "detag_p135_api_keys_expiry" => "DROP DATABASE IF EXISTS detag_p135_api_keys_expiry",
         "detag_p136_api_keys_revoke" => "DROP DATABASE IF EXISTS detag_p136_api_keys_revoke",
+        "detag_p138_jobs_key" => "DROP DATABASE IF EXISTS detag_p138_jobs_key",
+        "detag_p138_jobs_key_admin" => "DROP DATABASE IF EXISTS detag_p138_jobs_key_admin",
+        "detag_p138_jobs_key_usage" => "DROP DATABASE IF EXISTS detag_p138_jobs_key_usage",
+        "detag_p138_jobs_key_fk" => "DROP DATABASE IF EXISTS detag_p138_jobs_key_fk",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -94,6 +98,10 @@ fn create_db_sql(db: &str) -> &'static str {
         "detag_p134_api_keys_lookup" => "CREATE DATABASE detag_p134_api_keys_lookup",
         "detag_p135_api_keys_expiry" => "CREATE DATABASE detag_p135_api_keys_expiry",
         "detag_p136_api_keys_revoke" => "CREATE DATABASE detag_p136_api_keys_revoke",
+        "detag_p138_jobs_key" => "CREATE DATABASE detag_p138_jobs_key",
+        "detag_p138_jobs_key_admin" => "CREATE DATABASE detag_p138_jobs_key_admin",
+        "detag_p138_jobs_key_usage" => "CREATE DATABASE detag_p138_jobs_key_usage",
+        "detag_p138_jobs_key_fk" => "CREATE DATABASE detag_p138_jobs_key_fk",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -851,6 +859,7 @@ async fn jobs_roundtrip_jsonb_and_set_status() {
             lane: "standard",
             params: params.clone(),
             idempotency_key: Some("idem-p041"),
+            key_id: None,
         },
     )
     .await
@@ -906,6 +915,7 @@ async fn jobs_constraint_violations_are_typed() {
         lane: "standard",
         params: serde_json::json!({}),
         idempotency_key: Some("idem-p041-err"),
+        key_id: None,
     };
     jobs::create(&pool, &base).await.expect("first create");
 
@@ -955,6 +965,365 @@ async fn jobs_constraint_violations_are_typed() {
         }
         other => panic!("expected ForeignKeyViolation, got {other:?}"),
     }
+
+    teardown(pool, db).await;
+}
+
+/// P1-038: a job records the API key that created it.
+/// `key_id` round-trips through create/by_id/list_by_user,
+/// `list_by_key` returns only that key's jobs, and a job
+/// created without a key (web console / JWT) carries NULL.
+#[tokio::test]
+async fn jobs_key_id_roundtrip_and_list_by_key() {
+    let db = "detag_p138_jobs_key";
+    let pool = setup(db).await;
+
+    let user = users::create(&pool, "keyjobs@example.com", "h")
+        .await
+        .expect("create user");
+    let key_a = api_keys::create(
+        &pool,
+        &NewApiKey {
+            user_id: user.id,
+            name: "a".to_string(),
+            prefix: "pf_live_AAAA".to_string(),
+            secret_hash: "hash-a".to_string(),
+            scopes: vec!["jobs:write".to_string()],
+        },
+    )
+    .await
+    .expect("create key a");
+    let key_b = api_keys::create(
+        &pool,
+        &NewApiKey {
+            user_id: user.id,
+            name: "b".to_string(),
+            prefix: "pf_live_BBBB".to_string(),
+            secret_hash: "hash-b".to_string(),
+            scopes: vec!["jobs:write".to_string()],
+        },
+    )
+    .await
+    .expect("create key b");
+    let base = jobs::NewJob {
+        user_id: user.id,
+        upload_id: None,
+        kind: "image",
+        mode: "inpaint",
+        status: "queued",
+        lane: "standard",
+        params: serde_json::json!({}),
+        idempotency_key: None,
+        key_id: None,
+    };
+    let job_a = jobs::create(
+        &pool,
+        &jobs::NewJob {
+            key_id: Some(key_a.id),
+            idempotency_key: Some("idem-p138-a"),
+            ..base.clone()
+        },
+    )
+    .await
+    .expect("create job a");
+    assert_eq!(job_a.key_id, Some(key_a.id));
+    let job_b = jobs::create(
+        &pool,
+        &jobs::NewJob {
+            key_id: Some(key_b.id),
+            idempotency_key: Some("idem-p138-b"),
+            ..base.clone()
+        },
+    )
+    .await
+    .expect("create job b");
+    let job_web = jobs::create(
+        &pool,
+        &jobs::NewJob {
+            idempotency_key: Some("idem-p138-web"),
+            ..base.clone()
+        },
+    )
+    .await
+    .expect("create web job");
+    assert_eq!(job_web.key_id, None, "a JWT-created job has no key");
+
+    let by_id = jobs::by_id(&pool, job_a.id)
+        .await
+        .expect("by_id")
+        .expect("job a must exist");
+    assert_eq!(by_id, job_a, "roundtrip must preserve key_id");
+
+    let listed = jobs::list_by_key(&pool, key_a.id, 10)
+        .await
+        .expect("list_by_key a");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, job_a.id);
+    let listed = jobs::list_by_key(&pool, key_b.id, 10)
+        .await
+        .expect("list_by_key b");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, job_b.id);
+    // A key with no jobs lists empty (not the user's jobs).
+    let listed = jobs::list_by_key(&pool, Uuid::now_v7(), 10)
+        .await
+        .expect("list_by_key unknown");
+    assert!(listed.is_empty());
+
+    // list_by_user is unchanged: all three jobs.
+    let all = jobs::list_by_user(&pool, user.id, 10)
+        .await
+        .expect("list_by_user");
+    assert_eq!(all.len(), 3);
+
+    // set_status preserves key_id.
+    let updated = jobs::set_status(&pool, job_a.id, "running")
+        .await
+        .expect("set_status");
+    assert_eq!(updated.key_id, Some(key_a.id));
+
+    teardown(pool, db).await;
+}
+
+/// P1-038: `key_id` is a real FK — an unknown key is a typed
+/// `ForeignKeyViolation` on `jobs_key_id_fkey`, not a silent
+/// NULL or a 500.
+#[tokio::test]
+async fn jobs_key_id_unknown_key_is_foreign_key_violation() {
+    let db = "detag_p138_jobs_key_fk";
+    let pool = setup(db).await;
+
+    let user = users::create(&pool, "keyfk@example.com", "h")
+        .await
+        .expect("create user");
+    let err = jobs::create(
+        &pool,
+        &jobs::NewJob {
+            user_id: user.id,
+            upload_id: None,
+            kind: "image",
+            mode: "inpaint",
+            status: "queued",
+            lane: "standard",
+            params: serde_json::json!({}),
+            idempotency_key: None,
+            key_id: Some(Uuid::nil()),
+        },
+    )
+    .await
+    .expect_err("unknown key_id must fail");
+    match err {
+        RepoError::ForeignKeyViolation { constraint } => {
+            assert_eq!(constraint.as_deref(), Some("jobs_key_id_fkey"));
+        }
+        other => panic!("expected ForeignKeyViolation, got {other:?}"),
+    }
+
+    teardown(pool, db).await;
+}
+
+/// P1-038: `usage_by_key` aggregates one key's jobs for one
+/// UTC day by kind; `usage_breakdown_for_user` groups a
+/// user's day by key (plus the unattributed row). Jobs from
+/// another day do not leak in.
+#[tokio::test]
+async fn jobs_usage_by_key_and_breakdown() {
+    let db = "detag_p138_jobs_key_usage";
+    let pool = setup(db).await;
+
+    let user = users::create(&pool, "keyusage@example.com", "h")
+        .await
+        .expect("create user");
+    let key_a = api_keys::create(
+        &pool,
+        &NewApiKey {
+            user_id: user.id,
+            name: "a".to_string(),
+            prefix: "pf_live_AAAA".to_string(),
+            secret_hash: "hash-ua".to_string(),
+            scopes: vec!["jobs:write".to_string()],
+        },
+    )
+    .await
+    .expect("create key a");
+    let key_b = api_keys::create(
+        &pool,
+        &NewApiKey {
+            user_id: user.id,
+            name: "b".to_string(),
+            prefix: "pf_live_BBBB".to_string(),
+            secret_hash: "hash-ub".to_string(),
+            scopes: vec!["jobs:write".to_string()],
+        },
+    )
+    .await
+    .expect("create key b");
+    let today = Utc::now().date_naive();
+    let yesterday = today - Duration::days(1);
+    let mk = |kind: &'static str, key_id: Option<Uuid>, idem: &'static str| jobs::NewJob {
+        user_id: user.id,
+        upload_id: None,
+        kind,
+        mode: "inpaint",
+        status: "queued",
+        lane: "standard",
+        params: serde_json::json!({}),
+        idempotency_key: Some(idem),
+        key_id,
+    };
+    jobs::create(&pool, &mk("image", Some(key_a.id), "idem-p138-u1"))
+        .await
+        .expect("job 1");
+    jobs::create(&pool, &mk("image", Some(key_a.id), "idem-p138-u2"))
+        .await
+        .expect("job 2");
+    jobs::create(&pool, &mk("video", Some(key_a.id), "idem-p138-u3"))
+        .await
+        .expect("job 3");
+    jobs::create(&pool, &mk("image", Some(key_b.id), "idem-p138-u4"))
+        .await
+        .expect("job 4");
+    jobs::create(&pool, &mk("image", None, "idem-p138-u5"))
+        .await
+        .expect("job 5");
+    // Yesterday's job for key A: backdate created_at.
+    let old = jobs::create(&pool, &mk("image", Some(key_a.id), "idem-p138-u6"))
+        .await
+        .expect("job 6");
+    sqlx::query("UPDATE jobs SET created_at = $1 WHERE id = $2")
+        .bind(yesterday.and_hms_opt(12, 0, 0).unwrap().and_utc())
+        .bind(old.id)
+        .execute(&pool)
+        .await
+        .expect("backdate");
+
+    let usage = jobs::usage_by_key(&pool, key_a.id, today)
+        .await
+        .expect("usage_by_key a");
+    assert_eq!(usage.images, 2, "key A: 2 image jobs today");
+    assert_eq!(usage.video_jobs, 1, "key A: 1 video job today");
+    let usage = jobs::usage_by_key(&pool, key_b.id, today)
+        .await
+        .expect("usage_by_key b");
+    assert_eq!((usage.images, usage.video_jobs), (1, 0));
+    let usage = jobs::usage_by_key(&pool, key_a.id, yesterday)
+        .await
+        .expect("usage_by_key a yesterday");
+    assert_eq!((usage.images, usage.video_jobs), (1, 0));
+    let usage = jobs::usage_by_key(&pool, Uuid::now_v7(), today)
+        .await
+        .expect("usage_by_key unknown");
+    assert_eq!((usage.images, usage.video_jobs), (0, 0));
+
+    // Breakdown: one row per key + the unattributed row.
+    let rows = jobs::usage_breakdown_for_user(&pool, user.id, today)
+        .await
+        .expect("breakdown");
+    assert_eq!(rows.len(), 3, "key A + key B + unattributed, got {rows:?}");
+    let row_a = rows
+        .iter()
+        .find(|r| r.key_id == Some(key_a.id))
+        .expect("row A");
+    assert_eq!(row_a.key_prefix.as_deref(), Some("pf_live_AAAA"));
+    assert_eq!((row_a.images, row_a.video_jobs), (2, 1));
+    let row_b = rows
+        .iter()
+        .find(|r| r.key_id == Some(key_b.id))
+        .expect("row B");
+    assert_eq!(row_b.key_prefix.as_deref(), Some("pf_live_BBBB"));
+    assert_eq!((row_b.images, row_b.video_jobs), (1, 0));
+    let row_web = rows
+        .iter()
+        .find(|r| r.key_id.is_none())
+        .expect("unattributed row");
+    assert_eq!(row_web.key_prefix, None);
+    assert_eq!((row_web.images, row_web.video_jobs), (1, 0));
+
+    teardown(pool, db).await;
+}
+
+/// P1-038: the admin jobs list joins the key prefix — a job
+/// created via a key shows `pf_live_…`, a web-created job
+/// shows NULL — and filters by `user_id` / `key_id`.
+#[tokio::test]
+async fn jobs_admin_list_shows_key_prefix() {
+    let db = "detag_p138_jobs_key_admin";
+    let pool = setup(db).await;
+
+    let user = users::create(&pool, "keyadmin@example.com", "h")
+        .await
+        .expect("create user");
+    let other = users::create(&pool, "keyadmin2@example.com", "h")
+        .await
+        .expect("create other user");
+    let key = api_keys::create(
+        &pool,
+        &NewApiKey {
+            user_id: user.id,
+            name: "a".to_string(),
+            prefix: "pf_live_AAAA".to_string(),
+            secret_hash: "hash-ad".to_string(),
+            scopes: vec!["jobs:write".to_string()],
+        },
+    )
+    .await
+    .expect("create key");
+    let mk = |user_id: Uuid, key_id: Option<Uuid>, idem: &'static str| jobs::NewJob {
+        user_id,
+        upload_id: None,
+        kind: "image",
+        mode: "inpaint",
+        status: "queued",
+        lane: "standard",
+        params: serde_json::json!({}),
+        idempotency_key: Some(idem),
+        key_id,
+    };
+    let job_key = jobs::create(&pool, &mk(user.id, Some(key.id), "idem-p138-a1"))
+        .await
+        .expect("key job");
+    let job_web = jobs::create(&pool, &mk(user.id, None, "idem-p138-a2"))
+        .await
+        .expect("web job");
+    jobs::create(&pool, &mk(other.id, None, "idem-p138-a3"))
+        .await
+        .expect("other user job");
+
+    let rows = jobs::list_for_admin(&pool, None, None, None, 10)
+        .await
+        .expect("admin list all");
+    assert_eq!(rows.len(), 3);
+    let row_key = rows.iter().find(|r| r.id == job_key.id).expect("key row");
+    assert_eq!(row_key.key_prefix.as_deref(), Some("pf_live_AAAA"));
+    let row_web = rows.iter().find(|r| r.id == job_web.id).expect("web row");
+    assert_eq!(row_web.key_prefix, None, "web job shows no prefix");
+
+    let rows = jobs::list_for_admin(&pool, None, Some(key.id), None, 10)
+        .await
+        .expect("admin list by key");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, job_key.id);
+
+    let rows = jobs::list_for_admin(&pool, Some(user.id), None, None, 10)
+        .await
+        .expect("admin list by user");
+    assert_eq!(rows.len(), 2);
+
+    // Newest-first keyset pagination walks without duplicates.
+    let page1 = jobs::list_for_admin(&pool, None, None, None, 2)
+        .await
+        .expect("admin page 1");
+    assert_eq!(page1.len(), 2);
+    let cursor = detag_core::pagination::Cursor {
+        ts: page1[1].created_at.timestamp_millis(),
+        id: page1[1].id,
+    };
+    let page2 = jobs::list_for_admin(&pool, None, None, Some(cursor), 2)
+        .await
+        .expect("admin page 2");
+    assert_eq!(page2.len(), 1);
+    assert_ne!(page2[0].id, page1[0].id);
+    assert_ne!(page2[0].id, page1[1].id);
 
     teardown(pool, db).await;
 }
@@ -1284,6 +1653,7 @@ async fn artifacts_gc_key_lookups() {
             lane: "standard",
             params: serde_json::json!({}),
             idempotency_key: None,
+            key_id: None,
         },
     )
     .await

@@ -2,23 +2,28 @@
 //!
 //! Applies ONLY the 001 + 002 migration pairs plus the P1-005
 //! profile-fields migration plus the P1-021 revoked-before
-//! migration (copied from the repo's real `migrations/` into
-//! a scratch dir — the same pattern as the migration live
-//! tests) to a scratch DATABASE (`detag_p077_test`, created
-//! and dropped by the test) — never the dev database. The
-//! profile-fields migration is needed because the `users`
-//! repo queries now read `display_name` + `pending_email`
-//! (P1-005): without it, `users::create` fails with "column
-//! display_name does not exist". The revoked-before migration
-//! is needed for the same reason since P1-021 (`users` repo
-//! queries now read `revoked_before`): without it,
-//! `users::create` fails with "column revoked_before does
-//! not exist". Creates a user + job through the repos,
-//! records a retry event, reads it back, and asserts the
-//! payload round-trips; also asserts the FK: recording for
-//! a job id with no jobs row fails with `ForeignKeyViolation`
-//! (the worker sink treats that as best-effort, never failing
-//! the job).
+//! migration plus the 004 audit-flags-misc migration plus the
+//! P1-038 jobs-key-id migration (copied from the repo's real
+//! `migrations/` into a scratch dir — the same pattern as the
+//! migration live tests) to a scratch DATABASE
+//! (`detag_p077_test`, created and dropped by the test) —
+//! never the dev database. The profile-fields migration is
+//! needed because the `users` repo queries now read
+//! `display_name` + `pending_email` (P1-005): without it,
+//! `users::create` fails with "column display_name does not
+//! exist". The revoked-before migration is needed for the
+//! same reason since P1-021 (`users` repo queries now read
+//! `revoked_before`): without it, `users::create` fails with
+//! "column revoked_before does not exist". The 004 migration
+//! is needed since P1-038: it creates `api_keys`, which the
+//! jobs-key-id migration's FK references, and the jobs repo
+//! now writes `key_id` on every INSERT — without the pair,
+//! `jobs::create` fails with "column key_id does not exist".
+//! Creates a user + job through the repos, records a retry
+//! event, reads it back, and asserts the payload round-trips;
+//! also asserts the FK: recording for a job id with no jobs
+//! row fails with `ForeignKeyViolation` (the worker sink
+//! treats that as best-effort, never failing the job).
 
 use detag_core::db::{connect, DbPool, PoolConfig};
 use detag_core::migrate::{migrate_revert_last, migrate_up};
@@ -54,12 +59,15 @@ fn repo_migrations_dir() -> PathBuf {
 }
 
 /// A scratch dir holding ONLY the 001 + 002 pairs + the P1-005
-/// profile-fields pair + the P1-021 revoked-before pair,
+/// profile-fields pair + the P1-021 revoked-before pair + the
+/// 004 audit-flags-misc pair + the P1-038 jobs-key-id pair,
 /// copied from the repo (002 depends on 001's users table; the
 /// profile-fields migration adds the columns the `users` repo
 /// reads since P1-005; the revoked-before migration adds the
-/// column it reads since P1-021). One dir per test (the tests
-/// in this file run in parallel).
+/// column it reads since P1-021; 004 creates `api_keys`, which
+/// the jobs-key-id migration's FK references, and the jobs repo
+/// writes `key_id` on every INSERT since P1-038). One dir per
+/// test (the tests in this file run in parallel).
 fn migrations_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "detag-p077-migrations-{}-{tag}",
@@ -71,8 +79,10 @@ fn migrations_dir(tag: &str) -> PathBuf {
     for stem in [
         "20261112064220_users_sessions",
         "20261112064924_jobs_artifacts",
+        "20261112065339_audit_flags_misc",
         "20261113040605_user_profile_fields",
         "20261113120835_users_revoked_before",
+        "20261114180600_jobs_key_id",
     ] {
         for ext in ["up.sql", "down.sql"] {
             let name = format!("{stem}.{ext}");
@@ -156,6 +166,7 @@ async fn retry_event_round_trips_through_job_events() {
             lane: "free",
             params: serde_json::json!({}),
             idempotency_key: None,
+            key_id: None,
         },
     )
     .await

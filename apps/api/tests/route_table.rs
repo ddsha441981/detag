@@ -221,7 +221,8 @@ async fn every_table_entry_resolves_to_the_stub() {
         // P1-033 POST /v1/api-keys, and P1-034 the jobs nest +
         // the webhook-endpoints nest (the authenticated stub),
         // and P1-035 POST /v1/api-keys/{id}/rotate, and
-        // P1-036 DELETE /v1/api-keys/{id}: real
+        // P1-036 DELETE /v1/api-keys/{id}, and P1-038 GET
+        // /v1/admin/jobs: real
         // handlers behind an auth extractor — the probe
         // sends no credential, so the extractor rejects with
         // 401 PF-1001 (not 501) and echoes the probe id (the
@@ -236,6 +237,7 @@ async fn every_table_entry_resolves_to_the_stub() {
                     || *path == "/v1/api-keys"
                     || *path == "/v1/api-keys/{id}/rotate"))
             || (*method == "GET" && *path == "/v1/admin/users")
+            || (*method == "GET" && *path == "/v1/admin/jobs")
             || (*method == "GET" && *path == "/v1/me/sessions")
             || (*method == "DELETE" && *path == "/v1/me/sessions/{id}")
             || (*method == "DELETE" && *path == "/v1/api-keys/{id}")

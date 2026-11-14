@@ -26,7 +26,7 @@ feature_flags   idempotency_keys   email_outbox     plans (catalog)
 **subscriptions** — id, user_id, plan_id, provider (stripe|razorpay), provider_customer_id, provider_subscription_id, status (trialing|active|past_due|canceled), current_period_end, cancel_at_period_end.
 **usage_counters** — user_id, day (date), images_used, video_seconds_used, unique(user_id, day); Redis mirrors for hot path.
 **uploads** — id, user_id, kind, filename, bytes, sha256, phash, mime, width, height, duration_s?, metadata jsonb (exif summary, icc present, container atoms), status (pending_parts|ready|aborted), storage_key, parts int.
-**jobs** — id, user_id, upload_id, kind (image|video|batch), mode, params jsonb, status, stage, progress real, priority/lane, attempts int, idempotency_key unique, error jsonb, attestation_id, webhook_url?, started_at, finished_at. Status is free TEXT (no enum): `queued`, `held` (P1-008 — an admin suspend holds only `queued` jobs; Phase 2 intake/claim must treat `held` as "do not start", and restore releases `held` → `queued`), `succeeded`, `quality_failed`. There is no transition validation in `jobs::set_status` — the callers own the state machine (Phase 2).
+**jobs** — id, user_id, upload_id, kind (image|video|batch), mode, params jsonb, status, stage, progress real, priority/lane, attempts int, idempotency_key unique, error jsonb, attestation_id, webhook_url?, started_at, finished_at, key_id (P1-038: the API key that created the job — NULL for a web / JWT-created job; FK to api_keys ON DELETE SET NULL, so deleting a key never takes its jobs' history with it; the per-key usage breakdown and the admin jobs view read this column). Status is free TEXT (no enum): `queued`, `held` (P1-008 — an admin suspend holds only `queued` jobs; Phase 2 intake/claim must treat `held` as "do not start", and restore releases `held` → `queued`), `succeeded`, `quality_failed`. There is no transition validation in `jobs::set_status` — the callers own the state machine (Phase 2).
 **job_events** — id, job_id, at, type (stage|progress|note|state_change), payload jsonb (append-only: UPDATE-only trigger since P1-007 — DELETE is the purge cascade's erasure path).
 **artifacts** — id, job_id, type (output|mask|preview_before|preview_after|report|batch_zip), storage_key, bytes, sha256, expires_at.
 **quality_reports** — id, job_id, engine_version, models jsonb, metrics jsonb (ssim/psnr/vmaf…), encode jsonb, regions jsonb, gate (pass|fail), retried bool, seed text.
@@ -55,7 +55,7 @@ allows live in the [user lifecycle doc](06-user-lifecycle.md)
 
 ## Indexes (minimum)
 
-jobs(user_id, created_at desc), jobs(status, lane, priority), uploads(user_id, status), sessions(refresh_hash) unique, api_keys(prefix), api_keys(secret_hash) unique, usage_counters PK(user_id, day), audit_logs(actor_user_id, created_at desc), audit_logs(target_type, target_id), webhook_deliveries(endpoint_id, created_at desc), idempotency_keys(expires_at) for GC, worker_heartbeats(last_heartbeat_at) for staleness scans.
+jobs(user_id, created_at desc), jobs(status, lane, priority), jobs(key_id, created_at desc) (P1-038 — the per-key attribution read), uploads(user_id, status), sessions(refresh_hash) unique, api_keys(prefix), api_keys(secret_hash) unique, usage_counters PK(user_id, day), audit_logs(actor_user_id, created_at desc), audit_logs(target_type, target_id), webhook_deliveries(endpoint_id, created_at desc), idempotency_keys(expires_at) for GC, worker_heartbeats(last_heartbeat_at) for staleness scans.
 
 ## Migration policy
 

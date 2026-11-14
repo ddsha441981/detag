@@ -340,6 +340,95 @@ pub struct UserSearchPage {
     pub next_cursor: Option<String>,
 }
 
+/// One row of the admin jobs list (P1-038): the job as the
+/// dashboard shows it — identity, owner, kind, status — plus
+/// the display prefix of the API key that created it
+/// (`key_prefix` is `None` for a web / JWT-created job).
+/// The prefix is the only key material this view ever shows:
+/// never the secret, never its hash, never the full key id
+/// as a credential (the id is a row identifier, not a
+/// secret — the same rule as the api-keys listing).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AdminJobItem {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    /// The API key that created the job, or `None` for a web
+    /// / JWT-created job.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<Uuid>,
+    /// The creating key's display prefix (`pf_live_…`), or
+    /// `None` for a web / JWT-created job.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_prefix: Option<String>,
+    pub kind: String,
+    pub mode: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<jobs::AdminJobRow> for AdminJobItem {
+    fn from(row: jobs::AdminJobRow) -> Self {
+        Self {
+            id: row.id,
+            user_id: row.user_id,
+            key_id: row.key_id,
+            key_prefix: row.key_prefix,
+            kind: row.kind,
+            mode: row.mode,
+            status: row.status,
+            created_at: row.created_at,
+        }
+    }
+}
+
+/// The admin jobs response page: the api-spec pagination shape
+/// (same `{"items": [...], "next_cursor": "..."}` as the user
+/// search — see [`UserSearchPage`]).
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct AdminJobsPage {
+    pub items: Vec<AdminJobItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
+/// List jobs for the admin view (P1-038). Newest first;
+/// `user_id` / `key_id` narrow the list (both `None` lists
+/// everything); `limit` clamps to 1..=100 (default 20);
+/// `cursor` is the opaque keyset from the previous page — a
+/// tampered cursor is 422 `PF-2002`, never a silent restart.
+/// One query, no N+1: the key prefix comes back in the same
+/// rows (see `jobs::list_for_admin`).
+pub async fn list_jobs(
+    state: &AppState,
+    user_id: Option<Uuid>,
+    key_id: Option<Uuid>,
+    limit: Option<u32>,
+    cursor: Option<String>,
+) -> Result<AdminJobsPage, AdminError> {
+    let limit = clamp_limit(limit);
+    let cursor = match cursor {
+        Some(raw) => Some(Cursor::decode(&raw).map_err(|_| AdminError::InvalidCursor)?),
+        None => None,
+    };
+    let rows = jobs::list_for_admin(&state.pool, user_id, key_id, cursor, i64::from(limit) + 1)
+        .await
+        .map_err(|err| {
+            tracing::error!(error = ?err, "admin jobs: query failed");
+            AdminError::Internal
+        })?;
+    let page = Page::from_window(rows, limit, |row| Cursor {
+        // `timestamp_millis()` truncates to milliseconds — the
+        // same truncation the repo's keyset compares on, so the
+        // cursor points at exactly this row.
+        ts: row.created_at.timestamp_millis(),
+        id: row.id,
+    });
+    Ok(AdminJobsPage {
+        items: page.items.into_iter().map(AdminJobItem::from).collect(),
+        next_cursor: page.next_cursor,
+    })
+}
+
 /// Search users (P1-009). `query` is a prefix filter on
 /// email, display name, or id (case-insensitive; blank is
 /// no filter); `limit` clamps to 1..=100 (default 20);

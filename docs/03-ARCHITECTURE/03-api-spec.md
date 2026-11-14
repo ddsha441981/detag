@@ -801,6 +801,21 @@ the cursor's own row would be re-included (its microseconds
 sit past the truncated millisecond) or a row created in the
 same millisecond with a smaller id would be skipped.
 
+Admin jobs list (P1-038, FR-A-06): `GET /v1/admin/jobs`
+lists jobs newest first (the same keyset pagination as the
+user search — `?limit=` clamps to 1..=100, default 20;
+`?cursor=` is the opaque keyset; a tampered cursor is 422
+`PF-2002`). `?user_id=` narrows to one owner's jobs;
+`?key_id=` narrows to one API key's jobs (the key-scoped
+attribution read). Every row carries `id, user_id, key_id,
+key_prefix, kind, mode, status, created_at` — `key_prefix`
+is the display prefix (`pf_live_…`) of the key that created
+the job, and is absent for a web / JWT-created job. The
+prefix is the only key material this view ever shows: never
+the secret, never its hash. Access: the `AdminReadContext`
+extractor — admin + support; a verified plain user gets 403
+`PF-1002`, no credential gets 401 `PF-1001`.
+
 Impersonation (P1-010, FR-A-01): `POST
 /v1/admin/users/{id}/impersonate` takes `{"reason": "..."}`
 (1–500 characters after trimming, no control characters —
@@ -856,7 +871,7 @@ convention is needed beyond "the actor is whoever the
 audited actions that exist today (profile update) and on
 the admin block.
 | POST | `/v1/admin/users/{id}/impersonate` | reason; audited; returns 15-min scoped token with `impersonator_id` claim; admin only (support forbidden) |
-| GET | `/v1/admin/jobs?status=&kind=` | browse + inspect raw params/report |
+| GET | `/v1/admin/jobs?user_id=&key_id=` | browse, newest first, cursor pagination; each row shows the creating key's display prefix (`key_prefix`, null for web-created jobs); admin + support |
 | POST | `/v1/admin/jobs/{id}/reprocess` · `/cancel` | audited |
 | GET | `/v1/admin/dlq?queue=&limit=` | dead-letter queue: quarantined jobs with payload snapshot (P0-078 stub — Phase 4 wires UI) |
 | GET/PUT | `/v1/admin/flags` | feature-flag editor |

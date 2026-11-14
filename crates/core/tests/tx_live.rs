@@ -125,6 +125,7 @@ async fn commit_on_success_writes_both_rows() {
                     lane: "standard",
                     params: serde_json::json!({}),
                     idempotency_key: None,
+                    key_id: None,
                 },
             )
             .await?;
