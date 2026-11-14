@@ -80,6 +80,24 @@ produced them. Never accept a snapshot you have not read.
   value (timestamp, random id, port) is a bug in the test, not in
   insta — pin the value (fixed request ids, fixed cursors).
 
+## Email flow tests (P1-030)
+
+`apps/api/tests/email_flow.rs` proves the whole mail path, not
+just the endpoints: the outbox contract per mail (template,
+recipient hash, token shape, stored token row under the right
+purpose, payload carries ids only — never a raw address) and the
+delivery path end to end (register/forgot → drain → delivered
+mail → the token in the delivered mail verifies / resets).
+The "MailHog" in these tests is a fake SMTP relay on loopback
+(the same minimal protocol subset the mailer and worker suites
+use): no docker on this VM (DOCKER-001) and no real SMTP
+anywhere in CI — the relay is always 127.0.0.1, so no test mail
+ever leaves the test process. Real MailHog exists only in the
+compose dev stack (`ops/compose.dev.yml`). The e2e tests drain
+the outbox, which claims every due row, so each runs on its own
+scratch database (testkit `TestCtx`) — the shared harness DB
+would let one test's drain mark another test's mail sent.
+
 ## Property testing (P0-096)
 
 Property tests live in `crates/core/tests/prop/` (cursor codec,

@@ -1547,6 +1547,7 @@ dependencies = [
  "deadpool-redis",
  "detag-core",
  "detag-engine",
+ "detag-mailer",
  "detag-storage",
  "detag-testkit",
  "detag-validator",
