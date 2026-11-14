@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, name, prefix, secret_hash, scopes,\n               last_used_at, revoked_at, rate_limit_tier, created_at, updated_at\n           FROM api_keys\n           WHERE secret_hash = $1 AND revoked_at IS NULL",
+  "query": "SELECT id, user_id, name, prefix, secret_hash, scopes,\n               last_used_at, revoked_at, expires_at, rate_limit_tier, created_at, updated_at\n           FROM api_keys\n           WHERE secret_hash = $1 AND revoked_at IS NULL\n             AND (expires_at IS NULL OR expires_at > $2)",
   "describe": {
     "columns": [
       {
@@ -93,6 +93,17 @@
       },
       {
         "ordinal": 8,
+        "name": "expires_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "api_keys",
+            "name": "expires_at"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
         "name": "rate_limit_tier",
         "type_info": "Text",
         "origin": {
@@ -103,7 +114,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -114,7 +125,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -127,7 +138,8 @@
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Text",
+        "Timestamptz"
       ]
     },
     "nullable": [
@@ -140,9 +152,10 @@
       true,
       true,
       true,
+      true,
       false,
       false
     ]
   },
-  "hash": "35f40119297bc8fec39b05fe79d17ba81802b00a9ebf16025cbdc73748db3f6e"
+  "hash": "be825759bd8e092129a7aa3834a15b70f5c2420b5cc1a03eafc158633f1e7ee7"
 }

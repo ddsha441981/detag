@@ -81,15 +81,15 @@ fn route_table_has_no_duplicates() {
     }
     assert_eq!(
         ROUTE_TABLE.len(),
-        66,
-        "ROUTE_TABLE must list the spec's 66 routes (auth 19 + uploads 4 + jobs 9 + billing 12 + admin 20 + meta 2)"
+        67,
+        "ROUTE_TABLE must list the spec's 67 routes (auth 20 + uploads 4 + jobs 9 + billing 12 + admin 20 + meta 2)"
     );
 }
 
 #[tokio::test]
 async fn every_table_entry_resolves_to_the_stub() {
     let router = test_router();
-    // The probes send 64 /v1 requests in one burst through the
+    // The probes send 65 /v1 requests in one burst through the
     // rate limiter (P0-103). They use a per-run XFF address so
     // they never share the oneshot "unknown" bucket with the
     // other test binaries running in parallel — the aggregate
@@ -219,8 +219,9 @@ async fn every_table_entry_resolves_to_the_stub() {
         // P1-017 POST /v1/auth/logout-all, and P1-019 GET
         // /v1/me/sessions + DELETE /v1/me/sessions/{id}, and
         // P1-033 POST /v1/api-keys, and P1-034 the jobs nest +
-        // the webhook-endpoints nest (the authenticated stub):
-        // real handlers behind an auth extractor — the probe
+        // the webhook-endpoints nest (the authenticated stub),
+        // and P1-035 POST /v1/api-keys/{id}/rotate: real
+        // handlers behind an auth extractor — the probe
         // sends no credential, so the extractor rejects with
         // 401 PF-1001 (not 501) and echoes the probe id (the
         // route exists; each handler's own test covers its
@@ -231,7 +232,8 @@ async fn every_table_entry_resolves_to_the_stub() {
                     || *path == "/v1/admin/users/{id}/restore"
                     || *path == "/v1/admin/users/{id}/impersonate"
                     || *path == "/v1/auth/logout-all"
-                    || *path == "/v1/api-keys"))
+                    || *path == "/v1/api-keys"
+                    || *path == "/v1/api-keys/{id}/rotate"))
             || (*method == "GET" && *path == "/v1/admin/users")
             || (*method == "GET" && *path == "/v1/me/sessions")
             || (*method == "DELETE" && *path == "/v1/me/sessions/{id}")

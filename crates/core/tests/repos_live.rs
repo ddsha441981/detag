@@ -67,6 +67,7 @@ fn drop_db_sql(db: &str) -> &'static str {
         "detag_p131_outbox_rate_count" => "DROP DATABASE IF EXISTS detag_p131_outbox_rate_count",
         "detag_p133_api_keys" => "DROP DATABASE IF EXISTS detag_p133_api_keys",
         "detag_p134_api_keys_lookup" => "DROP DATABASE IF EXISTS detag_p134_api_keys_lookup",
+        "detag_p135_api_keys_expiry" => "DROP DATABASE IF EXISTS detag_p135_api_keys_expiry",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -90,6 +91,7 @@ fn create_db_sql(db: &str) -> &'static str {
         "detag_p131_outbox_rate_count" => "CREATE DATABASE detag_p131_outbox_rate_count",
         "detag_p133_api_keys" => "CREATE DATABASE detag_p133_api_keys",
         "detag_p134_api_keys_lookup" => "CREATE DATABASE detag_p134_api_keys_lookup",
+        "detag_p135_api_keys_expiry" => "CREATE DATABASE detag_p135_api_keys_expiry",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -394,7 +396,7 @@ async fn api_keys_create_counts_only_live_keys() {
     assert_eq!(first.scopes, ["jobs:write", "jobs:read"]);
     assert!(first.revoked_at.is_none());
     assert_eq!(
-        api_keys::count_live_for_user(&pool, user.id)
+        api_keys::count_live_for_user(&pool, user.id, Utc::now())
             .await
             .expect("count"),
         1,
@@ -414,7 +416,7 @@ async fn api_keys_create_counts_only_live_keys() {
     .await
     .expect("create second key");
     assert_eq!(
-        api_keys::count_live_for_user(&pool, user.id)
+        api_keys::count_live_for_user(&pool, user.id, Utc::now())
             .await
             .expect("count"),
         2,
@@ -434,7 +436,7 @@ async fn api_keys_create_counts_only_live_keys() {
     .await
     .expect("create other user's key");
     assert_eq!(
-        api_keys::count_live_for_user(&pool, user.id)
+        api_keys::count_live_for_user(&pool, user.id, Utc::now())
             .await
             .expect("count"),
         2,
@@ -449,7 +451,7 @@ async fn api_keys_create_counts_only_live_keys() {
         .await
         .expect("revoke first key");
     assert_eq!(
-        api_keys::count_live_for_user(&pool, user.id)
+        api_keys::count_live_for_user(&pool, user.id, Utc::now())
             .await
             .expect("count"),
         1,
@@ -477,7 +479,7 @@ async fn api_keys_create_counts_only_live_keys() {
     // The failed insert left nothing behind.
     let _ = second;
     assert_eq!(
-        api_keys::count_live_for_user(&pool, user.id)
+        api_keys::count_live_for_user(&pool, user.id, Utc::now())
             .await
             .expect("count"),
         1,
@@ -514,12 +516,12 @@ async fn api_keys_lookup_by_hash_is_live_only_and_touch_stamps() {
     .expect("create key");
     assert!(key.last_used_at.is_none(), "fresh key was never used");
 
-    let found = api_keys::by_secret_hash(&pool, &"d".repeat(64))
+    let found = api_keys::by_secret_hash(&pool, &"d".repeat(64), Utc::now())
         .await
         .expect("lookup live key");
     assert_eq!(found.as_ref().map(|k| k.id), Some(key.id));
     assert!(
-        api_keys::by_secret_hash(&pool, &"e".repeat(64))
+        api_keys::by_secret_hash(&pool, &"e".repeat(64), Utc::now())
             .await
             .expect("lookup unknown hash")
             .is_none(),
@@ -534,7 +536,7 @@ async fn api_keys_lookup_by_hash_is_live_only_and_touch_stamps() {
         .await
         .expect("revoke key");
     assert!(
-        api_keys::by_secret_hash(&pool, &"d".repeat(64))
+        api_keys::by_secret_hash(&pool, &"d".repeat(64), Utc::now())
             .await
             .expect("lookup revoked key")
             .is_none(),
@@ -552,7 +554,7 @@ async fn api_keys_lookup_by_hash_is_live_only_and_touch_stamps() {
     api_keys::touch_last_used_at(&pool, key.id, stamp)
         .await
         .expect("touch");
-    let reread = api_keys::by_secret_hash(&pool, &"d".repeat(64))
+    let reread = api_keys::by_secret_hash(&pool, &"d".repeat(64), Utc::now())
         .await
         .expect("reread revoked key");
     assert!(
@@ -574,11 +576,102 @@ async fn api_keys_lookup_by_hash_is_live_only_and_touch_stamps() {
     api_keys::touch_last_used_at(&pool, live.id, stamp)
         .await
         .expect("touch second key");
-    let reread_live = api_keys::by_secret_hash(&pool, &"f".repeat(64))
+    let reread_live = api_keys::by_secret_hash(&pool, &"f".repeat(64), Utc::now())
         .await
         .expect("reread live key")
         .expect("live key still looks up");
     assert_eq!(reread_live.last_used_at, Some(stamp));
+
+    teardown(pool, db).await;
+}
+
+#[tokio::test]
+async fn api_keys_expired_rows_do_not_verify_or_count() {
+    // P1-035: `expires_at` is rotation's kill path — a row
+    // past its deadline does not verify (the extractor's 401
+    // must not distinguish expired from unknown/revoked) and
+    // stops counting toward the cap, while `by_id_for_user`
+    // still reads it (the service decides what a dead row
+    // means — rotate of a revoked key is 404, of an expired
+    // one is allowed).
+    let db = "detag_p135_api_keys_expiry";
+    let pool = setup(db).await;
+    let user = users::create(&pool, "keys-expiry@example.com", "h")
+        .await
+        .expect("seed user");
+
+    let key = api_keys::create(
+        &pool,
+        &NewApiKey {
+            user_id: user.id,
+            name: "CI deploy".to_string(),
+            prefix: "pf_live_aB3x".to_string(),
+            secret_hash: "g".repeat(64),
+            scopes: vec!["jobs:read".to_string()],
+        },
+    )
+    .await
+    .expect("create key");
+    assert!(key.expires_at.is_none(), "a fresh key never expires");
+
+    // A future deadline: still live for auth and the cap.
+    let future = Utc::now() + Duration::hours(24);
+    api_keys::set_expires_at(&pool, key.id, future)
+        .await
+        .expect("set future expiry");
+    assert!(
+        api_keys::by_secret_hash(&pool, &"g".repeat(64), Utc::now())
+            .await
+            .expect("lookup unexpired key")
+            .is_some(),
+        "a key inside its window still verifies"
+    );
+    assert_eq!(
+        api_keys::count_live_for_user(&pool, user.id, Utc::now())
+            .await
+            .expect("count"),
+        1,
+        "a key inside its window still counts"
+    );
+
+    // A past deadline: dead for auth and the cap, but still
+    // readable by id for the service's decision. (Postgres
+    // `timestamptz` keeps microseconds, so the deadline is
+    // built at microsecond precision — a nanosecond stamp
+    // would read back truncated and the equality below would
+    // fail on precision, not on behaviour; the P1-034 lesson.)
+    let past =
+        DateTime::from_timestamp_micros((Utc::now() - Duration::hours(1)).timestamp_micros())
+            .expect("microsecond stamp round-trips");
+    api_keys::set_expires_at(&pool, key.id, past)
+        .await
+        .expect("set past expiry");
+    assert!(
+        api_keys::by_secret_hash(&pool, &"g".repeat(64), Utc::now())
+            .await
+            .expect("lookup expired key")
+            .is_none(),
+        "an expired key must not verify"
+    );
+    assert_eq!(
+        api_keys::count_live_for_user(&pool, user.id, Utc::now())
+            .await
+            .expect("count"),
+        0,
+        "an expired key stops counting"
+    );
+    let by_id = api_keys::by_id_for_user(&pool, key.id, user.id)
+        .await
+        .expect("read expired key by id")
+        .expect("by_id_for_user reads dead rows too");
+    assert_eq!(by_id.expires_at, Some(past));
+    assert!(
+        api_keys::by_id_for_user(&pool, key.id, Uuid::now_v7())
+            .await
+            .expect("read foreign key by id")
+            .is_none(),
+        "another user's id finds nothing (no enumeration)"
+    );
 
     teardown(pool, db).await;
 }

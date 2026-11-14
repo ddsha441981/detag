@@ -201,6 +201,13 @@ pub struct Settings {
     /// v1 (transactional-only stance) — any marketing-class row
     /// is parked on sight. Raise deliberately to enable.
     pub mailer_marketing_cap_per_hour: u32,
+    /// Env: PF_API_KEY_ROTATION_OVERLAP_SECS — how long the
+    /// old secret stays valid after `POST
+    /// /v1/api-keys/{id}/rotate` (P1-035). Default 86400 (24
+    /// h). Must be > 0 (a 0 overlap would kill the old secret
+    /// the instant the new one is minted, defeating the
+    /// rotation's purpose).
+    pub api_key_rotation_overlap_secs: u64,
     /// Env: PF_ENGINE_MODELS_DIR
     pub engine_models_dir: String,
     /// Env: PF_ENGINE_GPU — GPU device count; 0 means CPU-only/off.
@@ -408,6 +415,7 @@ impl Default for Settings {
             mailer_verify_cap_per_hour: 3,
             mailer_reset_cap_per_hour: 3,
             mailer_marketing_cap_per_hour: 0,
+            api_key_rotation_overlap_secs: crate::api_keys::API_KEY_ROTATION_OVERLAP_DEFAULT_SECS,
             engine_models_dir: "./models".to_string(),
             engine_gpu: 0,
             engine_tiles_max: 1024,
@@ -492,6 +500,10 @@ const FIELD_VARS: &[(&str, &str)] = &[
     (
         "mailer_marketing_cap_per_hour",
         "PF_MAILER_MARKETING_CAP_PER_HOUR",
+    ),
+    (
+        "api_key_rotation_overlap_secs",
+        "PF_API_KEY_ROTATION_OVERLAP_SECS",
     ),
     ("engine_models_dir", "PF_ENGINE_MODELS_DIR"),
     ("engine_gpu", "PF_ENGINE_GPU"),
@@ -646,6 +658,7 @@ impl Settings {
             mailer_verify_cap_per_hour: field!(mailer_verify_cap_per_hour, u32),
             mailer_reset_cap_per_hour: field!(mailer_reset_cap_per_hour, u32),
             mailer_marketing_cap_per_hour: field!(mailer_marketing_cap_per_hour, u32),
+            api_key_rotation_overlap_secs: field!(api_key_rotation_overlap_secs, u64),
             engine_models_dir: field!(engine_models_dir, String),
             engine_gpu: field!(engine_gpu, u8),
             engine_tiles_max: field!(engine_tiles_max, u32),
@@ -782,6 +795,12 @@ impl Settings {
         }
         if self.mailer_backoff_base_secs == 0 {
             invalid("PF_MAILER_BACKOFF_BASE_SECS", "must be >= 1".to_string());
+        }
+        if self.api_key_rotation_overlap_secs == 0 {
+            invalid(
+                "PF_API_KEY_ROTATION_OVERLAP_SECS",
+                "must be >= 1".to_string(),
+            );
         }
         if self.mailer_drain_interval_secs == 0 {
             invalid("PF_MAILER_DRAIN_INTERVAL_SECS", "must be >= 1".to_string());

@@ -32,6 +32,11 @@ pub struct ApiKey {
     pub scopes: Vec<String>,
     pub last_used_at: Option<DateTime<Utc>>,
     pub revoked_at: Option<DateTime<Utc>>,
+    /// Rotation overlap deadline (P1-035): NULL = never
+    /// expires; set by rotation to `rotated_at + overlap`, after
+    /// which the row is dead for auth (and stops counting toward
+    /// the cap) even though `revoked_at` stays NULL.
+    pub expires_at: Option<DateTime<Utc>>,
     pub rate_limit_tier: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -60,7 +65,7 @@ pub async fn create(
         r#"INSERT INTO api_keys (user_id, name, prefix, secret_hash, scopes)
            VALUES ($1, $2, $3, $4, $5)
            RETURNING id, user_id, name, prefix, secret_hash, scopes,
-               last_used_at, revoked_at, rate_limit_tier, created_at, updated_at"#,
+               last_used_at, revoked_at, expires_at, rate_limit_tier, created_at, updated_at"#,
         new.user_id,
         new.name,
         new.prefix,
@@ -75,28 +80,83 @@ pub async fn create(
 /// Look a key up by the sha256 of the presented secret
 /// (P1-034, FR-A-06): the extractor hashes exactly what the
 /// client presented and reads this row. LIVE keys only
-/// (`revoked_at IS NULL`) — a revoked key must not verify:
-/// revocation (P1-036) is the kill path, and a revoked hash
-/// answers exactly like an unknown one (401 `PF-1001`), so
-/// the response never says whether a key existed, was
-/// revoked, or never minted. The unique index on
-/// `secret_hash` (migration `20261114030933`) makes the
-/// lookup unambiguous.
+/// (`revoked_at IS NULL` AND not past `expires_at`, P1-035)
+/// — a revoked or expired key must not verify: revocation
+/// (P1-036) is the kill path, expiry is rotation's (P1-035),
+/// and both answer exactly like an unknown one (401
+/// `PF-1001`), so the response never says whether a key
+/// existed, was revoked, expired, or never minted. The unique
+/// index on `secret_hash` (migration `20261114030933`) makes
+/// the lookup unambiguous. `now` is the caller's clock
+/// (the extractor's `state.clock`, so frozen-clock tests can
+/// prove the overlap window without waiting it out).
 pub async fn by_secret_hash(
     pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     secret_hash: &str,
+    now: DateTime<Utc>,
 ) -> Result<Option<ApiKey>, RepoError> {
     sqlx::query_as!(
         ApiKey,
         r#"SELECT id, user_id, name, prefix, secret_hash, scopes,
-               last_used_at, revoked_at, rate_limit_tier, created_at, updated_at
+               last_used_at, revoked_at, expires_at, rate_limit_tier, created_at, updated_at
            FROM api_keys
-           WHERE secret_hash = $1 AND revoked_at IS NULL"#,
+           WHERE secret_hash = $1 AND revoked_at IS NULL
+             AND (expires_at IS NULL OR expires_at > $2)"#,
         secret_hash,
+        now,
     )
     .fetch_optional(pool)
     .await
     .map_err(RepoError::from_sqlx)
+}
+
+/// Load one of the user's keys by id (P1-035, rotation
+/// target): the row must belong to `user_id`, or the caller
+/// gets `None` — a foreign id reads exactly like an unknown
+/// one (404 `PF-2010`, no enumeration). Unlike
+/// [`by_secret_hash`], this reads revoked and expired rows
+/// too: the service decides what a dead row means (rotate
+/// of a revoked key is 404 as well — it no longer exists
+/// for the caller — but the row is still there to audit
+/// against).
+pub async fn by_id_for_user(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    key_id: Uuid,
+    user_id: Uuid,
+) -> Result<Option<ApiKey>, RepoError> {
+    sqlx::query_as!(
+        ApiKey,
+        r#"SELECT id, user_id, name, prefix, secret_hash, scopes,
+               last_used_at, revoked_at, expires_at, rate_limit_tier, created_at, updated_at
+           FROM api_keys
+           WHERE id = $1 AND user_id = $2"#,
+        key_id,
+        user_id,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
+/// Set a key's rotation overlap deadline (P1-035): the old
+/// row stays valid for auth until `expires_at`, then reads
+/// as dead. Unconditional here — the service owns the
+/// decision of what the deadline is; this function just
+/// writes it (and bumps `updated_at` with the same stamp).
+pub async fn set_expires_at(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    key_id: Uuid,
+    expires_at: DateTime<Utc>,
+) -> Result<(), RepoError> {
+    sqlx::query!(
+        r#"UPDATE api_keys SET expires_at = $1, updated_at = $1 WHERE id = $2"#,
+        expires_at,
+        key_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(())
 }
 
 /// Record a use of a live key (P1-034): set `last_used_at`
@@ -122,18 +182,28 @@ pub async fn touch_last_used_at(
     Ok(())
 }
 
-/// Count a user's LIVE keys (`revoked_at IS NULL`) — the
-/// P1-033 cap input. Revoked keys do not spend the budget:
-/// a user who revoked 9 of 10 keys can mint 9 more.
+/// Count a user's LIVE keys (`revoked_at IS NULL` AND not
+/// past `expires_at`, P1-035) — the P1-033 cap input.
+/// Revoked keys do not spend the budget: a user who revoked
+/// 9 of 10 keys can mint 9 more. An expired (rotated-away)
+/// key stops spending the budget too, once its overlap
+/// window closes — during the window it still counts, so a
+/// user at the cap who rotates cannot mint a further key
+/// until the old one expires (rotation itself is exempt:
+/// it replaces, it does not add). `now` is the caller's
+/// clock, like [`by_secret_hash`].
 pub async fn count_live_for_user(
     pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     user_id: Uuid,
+    now: DateTime<Utc>,
 ) -> Result<i64, RepoError> {
     let row = sqlx::query!(
         r#"SELECT COUNT(*) AS "count!"
            FROM api_keys
-           WHERE user_id = $1 AND revoked_at IS NULL"#,
+           WHERE user_id = $1 AND revoked_at IS NULL
+             AND (expires_at IS NULL OR expires_at > $2)"#,
         user_id,
+        now,
     )
     .fetch_one(pool)
     .await

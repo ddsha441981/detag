@@ -38,6 +38,16 @@ pub const API_KEY_MAX_PER_USER: u32 = 10;
 /// call for no benefit. A first use (NULL) always stamps.
 pub const API_KEY_LAST_USED_THROTTLE_SECS: i64 = 300;
 
+/// Default overlap window for key rotation (P1-035): after
+/// `POST /v1/api-keys/{id}/rotate` the old secret stays
+/// valid for this many seconds (24 h). The operator tunes it
+/// via `PF_API_KEY_ROTATION_OVERLAP_SECS` (`Settings::
+/// api_key_rotation_overlap_secs`); the value is a freshness
+/// signal for rotation, not a security boundary — the old
+/// secret is already replaced, the window only buys clients
+/// time to deploy the new one.
+pub const API_KEY_ROTATION_OVERLAP_DEFAULT_SECS: u64 = 86_400;
+
 /// The scopes a key may carry (P1-033 spec). `jobs:write`
 /// implies nothing — each scope is checked independently by
 /// the P1-034 extractor.

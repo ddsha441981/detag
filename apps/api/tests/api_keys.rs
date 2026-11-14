@@ -16,14 +16,25 @@
 //! check, throttled `last_used_at` — proven in
 //! tests/extractor.rs): these tests assert the stored shape
 //! the extractor reads, not that a key authenticates.
+//!
+//! P1-035: rotation — `POST /v1/api-keys/{id}/rotate`
+//! mints a replacement secret (same name + scopes) and keeps
+//! the old secret valid for the overlap window (24 h by
+//! default), proven on a frozen clock: the old secret works
+//! until the window closes, then 401s, while the new secret
+//! keeps working. Rotation is exempt from the cap (it
+//! replaces, it does not add).
 
 mod common;
 
 use axum::http::{Method, Request, StatusCode};
+use chrono::{Duration, Utc};
 use common::{TestApp, TestFixtures};
 use detag_core::checksum::sha256_hex;
+use detag_core::clock::{Clock, ManualClock};
 use serde_json::json;
 use sqlx::Row;
+use std::sync::Arc;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -39,6 +50,20 @@ async fn keys_app() -> TestApp {
     settings.disposable_email_domains = "mailinator.com".to_string();
     settings.tos_current_version = "v1".to_string();
     TestApp::spawn_with_fixtures_and_settings(fixtures, settings).await
+}
+
+/// App on a frozen clock (P1-035): the caller owns the
+/// clock and advances it while the app reads it — the
+/// rotation overlap window is proven without waiting 24 h.
+/// The clock starts at the real now, so register/login
+/// behave exactly as on the wall clock until advanced.
+async fn keys_app_with_clock(clock: Arc<ManualClock>) -> TestApp {
+    let fixtures = TestFixtures::from_env().await;
+    let mut settings = fixtures.settings();
+    settings.disposable_email_domains = "mailinator.com".to_string();
+    settings.tos_current_version = "v1".to_string();
+    let clock: Arc<dyn Clock> = clock;
+    TestApp::spawn_with_fixtures_settings_and_clock(fixtures, settings, clock).await
 }
 
 fn unique_email() -> String {
@@ -125,6 +150,39 @@ async fn create_key(
 ) -> common::TestResponse {
     let body = json!({ "name": name, "scopes": scopes });
     app.request(create_key_req(token, body)).await
+}
+
+fn rotate_key_req(token: &str, key_id: Uuid) -> Request<axum::body::Body> {
+    Request::builder()
+        .method(Method::POST)
+        .uri(format!("/v1/api-keys/{key_id}/rotate"))
+        .header("x-request-id", REQUEST_ID)
+        .header("x-forwarded-for", unique_xff())
+        .header("authorization", format!("Bearer {token}"))
+        .body(axum::body::Body::empty())
+        .unwrap()
+}
+
+async fn rotate_key(app: &TestApp, token: &str, key_id: Uuid) -> common::TestResponse {
+    app.request(rotate_key_req(token, key_id)).await
+}
+
+/// Use a key against a scoped stub (`GET /v1/jobs` needs
+/// `jobs:read`): 501 means the key authenticated and passed
+/// the scope check (the stub runs); 401 `PF-1001` means the
+/// key is dead (unknown, revoked, or past its overlap).
+async fn probe_key(app: &TestApp, secret: &str) -> common::TestResponse {
+    app.request(
+        Request::builder()
+            .method(Method::GET)
+            .uri("/v1/jobs")
+            .header("x-request-id", REQUEST_ID)
+            .header("x-forwarded-for", unique_xff())
+            .header("authorization", format!("Bearer {secret}"))
+            .body(axum::body::Body::empty())
+            .unwrap(),
+    )
+    .await
 }
 
 #[tokio::test]
@@ -304,7 +362,7 @@ async fn tenth_key_succeeds_eleventh_is_409() {
     assert_eq!(res.json()["code"].as_str().unwrap(), "PF-2011");
 
     // The failed 11th create stored nothing.
-    let live = detag_core::repos::api_keys::count_live_for_user(&app.pool, user_id)
+    let live = detag_core::repos::api_keys::count_live_for_user(&app.pool, user_id, Utc::now())
         .await
         .expect("count live keys");
     assert_eq!(live, 10);
@@ -340,11 +398,291 @@ async fn concurrent_creates_never_exceed_ten() {
 
     // Per-user count: the binary's tests share one scratch DB,
     // so a global count would see other tests' keys.
-    let live = detag_core::repos::api_keys::count_live_for_user(&app.pool, user_id)
+    let live = detag_core::repos::api_keys::count_live_for_user(&app.pool, user_id, Utc::now())
         .await
         .expect("count live keys");
     assert_eq!(
         live, 10,
         "the table holds exactly 10 live keys for this user"
     );
+}
+
+#[tokio::test]
+async fn rotate_returns_201_with_new_secret_and_same_name_scopes() {
+    let app = keys_app().await;
+    let (user_id, token) = authed_user(&app).await;
+
+    let res = create_key(&app, &token, "CI deploy", &["jobs:write", "jobs:read"]).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    let created = res.json();
+    let old_id: Uuid = created["id"].as_str().unwrap().parse().unwrap();
+    let old_secret = created["secret"].as_str().unwrap().to_string();
+
+    let res = rotate_key(&app, &token, old_id).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    let body = res.json();
+    let new_secret = body["secret"].as_str().expect("new secret shown");
+    assert_ne!(new_secret, old_secret, "rotation mints a new secret");
+    assert!(
+        new_secret.starts_with("pf_live_"),
+        "new secret has the prefix"
+    );
+    assert_ne!(
+        body["id"].as_str().unwrap(),
+        old_id.to_string(),
+        "the replacement is a new row"
+    );
+    assert_eq!(body["name"].as_str().unwrap(), "CI deploy");
+    assert_eq!(body["scopes"], json!(["jobs:write", "jobs:read"]));
+    assert_ne!(
+        body["prefix"].as_str().unwrap(),
+        created["prefix"].as_str().unwrap(),
+        "the new secret has a new prefix"
+    );
+
+    // The old row carries the overlap deadline; the new row
+    // never expires.
+    let rows = sqlx::query(
+        r#"SELECT id, expires_at FROM api_keys WHERE user_id = $1 ORDER BY created_at"#,
+    )
+    .bind(user_id)
+    .fetch_all(&app.pool)
+    .await
+    .expect("key rows");
+    assert_eq!(rows.len(), 2, "old + replacement rows");
+    let old_expires: Option<chrono::DateTime<Utc>> =
+        rows[0].try_get("expires_at").expect("expires_at");
+    let new_expires: Option<chrono::DateTime<Utc>> =
+        rows[1].try_get("expires_at").expect("expires_at");
+    assert!(old_expires.is_some(), "the old row expires");
+    assert!(new_expires.is_none(), "the replacement never expires");
+
+    // The rotation is audited — without either secret or hash.
+    let audit = sqlx::query(
+        r#"SELECT action, after FROM audit_logs WHERE actor_user_id = $1 AND action = 'api_key.rotated'"#,
+    )
+    .bind(user_id)
+    .fetch_one(&app.pool)
+    .await
+    .expect("api_key.rotated audit row");
+    let action: String = audit.try_get("action").expect("action");
+    let after: Option<serde_json::Value> = audit.try_get("after").expect("after");
+    assert_eq!(action, "api_key.rotated");
+    let after = after.expect("audit after");
+    assert_eq!(
+        after["old_api_key_id"].as_str().unwrap(),
+        old_id.to_string()
+    );
+    assert_eq!(
+        after["new_api_key_id"].as_str().unwrap(),
+        body["id"].as_str().unwrap()
+    );
+    assert!(
+        !after.to_string().contains(&old_secret),
+        "audit has no secret"
+    );
+    assert!(
+        !after.to_string().contains(new_secret),
+        "audit has no new secret either"
+    );
+}
+
+#[tokio::test]
+async fn rotate_keeps_old_secret_valid_until_overlap_then_kills_it() {
+    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let app = keys_app_with_clock(clock.clone()).await;
+    let (_user_id, token) = authed_user(&app).await;
+
+    let res = create_key(&app, &token, "CI deploy", &["jobs:read"]).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    let created = res.json();
+    let old_id: Uuid = created["id"].as_str().unwrap().parse().unwrap();
+    let old_secret = created["secret"].as_str().unwrap().to_string();
+
+    let res = rotate_key(&app, &token, old_id).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    let new_secret = res.json()["secret"].as_str().unwrap().to_string();
+
+    // Inside the window both secrets authenticate (the jobs
+    // stub answers 501 once the key passes the scope check).
+    assert_eq!(
+        probe_key(&app, &old_secret).await.status,
+        StatusCode::NOT_IMPLEMENTED
+    );
+    assert_eq!(
+        probe_key(&app, &new_secret).await.status,
+        StatusCode::NOT_IMPLEMENTED
+    );
+
+    // One second before the window closes the old secret
+    // still works.
+    clock.advance(Duration::seconds(86_400 - 1));
+    assert_eq!(
+        probe_key(&app, &old_secret).await.status,
+        StatusCode::NOT_IMPLEMENTED
+    );
+
+    // Past the window the old secret is dead — the generic
+    // 401, indistinguishable from unknown — while the new
+    // secret keeps working.
+    clock.advance(Duration::seconds(2));
+    let res = probe_key(&app, &old_secret).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
+    assert_eq!(res.json()["code"].as_str().unwrap(), "PF-1001");
+    assert_eq!(
+        probe_key(&app, &new_secret).await.status,
+        StatusCode::NOT_IMPLEMENTED
+    );
+}
+
+#[tokio::test]
+async fn rotate_unknown_or_foreign_id_is_404() {
+    let app = keys_app().await;
+    let (_user_id, token) = authed_user(&app).await;
+
+    // Unknown id.
+    let res = rotate_key(&app, &token, Uuid::now_v7()).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.text());
+    assert_eq!(res.json()["code"].as_str().unwrap(), "PF-2010");
+
+    // Another user's key: the same 404, no enumeration.
+    let (_other_id, other_token) = authed_user(&app).await;
+    let res = create_key(&app, &other_token, "theirs", &["jobs:read"]).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    let foreign_id: Uuid = res.json()["id"].as_str().unwrap().parse().unwrap();
+    let res = rotate_key(&app, &token, foreign_id).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.text());
+    assert_eq!(res.json()["code"].as_str().unwrap(), "PF-2010");
+}
+
+#[tokio::test]
+async fn rotate_revoked_key_is_404() {
+    let app = keys_app().await;
+    let (user_id, token) = authed_user(&app).await;
+
+    let res = create_key(&app, &token, "CI deploy", &["jobs:read"]).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    let key_id: Uuid = res.json()["id"].as_str().unwrap().parse().unwrap();
+    // P1-036 owns the revoke path; the row is flipped
+    // directly here.
+    sqlx::query("UPDATE api_keys SET revoked_at = now() WHERE id = $1")
+        .bind(key_id)
+        .execute(&app.pool)
+        .await
+        .expect("revoke key");
+    let _ = user_id;
+
+    let res = rotate_key(&app, &token, key_id).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.text());
+    assert_eq!(res.json()["code"].as_str().unwrap(), "PF-2010");
+}
+
+#[tokio::test]
+async fn rotate_requires_jwt_key_cannot_rotate() {
+    let app = keys_app().await;
+    let (_user_id, token) = authed_user(&app).await;
+
+    let res = create_key(&app, &token, "CI deploy", &["jobs:read"]).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    let key_id: Uuid = res.json()["id"].as_str().unwrap().parse().unwrap();
+    let secret = res.json()["secret"].as_str().unwrap().to_string();
+
+    // No credential at all: 401.
+    let res = app
+        .request(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/v1/api-keys/{key_id}/rotate"))
+                .header("x-request-id", REQUEST_ID)
+                .header("x-forwarded-for", unique_xff())
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
+
+    // A live key as the credential: 403 PF-1002 — the rotate
+    // route is not in the extractor's scope table, so no key
+    // may call it (a key cannot rotate itself or any other).
+    let res = rotate_key(&app, &secret, key_id).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.text());
+    assert_eq!(res.json()["code"].as_str().unwrap(), "PF-1002");
+}
+
+#[tokio::test]
+async fn rotate_at_full_cap_succeeds() {
+    // Rotation is a replacement, not an addition: a user
+    // with a full 10 live keys can still rotate (a create
+    // at that point is 409 — proven by
+    // tenth_key_succeeds_eleventh_is_409).
+    let app = keys_app().await;
+    let (_user_id, token) = authed_user(&app).await;
+
+    let mut first_id = Uuid::nil();
+    for n in 1..=10 {
+        let res = create_key(&app, &token, &format!("key {n}"), &["jobs:read"]).await;
+        assert_eq!(res.status, StatusCode::CREATED, "key {n}: {}", res.text());
+        if n == 1 {
+            first_id = res.json()["id"].as_str().unwrap().parse().unwrap();
+        }
+    }
+    let res = rotate_key(&app, &token, first_id).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+}
+
+#[tokio::test]
+async fn rotate_at_cap_succeeds_and_frees_the_slot_after_overlap() {
+    // Nine keys, then a rotation: during the overlap the old
+    // row still counts, so the user is at the cap (9 + 1
+    // replacement + 1 expiring = 10 counted) and no further
+    // create fits. Past the overlap the old row stops
+    // counting, so the slot frees. (Rotation itself is exempt
+    // from the cap — it replaces, it does not add — which is
+    // why the rotate at 9 keys succeeds and why a user with
+    // a full 10 can still rotate.)
+    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let app = keys_app_with_clock(clock.clone()).await;
+    let (user_id, mut token) = authed_user(&app).await;
+    let email = {
+        // The test user was registered with a fresh address
+        // inside authed_user; re-login needs that address —
+        // read it back from the users row instead of guessing.
+        let row = sqlx::query(r#"SELECT email FROM users WHERE id = $1"#)
+            .bind(user_id)
+            .fetch_one(&app.pool)
+            .await
+            .expect("user row");
+        row.try_get::<String, _>("email").expect("email")
+    };
+
+    let mut first_id = Uuid::nil();
+    for n in 1..=9 {
+        let res = create_key(&app, &token, &format!("key {n}"), &["jobs:read"]).await;
+        assert_eq!(res.status, StatusCode::CREATED, "key {n}: {}", res.text());
+        if n == 1 {
+            first_id = res.json()["id"].as_str().unwrap().parse().unwrap();
+        }
+    }
+    // Rotation succeeds (exempt from the cap) — but the old
+    // row still counts until its window closes, so no
+    // further create fits yet.
+    let res = rotate_key(&app, &token, first_id).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    let res = create_key(&app, &token, "key 10", &["jobs:read"]).await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.text());
+    assert_eq!(res.json()["code"].as_str().unwrap(), "PF-2011");
+
+    // Past the overlap the old row stops counting, so the
+    // slot frees (re-login: the frozen clock advanced past
+    // the first access token's 15-minute life).
+    clock.advance(Duration::seconds(86_401));
+    token = login_token(&app, &email).await;
+    let res = create_key(&app, &token, "key 10", &["jobs:read"]).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    // The count reads the app's frozen clock — the wall
+    // clock is still inside the overlap window.
+    let live = detag_core::repos::api_keys::count_live_for_user(&app.pool, user_id, clock.now())
+        .await
+        .expect("count live keys");
+    assert_eq!(live, 10, "10 live keys again after the slot freed");
 }

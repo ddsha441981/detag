@@ -9,6 +9,7 @@
 | Name | Default (dev) | Used by |
 | --- | --- | --- |
 | `PF_API_HOST` | `127.0.0.1` | api |
+| `PF_API_KEY_ROTATION_OVERLAP_SECS` | `86400` | auth |
 | `PF_API_PORT` | `8080` | api |
 | `PF_ARGON2_M_COST_KIB` | `65536` | api |
 | `PF_ARGON2_P_COST` | `4` | api |
