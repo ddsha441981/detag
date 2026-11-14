@@ -703,7 +703,7 @@ pub fn router() -> Router<AppState> {
             "/v1/api-keys",
             Router::new()
                 .route("/", get(stub).post(super::api_keys::create_api_key))
-                .route("/{id}", delete(stub))
+                .route("/{id}", delete(super::api_keys::revoke_api_key))
                 .route("/{id}/rotate", post(super::api_keys::rotate_api_key)),
         )
 }

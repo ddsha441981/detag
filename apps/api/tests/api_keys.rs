@@ -30,6 +30,7 @@ mod common;
 use axum::http::{Method, Request, StatusCode};
 use chrono::{Duration, Utc};
 use common::{TestApp, TestFixtures};
+use detag_api::services::revocation::is_api_key_revoked;
 use detag_core::checksum::sha256_hex;
 use detag_core::clock::{Clock, ManualClock};
 use serde_json::json;
@@ -685,4 +686,202 @@ async fn rotate_at_cap_succeeds_and_frees_the_slot_after_overlap() {
         .await
         .expect("count live keys");
     assert_eq!(live, 10, "10 live keys again after the slot freed");
+}
+
+fn revoke_key_req(token: &str, key_id: Uuid) -> Request<axum::body::Body> {
+    Request::builder()
+        .method(Method::DELETE)
+        .uri(format!("/v1/api-keys/{key_id}"))
+        .header("x-request-id", REQUEST_ID)
+        .header("x-forwarded-for", unique_xff())
+        .header("authorization", format!("Bearer {token}"))
+        .body(axum::body::Body::empty())
+        .unwrap()
+}
+
+async fn revoke_key(app: &TestApp, token: &str, key_id: Uuid) -> common::TestResponse {
+    app.request(revoke_key_req(token, key_id)).await
+}
+
+#[tokio::test]
+async fn revoke_happy_path_kills_key_immediately() {
+    let app = keys_app().await;
+    let (user_id, token) = authed_user(&app).await;
+
+    let res = create_key(&app, &token, "CI deploy", &["jobs:read"]).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    let key_id: Uuid = res.json()["id"].as_str().unwrap().parse().unwrap();
+    let secret = res.json()["secret"].as_str().unwrap().to_string();
+    let hash = sha256_hex(secret.as_bytes());
+
+    // Live before: the probe runs the stub (501), and the hash
+    // is not denylisted yet.
+    let res = probe_key(&app, &secret).await;
+    assert_eq!(res.status, StatusCode::NOT_IMPLEMENTED, "{}", res.text());
+    assert!(
+        !is_api_key_revoked(&app.state, &hash)
+            .await
+            .expect("denylist read"),
+        "a fresh key is not denylisted"
+    );
+
+    let res = revoke_key(&app, &token, key_id).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+
+    // Dead immediately: the next use is 401 PF-1001 — no
+    // grace, no overlap (unlike rotation).
+    let res = probe_key(&app, &secret).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
+    assert_eq!(res.json()["code"].as_str().unwrap(), "PF-1001");
+
+    // The row carries revoked_at, and the hash is denylisted.
+    let row = sqlx::query(r#"SELECT revoked_at FROM api_keys WHERE id = $1"#)
+        .bind(key_id)
+        .fetch_one(&app.pool)
+        .await
+        .expect("key row");
+    let revoked_at: Option<chrono::DateTime<chrono::Utc>> =
+        row.try_get("revoked_at").expect("revoked_at");
+    assert!(revoked_at.is_some(), "revoked_at stamped");
+    assert!(
+        is_api_key_revoked(&app.state, &hash)
+            .await
+            .expect("denylist read"),
+        "a revoked hash is denylisted"
+    );
+
+    // Audited once — without the secret or its hash.
+    let audits = sqlx::query(
+        r#"SELECT action, after FROM audit_logs WHERE actor_user_id = $1 AND action = 'api_key.revoked'"#,
+    )
+    .bind(user_id)
+    .fetch_all(&app.pool)
+    .await
+    .expect("api_key.revoked audit rows");
+    assert_eq!(audits.len(), 1, "exactly one revoke audit");
+    let after: Option<serde_json::Value> = audits[0].try_get("after").expect("after");
+    let after = after.expect("audit after");
+    assert_eq!(after["api_key_id"].as_str().unwrap(), key_id.to_string());
+    assert_eq!(after["name"].as_str().unwrap(), "CI deploy");
+    assert_eq!(after["prefix"].as_str().unwrap(), &secret[..12]);
+    assert!(!after.to_string().contains(&secret), "audit has no secret");
+    assert!(
+        !after.to_string().contains(&hash),
+        "audit has no hash either"
+    );
+}
+
+#[tokio::test]
+async fn revoke_unknown_or_foreign_id_is_404() {
+    let app = keys_app().await;
+    let (_user_id, token) = authed_user(&app).await;
+
+    // Unknown id.
+    let res = revoke_key(&app, &token, Uuid::now_v7()).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.text());
+    assert_eq!(res.json()["code"].as_str().unwrap(), "PF-2010");
+
+    // Another user's key: the same 404, no enumeration — and
+    // the foreign key still works afterwards (not revoked).
+    let (_other_id, other_token) = authed_user(&app).await;
+    let res = create_key(&app, &other_token, "theirs", &["jobs:read"]).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    let foreign_id: Uuid = res.json()["id"].as_str().unwrap().parse().unwrap();
+    let foreign_secret = res.json()["secret"].as_str().unwrap().to_string();
+    let res = revoke_key(&app, &token, foreign_id).await;
+    assert_eq!(res.status, StatusCode::NOT_FOUND, "{}", res.text());
+    assert_eq!(res.json()["code"].as_str().unwrap(), "PF-2010");
+    let res = probe_key(&app, &foreign_secret).await;
+    assert_eq!(res.status, StatusCode::NOT_IMPLEMENTED, "{}", res.text());
+}
+
+#[tokio::test]
+async fn revoke_already_revoked_is_noop_success() {
+    let app = keys_app().await;
+    let (user_id, token) = authed_user(&app).await;
+
+    let res = create_key(&app, &token, "CI deploy", &["jobs:read"]).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    let key_id: Uuid = res.json()["id"].as_str().unwrap().parse().unwrap();
+
+    // First revoke: 204. Second revoke of the same (dead) key:
+    // still 204 — DELETE is idempotent — and no second audit.
+    let res = revoke_key(&app, &token, key_id).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+    let res = revoke_key(&app, &token, key_id).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+
+    let audits = sqlx::query(
+        r#"SELECT action FROM audit_logs WHERE actor_user_id = $1 AND action = 'api_key.revoked'"#,
+    )
+    .bind(user_id)
+    .fetch_all(&app.pool)
+    .await
+    .expect("api_key.revoked audit rows");
+    assert_eq!(audits.len(), 1, "the no-op second revoke audits nothing");
+}
+
+#[tokio::test]
+async fn revoke_requires_jwt_key_cannot_revoke() {
+    let app = keys_app().await;
+    let (_user_id, token) = authed_user(&app).await;
+
+    let res = create_key(&app, &token, "CI deploy", &["jobs:read"]).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    let key_id: Uuid = res.json()["id"].as_str().unwrap().parse().unwrap();
+    let secret = res.json()["secret"].as_str().unwrap().to_string();
+
+    // No credential at all: 401.
+    let res = app
+        .request(
+            Request::builder()
+                .method(Method::DELETE)
+                .uri(format!("/v1/api-keys/{key_id}"))
+                .header("x-request-id", REQUEST_ID)
+                .header("x-forwarded-for", unique_xff())
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
+
+    // A live key as the credential: 403 PF-1002 — the revoke
+    // route is not in the extractor's scope table, so no key
+    // may call it (a key cannot revoke itself or any other).
+    let res = revoke_key(&app, &secret, key_id).await;
+    assert_eq!(res.status, StatusCode::FORBIDDEN, "{}", res.text());
+    assert_eq!(res.json()["code"].as_str().unwrap(), "PF-1002");
+
+    // The key is still live afterwards.
+    let res = probe_key(&app, &secret).await;
+    assert_eq!(res.status, StatusCode::NOT_IMPLEMENTED, "{}", res.text());
+}
+
+#[tokio::test]
+async fn revoke_frees_cap_slot() {
+    let app = keys_app().await;
+    let (user_id, token) = authed_user(&app).await;
+
+    let mut first_id = Uuid::nil();
+    for n in 1..=10 {
+        let res = create_key(&app, &token, &format!("key {n}"), &["jobs:read"]).await;
+        assert_eq!(res.status, StatusCode::CREATED, "key {n}: {}", res.text());
+        if n == 1 {
+            first_id = res.json()["id"].as_str().unwrap().parse().unwrap();
+        }
+    }
+    // At the cap: one more is 409.
+    let res = create_key(&app, &token, "key 11", &["jobs:read"]).await;
+    assert_eq!(res.status, StatusCode::CONFLICT, "{}", res.text());
+
+    // Revoking one frees its slot: the next create is 201,
+    // and the user is back at 10 live keys.
+    let res = revoke_key(&app, &token, first_id).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+    let res = create_key(&app, &token, "key 11", &["jobs:read"]).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    let live = detag_core::repos::api_keys::count_live_for_user(&app.pool, user_id, Utc::now())
+        .await
+        .expect("count live keys");
+    assert_eq!(live, 10, "10 live keys again after the revoke");
 }
