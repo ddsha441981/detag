@@ -65,7 +65,7 @@
 | `PF_S3_BUCKET` | `detag-dev` | storage |
 | `PF_S3_ENDPOINT` | `http://localhost:9000` | storage |
 | `PF_S3_REGION` | `us-east-1` | storage |
-| `PF_S3_SECRET_KEY` | `minioadmin-secret-key` | storage |
+| `PF_S3_SECRET_KEY` | `minioadmin` | storage |
 | `PF_SMTP_HOST` | `localhost` | mailer |
 | `PF_SMTP_PASS` | (empty) | mailer |
 | `PF_SMTP_PORT` | `1025` | mailer |
