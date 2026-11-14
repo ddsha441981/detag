@@ -89,6 +89,13 @@
 - Fix: NOT attempted here — needs a layer inspection on a docker-capable runner (`docker history detag-worker:check`, or a `dive`-style breakdown) to name the fat layer, then trim that layer (or re-derive the ceiling with evidence if a base/ffmpeg update moved it). Do NOT just bump the limit without the breakdown. The image-size job could print `docker history` on failure to make the next diagnosis one-shot.
 - Status: open.
 
+### CI-FAIL-013 [bug] CI #10 commits workflow fails — script unit tests need Pillow/numpy, runner has neither
+- Date: 2026-11-14 · Ticket: P0-006 · Severity: S2 (CI red on main)
+- Symptom: CI run #10 (0ff5852), commits workflow: the lint step PASSED (`lint-commits: all 3 commit(s) pass`), but the `Unit-test the linter` step failed — `FAILED (errors=2)`: test_fixtures_gen → `ModuleNotFoundError: No module named 'numpy'`, test_templates_gen → `ModuleNotFoundError: No module named 'PIL'`. The step runs `python3 -m unittest discover -s scripts -p "test_*.py"` on the runner's system python 3.14, which has neither module (and numpy 1.26.4 has no 3.14 wheels).
+- Cause: latent — earlier runs never reached this step (they died at lint). The workflow installs no Python deps at all.
+- Fix: pin python 3.12 via actions/setup-python@v5 (same as the verify job) and `pip install pillow==10.2.0 numpy==1.26.4` before the test step.
+- Status: fixed (this commit) — waits on CI #11.
+
 ### TESTKIT-MINIO-001 [follow-up] testcontainers live legs + local-dev compose.minio.yml still reference dead MinIO images
 - Date: 2026-11-13 · Severity: S3 (not CI-blocking)
 - Cause: CI never sets PF_TEST_CONTAINERS/PF_TEST_LIVE_MINIO, so the live legs skip in CI; compose-minio-check only renders. But anyone running the live legs locally (or `docker compose -f ops/compose.minio.yml up`) hits the same dead MinIO pulls as CI-FAIL-004.
