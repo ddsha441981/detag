@@ -87,7 +87,7 @@
 - Symptom: CI run #10 (0ff5852), image-size job: `image-size FAIL: detag-worker:check is 200.8 MB (>= 200 MB limit, NFR-63)`; the api image is fine at 42.2 MB (< 150 MB).
 - Cause (partial): the 200 MB worker ceiling was derived from parts (bookworm-slim ~80 MB + ffmpeg stack ~45 MB + curl/certs ~15 MB + 6.2 MB worker binary ≈ 146 MB). The binary is NOT the growth — Dockerfile.worker strips it (`strip /tmp/detag-worker`, release profile `strip = "symbols"`) — so the ~55 MB growth is in the runtime layer, most likely the ffmpeg package set or the bookworm-slim base image updating since P0-084. Not proven: no layer breakdown was captured.
 - Fix: NOT attempted here — needs a layer inspection on a docker-capable runner (`docker history detag-worker:check`, or a `dive`-style breakdown) to name the fat layer, then trim that layer (or re-derive the ceiling with evidence if a base/ffmpeg update moved it). Do NOT just bump the limit without the breakdown. The image-size job could print `docker history` on failure to make the next diagnosis one-shot.
-- Status: open — still failing in CI #11 (e150a37) with the identical 200.8 MB. The api image is still fine (42.2 MB).
+- Status: open — still failing in CI #12 (35d4922) with the identical 200.8 MB. The api image is still fine (42.2 MB).
 
 ### CI-FAIL-013 [bug] CI #10 commits workflow fails — script unit tests need Pillow/numpy, runner has neither
 - Date: 2026-11-14 · Ticket: P0-006 · Severity: S2 (CI red on main)
@@ -101,7 +101,14 @@
 - Symptom: CI run #11 (e150a37, logs zip from the user 2026-11-14), verify job: compose-dev-check and compose-prod-check both PASSED (the YAML repair works), then `compose-health-check` FAILED with 10 failures: `dev: service 'api' does not wait for minio service_healthy`, `... does not wait for bootstrap service_completed_successfully`, `dev: service 'bootstrap-lifecycle' has no healthcheck` (same five for prod). The pyyaml install (CI-FAIL-011) worked — the script ran; its expectations are wrong.
 - Cause: `scripts/check_compose_health.py` hardcodes the pre-swap names: `DATA_DEPS = ("postgres", "redis", "minio")` and `ONE_SHOT = {"bootstrap"}` + `depends.get("bootstrap")`. The stack renamed MinIO → Garage (CI-FAIL-004) and the bootstrap service is `bootstrap-lifecycle` (restart "no", one-shot). The real compose is correct — api/worker wait for garage healthy + bootstrap-lifecycle completed — the script just looks for names that no longer exist, and demands a healthcheck on a one-shot container because ONE_SHOT does not contain its real name.
 - Fix: rename in the script (and its docstring): `minio` → `garage`, `bootstrap` → `bootstrap-lifecycle` in ONE_SHOT, DATA_DEPS and the depends_on lookup; same renames in `scripts/test_check_compose_health.py` fixtures. All 16 unit tests pass locally after the rename.
-- Status: fixed (this commit) — waits on CI #12.
+- Status: CLOSED — confirmed by CI #12 (35d4922): `OK: every compose service has a healthcheck inside the 120s budget`, verify proceeded to compose-env-check.
+
+### CI-FAIL-015 [bug] CI #12 verify fails at compose-env-check — legacy compose.minio.yml default drifts from .env.example
+- Date: 2026-11-14 · Ticket: P0-089 · Severity: S2 (CI red on main)
+- Symptom: CI run #12 (35d4922, logs zip from the user 2026-11-14), verify job: compose-health-check PASSED (CI-FAIL-014 fix works), then `compose-env-check` FAILED: `compose.minio.yml:53 ${PF_S3_SECRET_KEY:-minioadmin} default differs from .env.example ('minioadmin-secret-key')` (same at line 79). First run ever to reach this step.
+- Cause: pre-existing drift, not a regression. `.env.example` has `PF_S3_SECRET_KEY=minioadmin-secret-key`, but the legacy local-dev `ops/compose.minio.yml` (MinIO is dead; the file is kept for local MinIO dev, TESTKIT-MINIO-001) still defaults the same var to `minioadmin` in two places (MINIO_ROOT_PASSWORD and the bootstrap env). The check scans every ops/*.yml and requires `${VAR:-default}` defaults to match .env.example. Reproduced locally with `python3 scripts/check_compose_env.py` (exit 1, same two lines).
+- Fix: update both defaults in compose.minio.yml to `minioadmin-secret-key`. Verified locally — the check now prints `OK: compose env wiring is clean` (exit 0). No secret involved: `minioadmin-secret-key` is the dev placeholder in .env.example, not a real credential.
+- Status: fixed (this commit) — waits on CI #13.
 
 ### TESTKIT-MINIO-001 [follow-up] testcontainers live legs + local-dev compose.minio.yml still reference dead MinIO images
 - Date: 2026-11-13 · Severity: S3 (not CI-blocking)
