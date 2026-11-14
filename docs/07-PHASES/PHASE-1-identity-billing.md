@@ -293,12 +293,13 @@
 
 ## E1.4 — API keys (area: auth/apikeys)
 
-- [ ] **P1-033** — Key generation
+- [x] **P1-033** — Key generation
   - **Type:** feat · **Area:** auth/apikeys · **Est:** M · **Deps:** — · **Prio:** P1
   - **Spec:** POST /v1/api-keys: pf_live_ prefix + 24B url-safe secret shown once; sha256 stored; scopes (jobs:write, jobs:read, webhooks:manage); max 10 keys/user.
   - **AC:**
-    - [ ] secret shown once
-    - [ ] cap enforced
+    - [x] secret shown once
+    - [x] cap enforced
+  - **Status:** DONE 2026-11-14 (18th coordinator, resuming the 17th's uncommitted tree — verified, finished, committed as one commit `05cab58`). `pf_live_` + 24 random bytes base64url (32 chars), full secret in the 201 response only; only its sha256 stored (`secret_hash`, unique index via migration `20261114030933`); prefix `pf_live_` + first 4 secret chars; name display-name rules (1–100 chars), scopes ≥1, each known, no duplicates (else 422 `PF-2002`); max 10 live keys/user — the 11th is 409 `PF-2011`, count + insert under the user's row lock (`FOR UPDATE`) so concurrent creates cannot overshoot; creation audited (`api_key.created`, no secret/hash). No plan gate, no verified-email requirement (ASSUMPTION-015). `just verify` green: 718 passed, 0 failed (707 + 11 new: 4 core unit + 1 repos_live + 6 api integration incl. 12-concurrent-creates → exactly 10×201 + 2×409), attempt 3, ~31 min. Verify attempt 1 failed only on readyz 4/4 (FLAKY-004, parallel-startup latency — passes sequential and passed in attempt 3); attempt 2 was SIGTERMed by the 15th VM reset (~10:47 IST, 20 binaries green, no failures) — services restored per ASSUMPTION-010. Docs: api-spec, data-model, test-strategy, openapi + route-table regenerated (POST now live; GET/DELETE still stubs).
 
 - [ ] **P1-034** — Key auth extractor
   - **Type:** feat · **Area:** auth/apikeys · **Est:** S · **Deps:** P1-033 · **Prio:** P1
