@@ -28,7 +28,7 @@ Docs English me hain kyunki autonomous coding agents ke liye English technical s
 | `03-ARCHITECTURE/` | System design, tech stack, API spec, data model, ADRs | Agent |
 | `04-ENGINEERING/` | Coding standards, repo layout, definition of done | Agent |
 | `05-QUALITY/` | Test strategy, quality benchmarks, security testing | Agent |
-| `06-DELIVERY/` | Bug triage, release checklist, deploy runbook | Agent |
+| `06-DELIVERY/` | Bug triage, release checklist, deploy runbook, config reference, email ops | Agent |
 | `07-PHASES/` | PHASE-0 … PHASE-6 files; each has 100+ execution tickets (Phase 6 is a gated research backlog) | Agent (nightly driver) |
 | `08-PROMPTS/` | Task prompts for every job: master nightly, per-phase, per-ticket, bugfix/review, research | Owner pastes, agent follows |
 | `09-STATE/` | Living state: `PROGRESS.md`, `DECISIONS.md`, `ISSUES.md`, `NIGHT-REPORTS/` | Agent writes, owner reads |
