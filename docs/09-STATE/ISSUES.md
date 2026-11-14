@@ -131,6 +131,13 @@
 - Fix: add `Apache-2.0 WITH LLVM-exception`, `0BSD`, `CDLA-Permissive-2.0` to the `[licenses] allow` list in `deny.toml` (+ spec comment). Verified locally with the same cargo-deny 0.20.2 the CI action uses (`~/.cargo/bin/cargo-deny check` in an isolated export of main): `advisories ok, bans ok, licenses ok, sources ok`, exit 0.
 - Status: fixed (this commit) — waits on CI #16 (run #20).
 
+### CI-FAIL-019 [bug] Commits #22 lint fails on 8a65cd4's FLAKY-002 subject — linter accepts no FLAKY id
+- Date: 2026-11-14 · Ticket: P0-060 (the FLAKY-002 test) · Severity: S1 (Commits workflow red on main; the CI workflow itself is green)
+- Symptom: Commits #22 (run #22 on 8a65cd4) failed at the "Lint commit messages" step — the unit-test step PASSED (the CI-FAIL-013 fix finally worked). Linting range 59f71e7..8a65cd4: `FAIL: 8a65cd4 test(core): fix FLAKY-002 slow_consumer_drops_safely race — subject must match '<type>(<scope>): <id> <description>'`.
+- Cause: THREE violations in 8a65cd4's message, all confirmed locally with the linter: (1) the id is not in the ticket position — the subject reads `test(core): fix FLAKY-002 ...`, so `fix` sits where the id belongs and FLAKY-002 is buried in the description; the subject regex requires the id immediately after `": "`. (2) FLAKY-xxx is not an accepted id form at all — ID_RE is `(P\d+-\d+|CI-FAIL-\d+|SCHEMA-DOC-\d+)`. (3) The message carries no FR/NFR reference, so it would also fail the requirement-trace rule. The FLAKY-002 fix itself is good (CI #18 verify green); only the message form is wrong. Note: the same id-position mistake was made in the first FLAKY-001 subject draft (`fix(api): FLAKY-001 ...`), caught locally and rebuilt as `fix(api): P0-029 ... (FLAKY-001, NFR-52)`.
+- Fix: extend the linter — add `FLAKY-\d+` to ID_RE, the docstring and both error messages, plus unit tests (`test_flaky_id_in_ticket_position`, `test_flaky_id_needs_a_number`). Verified locally: 19 linter unit tests green; a FLAKY id in ticket position with an NFR trace passes. Do NOT rewrite 8a65cd4 (pushed commits are never rewritten; it also lacks the trace, so it would fail even with the id form fixed) — the Commits workflow lints only each push's range, so the next compliant push goes green.
+- Status: fixed (this commit) — waits on Commits #23.
+
 ### TESTKIT-MINIO-001 [follow-up] testcontainers live legs + local-dev compose.minio.yml still reference dead MinIO images
 - Date: 2026-11-13 · Severity: S3 (not CI-blocking)
 - Cause: CI never sets PF_TEST_CONTAINERS/PF_TEST_LIVE_MINIO, so the live legs skip in CI; compose-minio-check only renders. But anyone running the live legs locally (or `docker compose -f ops/compose.minio.yml up`) hits the same dead MinIO pulls as CI-FAIL-004.
