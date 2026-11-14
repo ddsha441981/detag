@@ -172,9 +172,26 @@ async fn slow_consumer_drops_safely() {
         gate: "pass".to_string(),
     };
     publish(&pool, &fresh).await.expect("publish fresh");
-    let got = timeout(Duration::from_secs(5), stream.next_event())
+    // FLAKY-002: the pump may still be working through the burst when
+    // the first event is consumed, so a stale Progress event can land in
+    // the freed buffer before Done is published. Drain stale Progress
+    // events until Done arrives instead of asserting on the first read.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let got = loop {
+        let ev = timeout(
+            deadline.saturating_duration_since(Instant::now()),
+            stream.next_event(),
+        )
         .await
         .expect("fresh event arrives in time")
         .expect("stream stays open");
+        if ev == fresh {
+            break ev;
+        }
+        assert!(
+            matches!(ev, JobEvent::Progress { .. }),
+            "only stale Progress events may precede Done, got {ev:?}"
+        );
+    };
     assert_eq!(got, fresh);
 }
