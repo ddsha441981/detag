@@ -326,6 +326,54 @@ pub struct Settings {
     /// per-account password-reset bucket refill (P1-020).
     /// Default 1. 0 = never refills.
     pub rate_limit_reset_account_refill_per_min: u64,
+    /// Env: PF_API_KEY_RATE_LIMIT_BURST — per-API-key
+    /// token-bucket burst, default tier (P1-037, FR-A-06):
+    /// how many requests one key may make in a burst before
+    /// its bucket empties. Default 60 — deliberately LOWER
+    /// than the user tier (the per-IP bucket, 120/120): a
+    /// machine credential gets less burst headroom than an
+    /// interactive user, so a runaway key trips before it can
+    /// crowd out user traffic on the shared route bucket.
+    /// Must be >= 1. The `high` tier (below) is the
+    /// operator-granted exception for trusted integrations.
+    pub api_key_rate_limit_burst: u64,
+    /// Env: PF_API_KEY_RATE_LIMIT_REFILL_PER_MIN — per-API-key
+    /// default-tier refill (P1-037): tokens per minute (60 =
+    /// a sustained 1 req/s). Default 60. 0 = never refills.
+    pub api_key_rate_limit_refill_per_min: u64,
+    /// Env: PF_API_KEY_RATE_LIMIT_HIGH_BURST — per-API-key
+    /// token-bucket burst, `high` tier (P1-037): the bucket
+    /// for keys whose row carries `rate_limit_tier = 'high'`.
+    /// Default 600 (the route tier's burst — a trusted
+    /// integration may burst as far as one route template
+    /// allows). Must be >= 1. A key's tier is set out of band
+    /// (direct row update — no endpoint sets it yet; P1-041's
+    /// docs page owns the management story); NULL or
+    /// `'default'` on the row means the default tier, and an
+    /// unknown tier name falls back to the default tier (never
+    /// to a bigger bucket, never to a denial).
+    pub api_key_rate_limit_high_burst: u64,
+    /// Env: PF_API_KEY_RATE_LIMIT_HIGH_REFILL_PER_MIN —
+    /// per-API-key `high`-tier refill (P1-037): tokens per
+    /// minute. Default 600. 0 = never refills.
+    pub api_key_rate_limit_high_refill_per_min: u64,
+    /// Env: PF_API_KEY_RATE_LIMIT_ABUSE_THRESHOLD — how many
+    /// denials for one key inside the abuse window (below)
+    /// before the trip is written to the abuse audit log
+    /// (P1-037, `api_key.rate_limit_tripped`). Default 5: a
+    /// single burst overrun is ordinary client behaviour and
+    /// logs nothing; five denials in an hour is a runaway or
+    /// an attack. Must be >= 1. Exactly one audit row is
+    /// written per key per window (when the count REACHES the
+    /// threshold) — a sustained attack does not flood the
+    /// audit table one row per request.
+    pub api_key_rate_limit_abuse_threshold: u64,
+    /// Env: PF_API_KEY_RATE_LIMIT_ABUSE_WINDOW_SECS — the
+    /// window the abuse threshold counts inside (P1-037):
+    /// denials older than this stop counting. Default 3600
+    /// (1 h, the same window as the mailer send caps).
+    /// Must be >= 60.
+    pub api_key_rate_limit_abuse_window_secs: u64,
     /// Env: PF_WORKER_CONCURRENCY — apalis workers per queue. Each
     /// of the four queues (pipeline, cleanup, email, reconciliation)
     /// runs this many workers (P0-075). Default 4. Must be >= 1.
@@ -440,6 +488,12 @@ impl Default for Settings {
             rate_limit_register_email_refill_per_min: 1,
             rate_limit_reset_account_burst: 10,
             rate_limit_reset_account_refill_per_min: 1,
+            api_key_rate_limit_burst: 60,
+            api_key_rate_limit_refill_per_min: 60,
+            api_key_rate_limit_high_burst: 600,
+            api_key_rate_limit_high_refill_per_min: 600,
+            api_key_rate_limit_abuse_threshold: 5,
+            api_key_rate_limit_abuse_window_secs: 3600,
             worker_concurrency: 4,
             worker_metrics_port: 9092,
             worker_heartbeat_interval_secs: 15,
@@ -555,6 +609,27 @@ const FIELD_VARS: &[(&str, &str)] = &[
     (
         "rate_limit_reset_account_refill_per_min",
         "PF_RATE_LIMIT_RESET_ACCOUNT_REFILL_PER_MIN",
+    ),
+    ("api_key_rate_limit_burst", "PF_API_KEY_RATE_LIMIT_BURST"),
+    (
+        "api_key_rate_limit_refill_per_min",
+        "PF_API_KEY_RATE_LIMIT_REFILL_PER_MIN",
+    ),
+    (
+        "api_key_rate_limit_high_burst",
+        "PF_API_KEY_RATE_LIMIT_HIGH_BURST",
+    ),
+    (
+        "api_key_rate_limit_high_refill_per_min",
+        "PF_API_KEY_RATE_LIMIT_HIGH_REFILL_PER_MIN",
+    ),
+    (
+        "api_key_rate_limit_abuse_threshold",
+        "PF_API_KEY_RATE_LIMIT_ABUSE_THRESHOLD",
+    ),
+    (
+        "api_key_rate_limit_abuse_window_secs",
+        "PF_API_KEY_RATE_LIMIT_ABUSE_WINDOW_SECS",
     ),
     ("worker_concurrency", "PF_WORKER_CONCURRENCY"),
     ("worker_metrics_port", "PF_WORKER_METRICS_PORT"),
@@ -692,6 +767,15 @@ impl Settings {
                 rate_limit_reset_account_refill_per_min,
                 u64
             ),
+            api_key_rate_limit_burst: field!(api_key_rate_limit_burst, u64),
+            api_key_rate_limit_refill_per_min: field!(api_key_rate_limit_refill_per_min, u64),
+            api_key_rate_limit_high_burst: field!(api_key_rate_limit_high_burst, u64),
+            api_key_rate_limit_high_refill_per_min: field!(
+                api_key_rate_limit_high_refill_per_min,
+                u64
+            ),
+            api_key_rate_limit_abuse_threshold: field!(api_key_rate_limit_abuse_threshold, u64),
+            api_key_rate_limit_abuse_window_secs: field!(api_key_rate_limit_abuse_window_secs, u64),
             worker_concurrency: field!(worker_concurrency, usize),
             worker_metrics_port: field!(worker_metrics_port, u16),
             worker_heartbeat_interval_secs: field!(worker_heartbeat_interval_secs, u64),
@@ -842,6 +926,27 @@ impl Settings {
             invalid(
                 "PF_RATE_LIMIT_RESET_ACCOUNT_BURST",
                 "must be >= 1".to_string(),
+            );
+        }
+        if self.api_key_rate_limit_burst == 0 {
+            invalid("PF_API_KEY_RATE_LIMIT_BURST", "must be >= 1".to_string());
+        }
+        if self.api_key_rate_limit_high_burst == 0 {
+            invalid(
+                "PF_API_KEY_RATE_LIMIT_HIGH_BURST",
+                "must be >= 1".to_string(),
+            );
+        }
+        if self.api_key_rate_limit_abuse_threshold == 0 {
+            invalid(
+                "PF_API_KEY_RATE_LIMIT_ABUSE_THRESHOLD",
+                "must be >= 1".to_string(),
+            );
+        }
+        if self.api_key_rate_limit_abuse_window_secs < 60 {
+            invalid(
+                "PF_API_KEY_RATE_LIMIT_ABUSE_WINDOW_SECS",
+                "must be >= 60".to_string(),
             );
         }
         if self.worker_concurrency == 0 {
@@ -1365,6 +1470,19 @@ mod tests {
         assert_eq!(settings.rate_limit_register_email_refill_per_min, 1);
         assert_eq!(settings.rate_limit_reset_account_burst, 10);
         assert_eq!(settings.rate_limit_reset_account_refill_per_min, 1);
+        // P1-037: the default key tier is lower than the user
+        // tier (IP 120/120); the high tier matches the route
+        // tier; the abuse window is one hour, five trips.
+        assert_eq!(settings.api_key_rate_limit_burst, 60);
+        assert_eq!(settings.api_key_rate_limit_refill_per_min, 60);
+        assert_eq!(settings.api_key_rate_limit_high_burst, 600);
+        assert_eq!(settings.api_key_rate_limit_high_refill_per_min, 600);
+        assert_eq!(settings.api_key_rate_limit_abuse_threshold, 5);
+        assert_eq!(settings.api_key_rate_limit_abuse_window_secs, 3600);
+        assert!(
+            settings.api_key_rate_limit_burst < settings.rate_limit_ip_burst,
+            "the default key tier must stay below the user (IP) tier"
+        );
         env::set_var("PF_RATE_LIMIT_IP_BURST", "0");
         let err = Settings::load_from(None).expect_err("0 burst must fail");
         assert!(
@@ -1410,6 +1528,36 @@ mod tests {
             "error must name the var, got: {err}"
         );
         env::set_var("PF_RATE_LIMIT_RESET_ACCOUNT_BURST", "9");
+        env::set_var("PF_API_KEY_RATE_LIMIT_BURST", "0");
+        let err = Settings::load_from(None).expect_err("0 key burst must fail");
+        assert!(
+            err.to_string().contains("PF_API_KEY_RATE_LIMIT_BURST"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_API_KEY_RATE_LIMIT_BURST", "7");
+        env::set_var("PF_API_KEY_RATE_LIMIT_HIGH_BURST", "0");
+        let err = Settings::load_from(None).expect_err("0 high burst must fail");
+        assert!(
+            err.to_string().contains("PF_API_KEY_RATE_LIMIT_HIGH_BURST"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_API_KEY_RATE_LIMIT_HIGH_BURST", "8");
+        env::set_var("PF_API_KEY_RATE_LIMIT_ABUSE_THRESHOLD", "0");
+        let err = Settings::load_from(None).expect_err("0 abuse threshold must fail");
+        assert!(
+            err.to_string()
+                .contains("PF_API_KEY_RATE_LIMIT_ABUSE_THRESHOLD"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_API_KEY_RATE_LIMIT_ABUSE_THRESHOLD", "2");
+        env::set_var("PF_API_KEY_RATE_LIMIT_ABUSE_WINDOW_SECS", "30");
+        let err = Settings::load_from(None).expect_err("30 s abuse window must fail");
+        assert!(
+            err.to_string()
+                .contains("PF_API_KEY_RATE_LIMIT_ABUSE_WINDOW_SECS"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_API_KEY_RATE_LIMIT_ABUSE_WINDOW_SECS", "120");
         env::set_var("PF_RATE_LIMIT_IP_REFILL_PER_MIN", "0");
         let settings = Settings::load_from(None).expect("0 refill must load");
         assert_eq!(settings.rate_limit_ip_burst, 5);
@@ -1419,6 +1567,10 @@ mod tests {
         assert_eq!(settings.rate_limit_login_ip_burst, 7);
         assert_eq!(settings.rate_limit_register_email_burst, 4);
         assert_eq!(settings.rate_limit_reset_account_burst, 9);
+        assert_eq!(settings.api_key_rate_limit_burst, 7);
+        assert_eq!(settings.api_key_rate_limit_high_burst, 8);
+        assert_eq!(settings.api_key_rate_limit_abuse_threshold, 2);
+        assert_eq!(settings.api_key_rate_limit_abuse_window_secs, 120);
     }
 
     /// P1-001: auth hashing + registration policy defaults

@@ -27,7 +27,7 @@ Conventions first; endpoint tables are the contract. OpenAPI is generated from c
   (email shape, filename sanitize, public-only URL); handlers take
   `ValidatedJson<T>` (see `04-ENGINEERING/04-adding-an-endpoint.md`).
 - Error code ranges: PF-1xxx auth/session, PF-2xxx upload/media, PF-3xxx quota/billing, PF-4xxx engine/quality/compliance, PF-5xxx system.
-- Rate limits: headers `X-RateLimit-Limit` (burst), `-Remaining`, `-Reset` (unix time when one token is available again). Overage = 429 + problem+json (PF-3007) + `Retry-After` (seconds until one token). The trio on a denial names the DENYING bucket — the middleware stamps its IP numbers on allowed responses only and never overwrites a service denial's trio (P1-020). Scopes (P0-103): per-IP and per-route (`METHOD:/v1/<segment>`) token buckets; per-account login (`login_account`, P1-003) + per-IP login (`login-ip`, P1-020) + per-email register (`register-email`, P1-020) + per-account reset (`reset-account`, P1-020 — the bucket exists, the reset flow P1-025 wires the check) are service buckets with their own key segments (one bucket, one key — two buckets never share a Redis key, P1-020). Per-API-key scope lands with Phase 1 auth (E1.4). Health/meta routes are exempt. Defaults: IP 120 burst / 120 per min, route 600 burst / 600 per min, login-account 10 / 1, login-IP 20 / 10, register-email 5 / 1, reset-account 10 / 1 (`PF_RATE_LIMIT_*`).
+- Rate limits: headers `X-RateLimit-Limit` (burst), `-Remaining`, `-Reset` (unix time when one token is available again). Overage = 429 + problem+json (PF-3007) + `Retry-After` (seconds until one token). The trio on a denial names the DENYING bucket — the middleware stamps its IP numbers on allowed responses only and never overwrites a service denial's trio (P1-020). Scopes (P0-103): per-IP and per-route (`METHOD:/v1/<segment>`) token buckets; per-account login (`login_account`, P1-003) + per-IP login (`login-ip`, P1-020) + per-email register (`register-email`, P1-020) + per-account reset (`reset-account`, P1-020 — the bucket exists, the reset flow P1-025 wires the check) are service buckets with their own key segments (one bucket, one key — two buckets never share a Redis key, P1-020). Per-API-key scope (P1-037, FR-A-06): the extractor spends one token from the verified key's tier bucket — `default` 60 burst / 60 per min, `high` 600 / 600 (`PF_API_KEY_RATE_LIMIT_*`); the bucket is keyed by the key UUID (never the display prefix — two keys can share a 4-char prefix); a denial carries the KEY bucket's trio + `Retry-After`, and repeated trips write one `api_key.rate_limit_tripped` audit row per key per hour (threshold 5 in a 3600 s window). An allowed key response still carries the IP trio — the key bucket's remaining is visible on the denial, not on every 200. Health/meta routes are exempt. Defaults: IP 120 burst / 120 per min, route 600 burst / 600 per min, login-account 10 / 1, login-IP 20 / 10, register-email 5 / 1, reset-account 10 / 1, api-key default 60 / 60, api-key high 600 / 600 (`PF_RATE_LIMIT_*`, `PF_API_KEY_RATE_LIMIT_*`).
 - Body caps per route class (P0-104): auth + meta 64 KiB, jobs + admin 1 MiB, billing (webhooks) 256 KiB; over-cap = 413 + problem+json (PF-2003). Uploads are exempt — bytes never transit the api (presigned S3 PUTs).
 - Dimension caps at job-create (P0-104, FR-U-04): each side at most 8000 px, total at most 64 MP; over-cap = 413 + problem+json (PF-2005). The job-create handler checks the upload row's probed dimensions before queuing any work (Phase 2 hook; the guard lives in `detag-core::media::validate_dimensions`).
 - Idempotency: `Idempotency-Key` header honored on `POST /v1/jobs`, `POST /v1/uploads`, payment endpoints (24 h window).
@@ -531,8 +531,15 @@ name, is 403 `PF-1002` (fail closed; keys never reach admin
 routes). A verified use re-stamps `last_used_at`, throttled
 to once per 300 s; a denied request is not a use. The key's
 `rate_limit_tier` rides the verified context — resolved
-here, enforced by P1-037 (no 429 from this ticket). A
-session cookie, alone, is 401 `PF-1001` — FINAL (P1-016):
+here, enforced by P1-037 (FR-A-06): after the scope check
+the extractor spends one token from the key's tier bucket
+(`default` 60 burst / 60 per min — lower than the user IP
+tier 120/120 by design — or `high` 600/600, set out of
+band on the row; NULL or an unknown name means default);
+an empty bucket answers 429 `PF-3007` with `Retry-After`
+and the key bucket's `X-RateLimit-*` trio, and repeated
+trips write one `api_key.rate_limit_tripped` audit row per
+key per hour. A session cookie, alone, is 401 `PF-1001` — FINAL (P1-016):
 the `detag_refresh` cookie holds a refresh token, which is
 not an access credential. User status is NOT checked here —
 suspension revokes sessions at suspend time (P1-008); a token

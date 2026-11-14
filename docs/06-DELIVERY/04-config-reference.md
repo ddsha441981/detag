@@ -9,6 +9,12 @@
 | Name | Default (dev) | Used by |
 | --- | --- | --- |
 | `PF_API_HOST` | `127.0.0.1` | api |
+| `PF_API_KEY_RATE_LIMIT_ABUSE_THRESHOLD` | `5` | api |
+| `PF_API_KEY_RATE_LIMIT_ABUSE_WINDOW_SECS` | `3600` | api |
+| `PF_API_KEY_RATE_LIMIT_BURST` | `60` | api |
+| `PF_API_KEY_RATE_LIMIT_HIGH_BURST` | `600` | api |
+| `PF_API_KEY_RATE_LIMIT_HIGH_REFILL_PER_MIN` | `600` | api |
+| `PF_API_KEY_RATE_LIMIT_REFILL_PER_MIN` | `60` | api |
 | `PF_API_KEY_ROTATION_OVERLAP_SECS` | `86400` | auth |
 | `PF_API_PORT` | `8080` | api |
 | `PF_ARGON2_M_COST_KIB` | `65536` | api |
