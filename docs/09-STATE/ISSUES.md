@@ -75,6 +75,13 @@
 - Fix: in ops/compose.dev.yml, attach the dev host-access services (postgres, redis, garage, mailhog, worker) to the `edge` network too (in addition to `internal`), so their published ports actually work from the host. Dev-only — prod uses compose.prod.yml and is unaffected; the internal network still isolates the data services from anything not on edge.
 - Status: fixed (this commit) — waits on CI #10.
 
+### CI-FAIL-011 [bug] CI #9 verify fails at compose-health-check — PyYAML not installed on the runner
+- Date: 2026-11-14 · Ticket: P0-088 · Severity: S1 (CI red on main)
+- Symptom: CI run #9 (330769e, logs zip from the user 2026-11-14), verify job: compose-prod-check PASSED (CI-FAIL-009 fix works), then `compose-health-check` FAILED: `python3 scripts/check_compose_health.py` → `ModuleNotFoundError: No module named 'yaml'`. First run ever to reach this step (CI #8 died at compose-prod-check).
+- Cause: `check_compose_health.py` imports `yaml` (PyYAML) at line 45, and no CI step installs it — the verify job only pip-installs pillow/numpy for fixtures-check. ubuntu-latest runners do not ship PyYAML for the setup-python 3.12.
+- Fix: install `pyyaml==6.0.2` in the compose-health-check step before running the script.
+- Status: fixed (this commit) — waits on CI #10.
+
 ### TESTKIT-MINIO-001 [follow-up] testcontainers live legs + local-dev compose.minio.yml still reference dead MinIO images
 - Date: 2026-11-13 · Severity: S3 (not CI-blocking)
 - Cause: CI never sets PF_TEST_CONTAINERS/PF_TEST_LIVE_MINIO, so the live legs skip in CI; compose-minio-check only renders. But anyone running the live legs locally (or `docker compose -f ops/compose.minio.yml up`) hits the same dead MinIO pulls as CI-FAIL-004.
