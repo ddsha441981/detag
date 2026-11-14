@@ -282,11 +282,12 @@
     - [x] caps enforced
   - **Status:** DONE 2026-11-14 (17th coordinator, resuming the 16th's uncommitted tree — verified, finished, committed as one commit `db92b74`). Caps enforced in the drain (`crates/mailer/src/rate_limit.rs`: `MailClass` verify/reset/marketing/transactional, `RateLimitConfig` from `PF_MAILER_*_CAP_PER_HOUR` 3/3/0; `crates/core/src/repos/email_outbox.rs::count_sent_recent_for_recipient` counts sent rows for the recipient hash + class templates in the last hour). A trip parks the row (dropped, not retried) and writes an abuse audit row (`email.rate_limit_tripped`, hash + template + class + cap + count, never a raw address, NFR-42); failed audit insert logs loudly but the row is still parked; count-query failure is transient (reschedule). Transactional alerts never capped. ADR-0023. Tests: 7 rate_limit unit + 8 drain integration (4th verify/reset parks + audits, marketing parks on sight, 3rd still sends, window re-opens after an hour, per-recipient budgets, change-verify shares verify class, lockout-notice never capped) + 1 repos_live count test. `just verify` green: 707 passed, 0 failed (691 + 16 new), ~35 min, attempt 1; config-table-check + env-check + sqlx-prepare-check + openapi-check + snapshots-check green. Docs: api-spec (resend-count correction: counted from outbox rows, not token rows — minting deletes token history), data-model, test-strategy, runbook, config table, threat-model T17.
 
-- [ ] **P1-032** — Email ops docs
+- [x] **P1-032** — Email ops docs
   - **Type:** docs · **Area:** auth/password · **Est:** S · **Deps:** P1-031 · **Prio:** P1
   - **Spec:** Deliverability checklist (SPF/DKIM/DMARC placeholders), sender config, test addresses, transactional-only stance v1.
   - **AC:**
-    - [ ] docs committed
+    - [x] docs committed
+  - **Status:** DONE 2026-11-14 (17th coordinator, `17a0072`). New `docs/06-DELIVERY/05-email-ops.md`: transactional-only v1 stance (no marketing template, cap 0), the 8 shipped templates with class + cap, sender config for every `PF_SMTP_*`/`PF_MAILER_*` var, deliverability checklist as placeholders only (SPF/DKIM/DMARC shapes, domain + relay slots unfilled — owner decision #4 pending, no domain invented), test addresses (MailHog dev, `@example.com` + fake 127.0.0.1 relay in tests, no real SMTP in CI), outbox/audit SQL verified against the real schemas, troubleshooting (incl. the P1-030 quoted-printable `=3D` note, the 204-no-mail rule). Runbook mailer row points at it; docs README index updated. Docs-only: config-table-check + env-check green.
 
 ---
 
