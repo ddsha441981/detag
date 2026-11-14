@@ -8,7 +8,7 @@
 //! declares it as a parameter and the framework runs it before
 //! the handler body.
 //!
-//! # Phase 1 status — Bearer verified, cookie final, API keys later
+//! # Phase 1 status — Bearer verified, cookie final, API keys live
 //!
 //! A `Bearer <jwt>` is verified (HS256 signature + expiry +
 //! not-before, leeway 0) against `PF_JWT_SECRET` and the `sub`
@@ -25,9 +25,7 @@
 //!   expired, P1-022);
 //! - a valid JWT for an unknown user id → 401 `PF-1001` (the token
 //!   is well-formed but the account is gone);
-//! - a Bearer API key → 401 `PF-1001` (no key table is read yet —
-//!   the API-key leg is the E1.4 integration point and its
-//!   verification lands with P1-034, "Key auth extractor");
+//! - a Bearer API key → verified by hash lookup (P1-034, below);
 //! - a session cookie, alone → 401 `PF-1001` — and that is FINAL,
 //!   not a placeholder (P1-016): the `detag_refresh` cookie holds
 //!   a REFRESH token, which is not an access credential. The web
@@ -37,6 +35,34 @@
 //!   token presented as the sole credential still 401s — proven
 //!   by `tests/dual_auth.rs`, so a stolen refresh token cannot
 //!   walk straight into the API as if it were an access token.
+//!
+//! # API keys (P1-034, FR-A-06)
+//!
+//! A `Bearer pf_live_*` key verifies by sha256 hash lookup
+//! against the `api_keys` table (live keys only — a revoked
+//! key reads exactly like an unknown one, 401 `PF-1001`,
+//! P1-036's kill path). The key's owner must be `active`
+//! (ADR-0024): suspend revokes sessions but not keys, and a
+//! key has no expiry, so without this a suspended user's key
+//! would work forever — the JWT path's "status is not checked
+//! here" rule (P1-008) holds only because an access token dies
+//! in ≤ 15 min. Then the scope check: the route (from
+//! `MatchedPath`) names the scope it needs
+//! ([`required_scope_for`]) — jobs writes need `jobs:write`,
+//! jobs reads `jobs:read`, webhook endpoints
+//! `webhooks:manage` — and a key without it is 403 `PF-1002`.
+//! A route the table does not name rejects EVERY key with
+//! 403 `PF-1002` (fail closed — P1-040's ACL matrix owns the
+//! full table; routes that do not take `AuthContext` yet run
+//! no extractor at all, so their key handling lands with
+//! their handler ticket). Keys never reach admin routes — the
+//! table names none, and both admin guards reject a
+//! key-carrying context outright. A verified key use
+//! re-stamps `last_used_at`, throttled to once per 300 s
+//! (`API_KEY_LAST_USED_THROTTLE_SECS`); a denied request is
+//! not a use. The key's `rate_limit_tier` rides the context
+//! for P1-037 — the tier is resolved here, not enforced
+//! (there is no 429 from this ticket).
 //!
 //! P1-016 owns the rest: the precedence (Bearer wins, and stays
 //! winning — see below) and the CSRF posture documentation. A
@@ -157,11 +183,12 @@
 //! failures is the variant's static safe detail (P0-032).
 
 use axum::{
-    extract::FromRequestParts,
-    http::{header, request::Parts, HeaderMap},
+    extract::{FromRequestParts, MatchedPath},
+    http::{header, request::Parts, HeaderMap, Method},
     response::{IntoResponse, Response},
 };
 
+use crate::services::api_keys::{note_key_use, verify_api_key, VerifyApiKeyError};
 use crate::services::revocation::is_jti_revoked;
 use crate::{problem::ProblemResponse, request_id::RequestId, AppState};
 use detag_core::{
@@ -234,6 +261,25 @@ impl Role {
     }
 }
 
+/// A verified API key (P1-034, FR-A-06): what the extractor
+/// attaches to the context after the hash lookup + scope
+/// check pass. Carries NO secret material — only the key id
+/// (the revoke/rotate target, and the `key_id` P1-038's job
+/// attribution will record), the scopes the key may use,
+/// and the row's rate-limit tier (`None` = the default tier;
+/// P1-037 enforces tiers, this ticket only resolves them).
+/// `Some` exactly when the caller authenticated with a key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedApiKey {
+    /// The `api_keys` row id.
+    pub id: uuid::Uuid,
+    /// The scopes stored on the row (`jobs:write`, `jobs:read`,
+    /// `webhooks:manage` — each checked independently).
+    pub scopes: Vec<String>,
+    /// The row's `rate_limit_tier` (`None` = default tier).
+    pub rate_limit_tier: Option<String>,
+}
+
 /// Who the caller is — as far as Phase 0 knows.
 ///
 /// The struct is deliberately plain data: handlers read
@@ -254,6 +300,11 @@ pub struct AuthContext {
     /// context — handlers that need the user take the context
     /// and read this (it is `Some` exactly when `verified`).
     pub user: Option<User>,
+    /// The verified API key, when the caller authenticated
+    /// with one (P1-034). `None` for JWT callers and for every
+    /// unverified context. Handlers that attribute work to a
+    /// key (P1-038) read `api_key.id` here.
+    pub api_key: Option<VerifiedApiKey>,
     /// The impersonating admin's id, when the verified token is
     /// an impersonation token (P1-010): `Some` exactly when the
     /// token's claims carry `impersonator_id`. `None` on a normal
@@ -296,7 +347,36 @@ impl AuthContext {
             role: Role::Anonymous,
             verified: false,
             user: None,
+            api_key: None,
             impersonator_id: None,
+        }
+    }
+
+    /// Require one scope of the caller (P1-034, FR-A-06): the
+    /// handler-level scope check for routes the extractor's
+    /// table does not cover (or that need a scope beyond the
+    /// route's default). A verified JWT caller is not
+    /// scope-limited — a user token carries the user's full
+    /// rights — so this passes for them; a verified key caller
+    /// must carry the scope, else 403 `PF-1002`; an unverified
+    /// context (which a handler never sees — the extractor
+    /// rejects it first) fails closed.
+    pub fn require_scope(&self, scope: &str) -> Result<(), AppError> {
+        match &self.api_key {
+            Some(key) => {
+                if key.scopes.iter().any(|s| s == scope) {
+                    Ok(())
+                } else {
+                    Err(AppError::Forbidden)
+                }
+            }
+            None => {
+                if self.verified {
+                    Ok(())
+                } else {
+                    Err(AppError::Forbidden)
+                }
+            }
         }
     }
 }
@@ -341,14 +421,53 @@ pub(crate) fn parse_session_cookie(headers: &HeaderMap) -> Option<Credential> {
     None
 }
 
+/// The scope an API key needs for a route (P1-034, FR-A-06),
+/// by method + route template (the `MatchedPath` the router
+/// matched — `{id}` stays a template, never a concrete id).
+/// `None` means keys may NEVER call the route: the extractor
+/// rejects a key caller there with 403 `PF-1002` (fail
+/// closed). JWT callers are unaffected — scopes limit keys,
+/// not users.
+///
+/// The table is deliberately small: only the routes whose
+/// handler takes `AuthContext` today (jobs + webhook
+/// endpoints). P1-040's ACL matrix owns the full table — when
+/// a new handler lands with a scope, its row goes here AND in
+/// the matrix. Routes that do not take `AuthContext` yet
+/// (uploads, plans, billing stubs) run no extractor at all,
+/// so a key reaching them is that handler ticket's gap to
+/// close, not this table's.
+fn required_scope_for(method: &Method, path: &str) -> Option<&'static str> {
+    match (method.as_str(), path) {
+        // Jobs: writes create/cancel/retry/attest, reads list/get.
+        ("POST", "/v1/jobs") => Some("jobs:write"),
+        ("GET", "/v1/jobs") => Some("jobs:read"),
+        ("GET", "/v1/jobs/{id}") => Some("jobs:read"),
+        ("POST", "/v1/jobs/{id}/cancel")
+        | ("POST", "/v1/jobs/{id}/retry")
+        | ("POST", "/v1/jobs/{id}/attestation") => Some("jobs:write"),
+        ("GET", "/v1/jobs/{id}/events")
+        | ("GET", "/v1/jobs/{id}/result")
+        | ("GET", "/v1/jobs/{id}/report") => Some("jobs:read"),
+        // The user's own webhook endpoints are managed by key.
+        ("GET", "/v1/webhook-endpoints")
+        | ("POST", "/v1/webhook-endpoints")
+        | ("DELETE", "/v1/webhook-endpoints/{id}")
+        | ("GET", "/v1/webhook-endpoints/{id}/deliveries") => Some("webhooks:manage"),
+        // Everything else — /v1/me, /v1/api-keys, /v1/admin/*,
+        // uploads, billing, auth — rejects every key.
+        _ => None,
+    }
+}
+
 /// The Bearer verification (P1-005): the extractor takes
 /// [`AppState`] (the pool + the JWT secret) and rejects with a
 /// problem+json 401 — never an `Ok` unverified context. A
 /// handler that declares `AuthContext` therefore only ever
 /// runs for a verified caller; the `user` is `Some` exactly
-/// when `verified` is true. API keys reject with `PF-1001`
-/// until E1.4 (no key table yet); a bare session cookie
-/// rejects with `PF-1001` as a FINAL decision (P1-016 — the
+/// when `verified` is true. API keys verify by hash lookup +
+/// scope check (P1-034 — see the module docs); a bare session
+/// cookie rejects with `PF-1001` as a FINAL decision (P1-016 — the
 /// refresh token is not an access credential, and its
 /// `Path=/v1/auth` means a browser never sends it to a
 /// protected route anyway; see the module docs).
@@ -373,15 +492,54 @@ impl FromRequestParts<AppState> for AuthContext {
         let AuthContext { credential, .. } = ctx;
         let token = match credential {
             Credential::None => return Err(reject(AppError::Unauthenticated)),
-            // The API-key leg is the E1.4 integration point
-            // (P1-022): the credential is recognised here and
-            // dispatched, but there is no key table yet —
-            // verification (hash lookup, scope check, throttled
-            // `last_used_at`, per-key rate tier) lands with
-            // P1-034 ("Key auth extractor"). Until then an API
-            // key answers the generic 401 PF-1001, the same as
-            // no credential (P1-016's FINAL decision).
-            Credential::ApiKey(_) => return Err(reject(AppError::Unauthenticated)),
+            // The API-key leg (P1-034): hash lookup + owner
+            // load (`verify_api_key`), then the scope check for
+            // this route (see the module docs). An unknown hash,
+            // a revoked key, a missing owner, or a non-`active`
+            // owner all answer the generic 401 `PF-1001` — the
+            // response never says which (P1-016's indistinguishability
+            // rule, applied to keys). A key without the route's
+            // scope — or on a route the table does not name — is
+            // 403 `PF-1002`. A DB failure is 500, like the JWT
+            // user lookup below. A verified key use re-stamps
+            // `last_used_at` (throttled, 300 s) — only after the
+            // scope check passes, so a denied request is not a use.
+            Credential::ApiKey(presented) => {
+                let (key, user) = match verify_api_key(state, &presented).await {
+                    Ok(pair) => pair,
+                    Err(VerifyApiKeyError::Unknown) => {
+                        return Err(reject(AppError::Unauthenticated));
+                    }
+                    Err(VerifyApiKeyError::Internal) => {
+                        return Err(reject(AppError::Internal));
+                    }
+                };
+                let path = parts
+                    .extensions
+                    .get::<MatchedPath>()
+                    .map(|m| m.as_str())
+                    .unwrap_or("");
+                let required = required_scope_for(&parts.method, path);
+                let Some(required) = required else {
+                    return Err(reject(AppError::Forbidden));
+                };
+                if !key.scopes.iter().any(|scope| scope == required) {
+                    return Err(reject(AppError::Forbidden));
+                }
+                note_key_use(state, &key).await;
+                return Ok(Self {
+                    credential: Credential::ApiKey(presented),
+                    role: Role::from_user_role(&user.role),
+                    verified: true,
+                    user: Some(user),
+                    api_key: Some(VerifiedApiKey {
+                        id: key.id,
+                        scopes: key.scopes,
+                        rate_limit_tier: key.rate_limit_tier,
+                    }),
+                    impersonator_id: None,
+                });
+            }
             Credential::Session(_) => {
                 return Err(reject(AppError::Unauthenticated));
             }
@@ -455,6 +613,7 @@ impl FromRequestParts<AppState> for AuthContext {
             role: Role::from_user_role(&user.role),
             verified: true,
             user: Some(user),
+            api_key: None,
             // The impersonation marker rides the claims (P1-010):
             // a token minted by `issue_impersonation_token`
             // carries the admin's id here, and the admin guards
@@ -494,6 +653,22 @@ impl FromRequestParts<AppState> for AdminContext {
     ) -> Result<Self, Self::Rejection> {
         let auth = AuthContext::from_request_parts(parts, state).await?;
         if auth.role != Role::Admin {
+            let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
+            return Err(ProblemResponse(AppError::Forbidden.to_problem(
+                Profile::Production,
+                request_id,
+                None,
+            ))
+            .into_response());
+        }
+        // An API key cannot reach admin endpoints (P1-034,
+        // FR-A-06 — "no admin ever", P1-040): the extractor's
+        // scope table already rejects keys on every admin
+        // route, but the guard is the second line — a key
+        // minted by an admin user must not admin through it
+        // even if a future ticket mis-rows the table. Same
+        // 403 PF-1002 as a wrong role.
+        if auth.api_key.is_some() {
             let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
             return Err(ProblemResponse(AppError::Forbidden.to_problem(
                 Profile::Production,
@@ -549,6 +724,17 @@ impl FromRequestParts<AppState> for AdminReadContext {
     ) -> Result<Self, Self::Rejection> {
         let auth = AuthContext::from_request_parts(parts, state).await?;
         if auth.role != Role::Admin && auth.role != Role::Support {
+            let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
+            return Err(ProblemResponse(AppError::Forbidden.to_problem(
+                Profile::Production,
+                request_id,
+                None,
+            ))
+            .into_response());
+        }
+        // An API key cannot reach admin endpoints (P1-034) —
+        // reads included, same second line as `AdminContext`.
+        if auth.api_key.is_some() {
             let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
             return Err(ProblemResponse(AppError::Forbidden.to_problem(
                 Profile::Production,
@@ -718,7 +904,11 @@ mod tests {
     /// integration tests (`tests/profile.rs`), not here. The
     /// cookie case below uses a fake token; the REAL-token case
     /// (a live refresh token presented as the sole credential
-    /// still 401s) is `tests/dual_auth.rs` (P1-016).
+    /// still 401s) is `tests/dual_auth.rs` (P1-016). An API key
+    /// is NOT in this table any more: since P1-034 the key arm
+    /// reads the database (hash lookup), so its cases live in
+    /// the integration tests (`tests/extractor.rs`) — a unit
+    /// test here would depend on the dev database being up.
     #[tokio::test]
     async fn extractor_rejects_unverified_callers() {
         async fn probe(ctx: AuthContext) -> impl IntoResponse {
@@ -743,7 +933,6 @@ mod tests {
             (None, "PF-1001"),
             (Some(format!("Bearer {JWT}")), "PF-1010"),
             (Some(format!("Bearer {expired}")), "PF-1011"),
-            (Some(format!("Bearer {API_KEY}")), "PF-1001"),
             (
                 Some("detag_refresh=refresh-token-abc".to_string()),
                 "PF-1001",
@@ -770,5 +959,101 @@ mod tests {
                 serde_json::from_slice(&body).expect("probe body is JSON");
             assert_eq!(json["code"], want_code, "headers {headers:?}");
         }
+    }
+
+    #[test]
+    fn scope_table_names_the_route_scopes_and_nothing_else() {
+        // P1-034: the table is the extractor's enforcement —
+        // jobs writes need jobs:write, jobs reads jobs:read,
+        // webhook endpoints webhooks:manage; every other route
+        // (and every wrong method) is None, i.e. keys denied.
+        use axum::http::Method;
+        for (method, path, want) in [
+            (Method::POST, "/v1/jobs", Some("jobs:write")),
+            (Method::GET, "/v1/jobs", Some("jobs:read")),
+            (Method::GET, "/v1/jobs/{id}", Some("jobs:read")),
+            (Method::POST, "/v1/jobs/{id}/cancel", Some("jobs:write")),
+            (Method::POST, "/v1/jobs/{id}/retry", Some("jobs:write")),
+            (
+                Method::POST,
+                "/v1/jobs/{id}/attestation",
+                Some("jobs:write"),
+            ),
+            (Method::GET, "/v1/jobs/{id}/events", Some("jobs:read")),
+            (Method::GET, "/v1/jobs/{id}/result", Some("jobs:read")),
+            (Method::GET, "/v1/jobs/{id}/report", Some("jobs:read")),
+            (
+                Method::GET,
+                "/v1/webhook-endpoints",
+                Some("webhooks:manage"),
+            ),
+            (
+                Method::POST,
+                "/v1/webhook-endpoints",
+                Some("webhooks:manage"),
+            ),
+            (
+                Method::DELETE,
+                "/v1/webhook-endpoints/{id}",
+                Some("webhooks:manage"),
+            ),
+            (
+                Method::GET,
+                "/v1/webhook-endpoints/{id}/deliveries",
+                Some("webhooks:manage"),
+            ),
+            // Unmapped routes and wrong methods deny keys.
+            (Method::GET, "/v1/me", None),
+            (Method::POST, "/v1/api-keys", None),
+            (Method::GET, "/v1/admin/users", None),
+            (Method::POST, "/v1/uploads", None),
+            (Method::DELETE, "/v1/jobs/{id}", None),
+            (Method::GET, "/v1/jobs/{id}/cancel", None),
+            (Method::POST, "/v1/jobs/{id}", None),
+        ] {
+            assert_eq!(required_scope_for(&method, path), want, "{method} {path}");
+        }
+    }
+
+    #[test]
+    fn require_scope_passes_jwt_and_scoped_keys_only() {
+        // P1-034: a verified JWT caller is not scope-limited;
+        // a key caller must carry the scope; an unverified
+        // context fails closed.
+        let jwt_ctx = AuthContext {
+            credential: Credential::Bearer(JWT.to_string()),
+            role: Role::User,
+            verified: true,
+            user: None,
+            api_key: None,
+            impersonator_id: None,
+        };
+        assert!(jwt_ctx.require_scope("jobs:write").is_ok());
+        assert!(jwt_ctx.require_scope("admin").is_ok());
+
+        let key_ctx = AuthContext {
+            credential: Credential::ApiKey(API_KEY.to_string()),
+            role: Role::User,
+            verified: true,
+            user: None,
+            api_key: Some(VerifiedApiKey {
+                id: uuid::Uuid::now_v7(),
+                scopes: vec!["jobs:read".to_string()],
+                rate_limit_tier: None,
+            }),
+            impersonator_id: None,
+        };
+        assert!(key_ctx.require_scope("jobs:read").is_ok());
+        assert!(matches!(
+            key_ctx.require_scope("jobs:write"),
+            Err(AppError::Forbidden)
+        ));
+
+        let unverified =
+            AuthContext::from_headers(&headers(&[("authorization", &format!("Bearer {API_KEY}"))]));
+        assert!(matches!(
+            unverified.require_scope("jobs:read"),
+            Err(AppError::Forbidden)
+        ));
     }
 }

@@ -4,9 +4,12 @@
 //! User webhook endpoints live here: they are gated by plan
 //! entitlement, so they belong with billing, not with jobs.
 //! All handlers are the shared 501 stub until their Phase 1
-//! tickets land.
+//! tickets land — except the webhook-endpoints nest, which
+//! uses the authenticated stub (`stub_authed`, P1-034): an API
+//! key needs `webhooks:manage` there, a caller without a
+//! credential is 401.
 
-use super::stub;
+use super::{stub, stub_authed};
 use crate::AppState;
 use axum::{
     routing::{delete, get, post},
@@ -37,8 +40,8 @@ pub fn router() -> Router<AppState> {
         .nest(
             "/v1/webhook-endpoints",
             Router::new()
-                .route("/", get(stub).post(stub))
-                .route("/{id}", delete(stub))
-                .route("/{id}/deliveries", get(stub)),
+                .route("/", get(stub_authed).post(stub_authed))
+                .route("/{id}", delete(stub_authed))
+                .route("/{id}/deliveries", get(stub_authed)),
         )
 }

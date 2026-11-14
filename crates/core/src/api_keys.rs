@@ -29,6 +29,15 @@ pub const API_KEY_SECRET_BYTES: usize = 24;
 /// Max live (unrevoked) keys per user (P1-033 spec).
 pub const API_KEY_MAX_PER_USER: u32 = 10;
 
+/// Throttle for `last_used_at` writes (P1-034): the
+/// extractor re-stamps a key's `last_used_at` at most once
+/// per 300 s. The value is a freshness signal for security
+/// review ("when did this key last authenticate"), not an
+/// audit log — minute precision is enough, and a write per
+/// request would double the DB traffic of every key-authenticated
+/// call for no benefit. A first use (NULL) always stamps.
+pub const API_KEY_LAST_USED_THROTTLE_SECS: i64 = 300;
+
 /// The scopes a key may carry (P1-033 spec). `jobs:write`
 /// implies nothing — each scope is checked independently by
 /// the P1-034 extractor.

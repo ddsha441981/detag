@@ -72,6 +72,56 @@ pub async fn create(
     .map_err(RepoError::from_sqlx)
 }
 
+/// Look a key up by the sha256 of the presented secret
+/// (P1-034, FR-A-06): the extractor hashes exactly what the
+/// client presented and reads this row. LIVE keys only
+/// (`revoked_at IS NULL`) — a revoked key must not verify:
+/// revocation (P1-036) is the kill path, and a revoked hash
+/// answers exactly like an unknown one (401 `PF-1001`), so
+/// the response never says whether a key existed, was
+/// revoked, or never minted. The unique index on
+/// `secret_hash` (migration `20261114030933`) makes the
+/// lookup unambiguous.
+pub async fn by_secret_hash(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    secret_hash: &str,
+) -> Result<Option<ApiKey>, RepoError> {
+    sqlx::query_as!(
+        ApiKey,
+        r#"SELECT id, user_id, name, prefix, secret_hash, scopes,
+               last_used_at, revoked_at, rate_limit_tier, created_at, updated_at
+           FROM api_keys
+           WHERE secret_hash = $1 AND revoked_at IS NULL"#,
+        secret_hash,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
+/// Record a use of a live key (P1-034): set `last_used_at`
+/// to `now`. The caller throttles this — the extractor calls
+/// it only when the row's value is stale (older than
+/// [`crate::api_keys::API_KEY_LAST_USED_THROTTLE_SECS`]) —
+/// so a hot key does not pay a write per request. Unconditional
+/// here: the throttle decision belongs to the caller, which
+/// has the row; this function just writes.
+pub async fn touch_last_used_at(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    key_id: Uuid,
+    now: DateTime<Utc>,
+) -> Result<(), RepoError> {
+    sqlx::query!(
+        r#"UPDATE api_keys SET last_used_at = $1, updated_at = $1 WHERE id = $2"#,
+        now,
+        key_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(())
+}
+
 /// Count a user's LIVE keys (`revoked_at IS NULL`) — the
 /// P1-033 cap input. Revoked keys do not spend the budget:
 /// a user who revoked 9 of 10 keys can mint 9 more.

@@ -187,3 +187,22 @@ async fn stub(Extension(id): Extension<RequestId>) -> ProblemResponse {
     let problem = AppError::NotImplemented.to_problem(Profile::Production, Some(&id.0), None);
     ProblemResponse(problem)
 }
+
+/// The authenticated 501 stub (P1-034): the same 501 `PF-5004`
+/// as [`stub`], but behind the [`AuthContext`](crate::auth::AuthContext)
+/// extractor — so a route whose handler has not landed yet still
+/// enforces authentication, and the API-key scope check, at the
+/// boundary (a key without the route's scope is 403 `PF-1002`
+/// before the stub ever runs; no credential is 401 `PF-1001`).
+/// Jobs + webhook-endpoints use it. The public stubs (plans,
+/// provider webhooks, abuse intake) keep the plain `stub` —
+/// they take no credential by design — and the billing/admin
+/// stubs that are not key-callable keep it until their handler
+/// ticket adds the extractor.
+async fn stub_authed(
+    Extension(id): Extension<RequestId>,
+    _auth: crate::auth::AuthContext,
+) -> ProblemResponse {
+    let problem = AppError::NotImplemented.to_problem(Profile::Production, Some(&id.0), None);
+    ProblemResponse(problem)
+}

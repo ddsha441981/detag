@@ -201,14 +201,15 @@ async fn bearer_with_wrong_cookie_still_authenticates() {
 }
 
 #[tokio::test]
-async fn api_key_is_401_until_e1_4() {
+async fn unknown_api_key_is_401() {
     let app = app().await;
     let email = unique_email("user");
     register_user(&app, &email).await;
 
-    // API keys are E1.4 — until then a Bearer key is not a
-    // credential (the extractor classifies it, then rejects
-    // it with the generic 401).
+    // An API key that matches no live key is not a
+    // credential (the extractor answers the generic 401) —
+    // a REAL key authenticates now (P1-034, proven in
+    // tests/extractor.rs); this fake one never will.
     let res = app.request(me_req(Some(API_KEY), None)).await;
     assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
     assert_eq!(res.json()["code"], "PF-1001", "{}", res.text());

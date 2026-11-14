@@ -8,7 +8,7 @@
 use detag_core::redis::pubsub::{publish, subscribe, JobEvent, SUBSCRIBER_BUFFER};
 use detag_core::redis::{create_pool, RedisPool, RedisPoolConfig};
 use std::time::{Duration, Instant};
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 use uuid::Uuid;
 
 fn redis_url() -> String {
@@ -145,11 +145,29 @@ async fn slow_consumer_drops_safely() {
         assert_eq!(receivers, 1, "the subscriber must be listening");
     }
     // Nothing was polled during the burst: the buffer held the
-    // first event and the pump dropped the rest.
-    assert!(
-        stream.dropped_count() >= 20,
-        "most of the burst must be dropped, got {}",
-        stream.dropped_count()
+    // first event and the pump dropped the rest. Wait until the
+    // pump has worked through the whole burst before reading:
+    // FLAKY-002 second leg — if the pump is still draining the
+    // burst when the first event is consumed, a stale Progress
+    // can land in the freed buffer and the Done published next
+    // is itself dropped (buffer full, `try_send`), so the drain
+    // loop below would wait forever. dropped == BURST - 1 proves
+    // the pump processed all 30 (1 buffered + 29 dropped) and
+    // has nothing pending, so Done cannot be dropped.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while stream.dropped_count() != BURST - 1 {
+        assert!(
+            Instant::now() < deadline,
+            "pump did not drain the burst: dropped {} of {}",
+            stream.dropped_count(),
+            BURST - 1
+        );
+        sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        stream.dropped_count(),
+        BURST - 1,
+        "all but the first burst event must be dropped"
     );
     let first = timeout(Duration::from_secs(5), stream.next_event())
         .await

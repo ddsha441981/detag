@@ -123,9 +123,12 @@ async fn rate_limit_trips_at_threshold() {
     let ip = fresh_ip();
     // Five requests: admitted (the stub answers 501 — the status
     // is the stub's business; admission is what matters).
+    // The probe route is a PLAIN stub (`GET /v1/plans`) —
+    // since P1-034 the jobs stub takes AuthContext, so an
+    // unauthenticated probe there is 401, not the stub's 501.
     for i in 1..=5 {
         let res = app
-            .request(request(Method::GET, "/v1/jobs", &ip, Body::empty()))
+            .request(request(Method::GET, "/v1/plans", &ip, Body::empty()))
             .await;
         assert_eq!(
             res.status,
@@ -146,7 +149,7 @@ async fn rate_limit_trips_at_threshold() {
     }
     // Sixth: denied — 429 + PF-3007 problem+json + Retry-After.
     let res = app
-        .request(request(Method::GET, "/v1/jobs", &ip, Body::empty()))
+        .request(request(Method::GET, "/v1/plans", &ip, Body::empty()))
         .await;
     assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS);
     let json = res.json();
@@ -183,7 +186,9 @@ async fn oversized_body_rejected() {
         "413 must be the mapped problem body, not the bare limit response"
     );
 
-    // Same body on jobs: admitted (501 is the stub, not a cap).
+    // Same body on jobs: admitted past the limit (401 is the
+    // extractor, not a cap — since P1-034 the jobs stub takes
+    // AuthContext, so an unauthenticated probe is 401).
     let req = Request::builder()
         .method(Method::POST)
         .uri("/v1/jobs")
@@ -197,7 +202,7 @@ async fn oversized_body_rejected() {
     let res = app.request(req).await;
     assert_eq!(
         res.status,
-        StatusCode::NOT_IMPLEMENTED,
+        StatusCode::UNAUTHORIZED,
         "65 KiB is under the jobs class cap (1 MiB)"
     );
 }
