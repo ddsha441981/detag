@@ -215,7 +215,8 @@ async fn every_table_entry_resolves_to_the_stub() {
         // P1-008 admin suspend/restore, P1-009 GET
         // /v1/admin/users, P1-010 admin impersonate, and
         // P1-017 POST /v1/auth/logout-all, and P1-019 GET
-        // /v1/me/sessions + DELETE /v1/me/sessions/{id}: real
+        // /v1/me/sessions + DELETE /v1/me/sessions/{id}, and
+        // P1-033 POST /v1/api-keys: real
         // handlers behind an auth extractor — the probe sends no
         // credential, so the extractor rejects with 401 PF-1001
         // (not 501) and echoes the probe id (the route exists;
@@ -225,7 +226,8 @@ async fn every_table_entry_resolves_to_the_stub() {
                 && (*path == "/v1/admin/users/{id}/suspend"
                     || *path == "/v1/admin/users/{id}/restore"
                     || *path == "/v1/admin/users/{id}/impersonate"
-                    || *path == "/v1/auth/logout-all"))
+                    || *path == "/v1/auth/logout-all"
+                    || *path == "/v1/api-keys"))
             || (*method == "GET" && *path == "/v1/admin/users")
             || (*method == "GET" && *path == "/v1/me/sessions")
             || (*method == "DELETE" && *path == "/v1/me/sessions/{id}")

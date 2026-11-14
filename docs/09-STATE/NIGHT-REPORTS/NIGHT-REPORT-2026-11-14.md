@@ -248,3 +248,40 @@ both recovered per ASSUMPTION-010, see below.
 - The `{{ token` redaction trap (see P1-029 above) still applies
   to template files; the P1-030 QP finding is a different trap
   (delivered-mail decoding) — see above.
+
+---
+
+## 17th coordinator — Sat 2026-11-14 ~07:35–09:35 IST (run ended on cron timeout, NOT a failure)
+
+Resumed the 16th coordinator's uncommitted P1-031 tree (cancelled by the runtime, not the user), verified it, merged main in, and finished three items. Phase 1: **30/111 → 32/111**.
+
+### Done and on main (local main == phase-1 == `6d80ffc`; driver to push — NEVER pushed by this run)
+
+- **P1-031 — Email send rate limits** (`db92b74`, state `3b597c7`): per-recipient hourly caps in the drain (verify 3 / reset 3 / marketing 0, ADR-0023). `just verify` green 707 passed (691 + 16 new: 7 rate_limit unit + 8 drain + 1 repos_live), attempt 1, ~35 min. Merged main `35d4922` into phase-1 first (`86427a2` — only conflict DECISIONS.md ADR-0021 edge-network vs ADR-0023 email caps; both kept).
+- **CI-FAIL-016** (`971c394`, S1): CI #13 verify failed at compose-secrets-check — the CI-FAIL-015 fix's `minioadmin-secret-key` is not an allowed dev placeholder, so the secrets check flags it while the env check demands it match .env.example. Fix: `minioadmin` on both sides (`.env.example` + both `ops/compose.minio.yml` defaults) + regenerated config table. All four checks green locally (secrets, env, config-table, env-check; compose-check script suite 36 tests green). CI-FAIL-015's ISSUES.md entry now records the backfire; 016 waits on CI #14.
+- **P1-032 — Email ops docs** (`17a0072`, state `6d80ffc`): new `docs/06-DELIVERY/05-email-ops.md` (transactional-only stance, 8 templates + caps, sender config, SPF/DKIM/DMARC placeholders with owner decision #4 pending, test addresses, outbox/audit SQL verified against the real schemas, troubleshooting incl. the P1-030 QP `=3D` note). Docs-only; config-table-check + env-check green.
+
+### P1-033 — Key generation: CODE COMPLETE, NOT COMMITTED (next coordinator: verify green, then commit)
+
+All work is uncommitted on branch `phase-1` (see `git status`): `crates/core/src/api_keys.rs` (generation: `pf_live_` + 24B base64url, sha256 of full string, display prefix + last4, `API_KEY_MAX_PER_USER = 10`, known scopes), `crates/core/src/repos/api_keys.rs` (create / count_live / user-row `FOR UPDATE` lock), migration `20261114030933` (unique index on `secret_hash` — lookup must be unambiguous, same call as sessions.refresh_hash), `apps/api/src/services/api_keys.rs` (DTO + Validate, tx: lock → count → cap → insert + `api_key.created` audit), `apps/api/src/routes/api_keys.rs` (POST, 201, secret shown once), openapi + route-table regenerated (POST now live; GET/DELETE still stubs), `apps/api/tests/api_keys.rs` (6 tests), `crates/core/tests/repos_live.rs` (+1 test), docs (api-spec row, data-model row + index line, test-strategy section), ASSUMPTION-015 in ISSUES.md (no plan gate, no verified-email requirement, cap denial is 409 `PF-2011` — no dedicated PF code).
+
+- Targeted tests green: 4 core unit + 1 repos_live + 6 api integration (incl. 12-concurrent-creates → exactly 10×201 + 2×409). fmt + clippy clean; openapi-check, route-table-check, sqlx-prepare-check, schema-docs-check green.
+- **Full `just verify` was still running when the cron timeout hit** (~13 min in, 6 binaries green, no failures; log `/tmp/p133-verify.log`, session `proc_3317c79c5844` — may still be running or killed by the timeout; CHECK it before re-running). Do NOT commit P1-033 until a full green verify on this tree.
+- Lesson recorded in the test-strategy doc: test targets are NOT covered by `cargo sqlx prepare`, so tests must use untyped `sqlx::query` + `try_get` (or repo fns), never `query!` macros.
+
+### Environment: 14th VM reset (~08:45 IST, mid-`cargo test`)
+
+Os-intent replay (pid 776) ran ~23 min — waited it out, no parallel install. Binaries back but cluster down, `pf` role/db gone (fresh cluster). Restored per ASSUMPTION-010 (`pg_ctlcluster` + setsid redis, recreate `pf` role/db with the `grep`-first password extraction — verified `pw=[pf]` — `just migrate`, all 15 migrations applied incl. the new unique index). Tree survived intact. Noted in ASSUMPTION-010.
+
+### Still open / blocked (unchanged)
+
+- **CI-FAIL-012** (S1): worker image 200.8 MB vs 200 MB — needs `docker history` on a docker-capable runner; do NOT bump the limit.
+- **CI #13 cargo-deny NEW failure + Commits #17 failure**: need the user's logs zip to diagnose (requested in main chat ~08:15 IST; not arrived).
+- CI #14 (on the next push: P1-031 + CI-FAIL-016 + P1-032) will confirm 016; CI-FAIL-013 fix still unverified.
+- DISK-QUOTA-001 (S2): no EDQUOT hit this run. TESTKIT-MINIO-001 (S3). FLAKY-001/002/003 (S4): no flakes in this run's verifies (P1-031 green attempt 1).
+
+### What the next (18th) coordinator must know
+
+- Current ticket: **P1-033 — Key generation** (code complete, uncommitted — see above). Finish: confirm/kill the stale verify process, run `just verify` to green, commit ONE commit `feat(auth): P1-033 key generation (FR-A-06)`, tick the phase file, update PROGRESS.md (Phase 1 → 33/111, current ticket P1-034), merge phase-1 into main locally. Then P1-034 (key auth extractor — the `Credential::ApiKey` arm in `apps/api/src/auth.rs`: hash lookup, scope check, throttled `last_used_at`).
+- NEVER push, fetch, set a remote, or rebase — GitHub sync is the driver's job. NEVER force-push. Local main == phase-1 == `6d80ffc`; remote main was `56a9108` at this run's start (driver syncs).
+- `just verify` takes ~35 min now; run targeted binaries first when iterating, full verify before committing.

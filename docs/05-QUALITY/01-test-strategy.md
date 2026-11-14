@@ -120,6 +120,30 @@ due — `claim_due` needs `scheduled_at <= now`, and the rows'
 `scheduled_at` is their enqueue time, so pass a fresh
 `Utc::now()` at drain time.
 
+## API keys (P1-033)
+
+`apps/api/tests/api_keys.rs` proves key creation through the
+real router: 201 with the full `pf_live_` secret (40 chars —
+`pf_live_` + 32 base64url) shown once, the stored row
+carrying only its sha256 (`secret_hash`, never the secret),
+`prefix` = `pf_live_` + first 4 secret chars, the creation
+audited as `api_key.created` with no secret or hash in the
+audit row; validation 422s (unknown / empty / duplicate
+scopes, blank or >100-char name — `field_errors` on
+`scopes`/`name`); 401 with no credential; the 10-live-keys
+cap (the 11th sequential create is 409 `PF-2011`, and the
+failed create stores nothing); and the cap under concurrency
+(12 concurrent creates admit exactly 10, 2 conflict — the
+row lock in the service transaction serialises them; the
+loop mints its token once up front, so no Argon2id sits in
+it, unlike the login race in `lockout.rs`). The repo layer
+is pinned in `crates/core/tests/repos_live.rs` (create
+roundtrip, live count excludes revoked rows and other
+users' keys, duplicate `secret_hash` is a unique
+violation). Test targets are not covered by `cargo sqlx
+prepare`, so tests must not use `query!` macros — they use
+untyped `sqlx::query` + `try_get`, or repo functions.
+
 ## Property testing (P0-096)
 
 Property tests live in `crates/core/tests/prop/` (cursor codec,

@@ -1,0 +1,12 @@
+-- api_keys_secret_hash_unique (20261114030933, P1-033).
+-- Per docs/03-ARCHITECTURE/03-api-spec.md: POST /v1/api-keys
+-- stores the sha256 of the presented secret; the P1-034
+-- extractor verifies a key by hashing what the client
+-- presented and looking the hash up. The lookup must be
+-- unambiguous — two rows sharing a hash would both match —
+-- so the hash is unique. A collision is in practice
+-- impossible (the secret is 24 random bytes, 2^-192), but
+-- the index makes the invariant structural instead of
+-- assumed, the same call as sessions.refresh_hash (unique
+-- since migration 001).
+CREATE UNIQUE INDEX api_keys_secret_hash_uidx ON api_keys (secret_hash);

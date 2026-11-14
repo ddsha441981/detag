@@ -702,7 +702,7 @@ pub fn router() -> Router<AppState> {
         .nest(
             "/v1/api-keys",
             Router::new()
-                .route("/", get(stub).post(stub))
+                .route("/", get(stub).post(super::api_keys::create_api_key))
                 .route("/{id}", delete(stub)),
         )
 }

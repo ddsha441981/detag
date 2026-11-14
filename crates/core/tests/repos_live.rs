@@ -19,7 +19,10 @@ use detag_core::db::{connect, DbPool, PoolConfig};
 use detag_core::migrate::migrate_up;
 use detag_core::repos::error::RepoError;
 use detag_core::repos::{
-    artifacts, email_outbox, email_outbox::NewOutboxMail, jobs, plans, uploads, users,
+    api_keys::{self, NewApiKey},
+    artifacts, email_outbox,
+    email_outbox::NewOutboxMail,
+    jobs, plans, uploads, users,
 };
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -62,6 +65,7 @@ fn drop_db_sql(db: &str) -> &'static str {
         "detag_p128_outbox_truncate" => "DROP DATABASE IF EXISTS detag_p128_outbox_truncate",
         "detag_p128_outbox_race" => "DROP DATABASE IF EXISTS detag_p128_outbox_race",
         "detag_p131_outbox_rate_count" => "DROP DATABASE IF EXISTS detag_p131_outbox_rate_count",
+        "detag_p133_api_keys" => "DROP DATABASE IF EXISTS detag_p133_api_keys",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -83,6 +87,7 @@ fn create_db_sql(db: &str) -> &'static str {
         "detag_p128_outbox_truncate" => "CREATE DATABASE detag_p128_outbox_truncate",
         "detag_p128_outbox_race" => "CREATE DATABASE detag_p128_outbox_race",
         "detag_p131_outbox_rate_count" => "CREATE DATABASE detag_p131_outbox_rate_count",
+        "detag_p133_api_keys" => "CREATE DATABASE detag_p133_api_keys",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -353,6 +358,129 @@ async fn outbox_count_sent_recent_for_recipient_counts_only_sent_in_window() {
         .await
         .expect("count empty set");
     assert_eq!(count, 0, "no templates means nothing to count");
+
+    teardown(pool, db).await;
+}
+
+/// P1-033: api_keys roundtrip — create stores the row (hash,
+/// prefix, scopes), the live count counts only unrevoked
+/// rows, and a duplicate secret hash is a unique violation.
+#[tokio::test]
+async fn api_keys_create_counts_only_live_keys() {
+    let db = "detag_p133_api_keys";
+    let pool = setup(db).await;
+    let user = users::create(&pool, "keys@example.com", "h")
+        .await
+        .expect("seed user");
+    let other = users::create(&pool, "keys-other@example.com", "h")
+        .await
+        .expect("seed other user");
+
+    let first = api_keys::create(
+        &pool,
+        &NewApiKey {
+            user_id: user.id,
+            name: "CI deploy".to_string(),
+            prefix: "pf_live_aB3x".to_string(),
+            secret_hash: "a".repeat(64),
+            scopes: vec!["jobs:write".to_string(), "jobs:read".to_string()],
+        },
+    )
+    .await
+    .expect("create first key");
+    assert_eq!(first.name, "CI deploy");
+    assert_eq!(first.scopes, ["jobs:write", "jobs:read"]);
+    assert!(first.revoked_at.is_none());
+    assert_eq!(
+        api_keys::count_live_for_user(&pool, user.id)
+            .await
+            .expect("count"),
+        1,
+        "one live key"
+    );
+
+    let second = api_keys::create(
+        &pool,
+        &NewApiKey {
+            user_id: user.id,
+            name: "local".to_string(),
+            prefix: "pf_live_cD4y".to_string(),
+            secret_hash: "b".repeat(64),
+            scopes: vec!["jobs:read".to_string()],
+        },
+    )
+    .await
+    .expect("create second key");
+    assert_eq!(
+        api_keys::count_live_for_user(&pool, user.id)
+            .await
+            .expect("count"),
+        2,
+        "two live keys"
+    );
+    // Another user's keys do not spend this user's budget.
+    api_keys::create(
+        &pool,
+        &NewApiKey {
+            user_id: other.id,
+            name: "theirs".to_string(),
+            prefix: "pf_live_eF5z".to_string(),
+            secret_hash: "c".repeat(64),
+            scopes: vec!["jobs:read".to_string()],
+        },
+    )
+    .await
+    .expect("create other user's key");
+    assert_eq!(
+        api_keys::count_live_for_user(&pool, user.id)
+            .await
+            .expect("count"),
+        2,
+        "other user's key is not counted"
+    );
+
+    // Revoking one (P1-036 owns the revoke path; the row is
+    // flipped directly here) frees its budget slot.
+    sqlx::query("UPDATE api_keys SET revoked_at = now() WHERE id = $1")
+        .bind(first.id)
+        .execute(&pool)
+        .await
+        .expect("revoke first key");
+    assert_eq!(
+        api_keys::count_live_for_user(&pool, user.id)
+            .await
+            .expect("count"),
+        1,
+        "revoked keys do not count"
+    );
+
+    // The secret hash is unique: reusing one is a typed
+    // violation, not a silent second row.
+    let err = api_keys::create(
+        &pool,
+        &NewApiKey {
+            user_id: user.id,
+            name: "dup hash".to_string(),
+            prefix: "pf_live_gH6a".to_string(),
+            secret_hash: "b".repeat(64),
+            scopes: vec!["jobs:read".to_string()],
+        },
+    )
+    .await
+    .expect_err("duplicate secret hash must fail");
+    assert!(
+        matches!(err, RepoError::UniqueViolation { .. }),
+        "duplicate hash is a unique violation, got {err:?}"
+    );
+    // The failed insert left nothing behind.
+    let _ = second;
+    assert_eq!(
+        api_keys::count_live_for_user(&pool, user.id)
+            .await
+            .expect("count"),
+        1,
+        "failed create counts nothing"
+    );
 
     teardown(pool, db).await;
 }

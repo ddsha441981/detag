@@ -662,7 +662,7 @@ test (`migration_purge_cascade_triggers.rs`).
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/v1/api-keys` | list (prefix + last4 only) |
-| POST | `/v1/api-keys` | create; full secret shown once; scope: `jobs:write`, `jobs:read`, `webhooks:manage` |
+| POST | `/v1/api-keys` | create; full secret shown once; scope: `jobs:write`, `jobs:read`, `webhooks:manage`. Secret is `pf_live_` + 24 random bytes base64url (32 chars); only its sha256 is stored (`secret_hash`, unique). Response 201 carries the full secret once (id, name, prefix, secret, scopes, created_at); listings show prefix + last4 only. Name: display-name rules (1–100 chars, no control chars); scopes: ≥1, each known, no duplicates — else 422 `PF-2002`. Max 10 live keys per user (revoked do not count) — the 11th is 409 `PF-2011`; the count + insert run under the user's row lock so concurrent creates cannot overshoot. Creation is audited (`api_key.created`, no secret/hash). No plan gate and no verified-email requirement in P1-033 (see ASSUMPTION-015 in ISSUES.md). |
 | DELETE | `/v1/api-keys/{id}` | revoke |
 
 ### Uploads

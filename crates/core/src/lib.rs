@@ -1,6 +1,7 @@
 //! Detag core: config, error taxonomy, domain types, job state machine, audit.
 //! Module contents land with their epic tickets (E0.2 config/errors, E0.4 db, …).
 
+pub mod api_keys;
 pub mod audit;
 pub mod checksum;
 pub mod clock;

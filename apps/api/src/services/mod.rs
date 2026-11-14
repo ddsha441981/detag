@@ -4,6 +4,7 @@
 //! `detag_core::repos`, and the service owns the transaction.
 
 pub mod admin;
+pub mod api_keys;
 pub mod deletion;
 pub mod entitlements;
 pub mod login;

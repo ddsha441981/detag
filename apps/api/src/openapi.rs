@@ -48,6 +48,7 @@ use utoipa_swagger_ui::{Config, SwaggerUi, Url};
 use crate::routes::admin::{
     __path_impersonate, __path_restore, __path_search_users_handler, __path_suspend,
 };
+use crate::routes::api_keys::__path_create_api_key;
 use crate::routes::auth::{
     __path_confirm_email_change, __path_forgot_password, __path_login, __path_logout,
     __path_logout_all, __path_refresh, __path_register, __path_resend_verification,
@@ -57,6 +58,7 @@ use crate::routes::meta::{__path_healthz, __path_readyz};
 use crate::routes::profile::{__path_delete_me, __path_get_me, __path_patch_me};
 use crate::routes::sessions::{__path_delete_session, __path_list_sessions};
 use crate::services::admin::{ImpersonateResponse, ReasonRequest, UserSearchItem, UserSearchPage};
+use crate::services::api_keys::{CreateApiKeyRequest, CreateApiKeyResponse};
 use crate::services::login::{LoginRequest, LoginResponse};
 use crate::services::password_reset::{ForgotPasswordRequest, ResetPasswordRequest};
 use crate::services::profile::{PatchProfileRequest, ProfileResponse};
@@ -76,7 +78,7 @@ use crate::AppState;
         version = "1.0.0",
         description = "Detag — watermark removal for images and videos you own. All errors are RFC 7807 problem+json with a stable PF-code (see the Problem schema)."
     ),
-    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, refresh, logout, logout_all, forgot_password, reset_password, get_me, patch_me, delete_me, list_sessions, delete_session, suspend, restore, search_users_handler, impersonate),
+    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, refresh, logout, logout_all, forgot_password, reset_password, get_me, patch_me, delete_me, list_sessions, delete_session, create_api_key, suspend, restore, search_users_handler, impersonate),
     components(schemas(
         Problem,
         Readiness,
@@ -93,6 +95,8 @@ use crate::AppState;
         PatchProfileRequest,
         ProfileResponse,
         SessionItem,
+        CreateApiKeyRequest,
+        CreateApiKeyResponse,
         ReasonRequest,
         UserSearchItem,
         UserSearchPage,
