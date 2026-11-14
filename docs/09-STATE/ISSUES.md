@@ -73,7 +73,7 @@
 - Symptom: CI run #8 (dfe50a4) and CI #9 (330769e, logs zip from the user 2026-11-14) both fail the smoke job at `just migrate`: `migrate: pool timed out while waiting for an open connection`, after the whole compose stack went healthy — garage HEALTHY in ~6 s (the CI-FAIL-008 secret fix works), api/worker/postgres/redis/mailhog/web all healthy. The worker logs prove the DB itself is fine: in-network queries reach postgres and fail only with `relation "worker_heartbeats" does not exist` / `relation "email_outbox" does not exist` — the tables are missing because migrations never ran.
 - Cause: the migrate example runs on the RUNNER (host) against `PF_DATABASE_URL=postgres://pf:pf@localhost:5432/pf` (Settings default; the smoke job sets no PF_DATABASE_URL). The dev file publishes 5432 — but `docker compose ps` at failure shows postgres as plain `5432/tcp`, no host mapping. Same for redis (6379), garage (9000), mailhog (8025), worker (9092). The pattern is exact: api (edge+internal) and web (edge) DO show published ports; every service attached ONLY to the `internal: true` network does NOT. Published ports do not take effect for internal-only containers on this setup, so the host-side migrate (and the later smoke-ping polls of worker:9092 / redis:6379) can never connect.
 - Fix: in ops/compose.dev.yml, attach the dev host-access services (postgres, redis, garage, mailhog, worker) to the `edge` network too (in addition to `internal`), so their published ports actually work from the host. Dev-only — prod uses compose.prod.yml and is unaffected; the internal network still isolates the data services from anything not on edge.
-- Status: fixed (this commit) — waits on CI #10.
+- Status: fix SHIPPED but BROKEN — CI #10 (0ff5852) failed on my edit: the mailhog service in ops/compose.dev.yml ended up with TWO `networks:` keys (the service already had one; the edit added a second). Docker Compose's YAML parser (go-yaml) rejects duplicate keys (`mapping key "networks" already defined at line 71`), so `just smoke` died at `up` in <1 s and verify died at compose-dev-check on the same parse error. My local check (plain `yaml.safe_load`) did NOT catch it — PyYAML silently takes the last duplicate. Repaired in the follow-up commit (single merged `networks:` block for mailhog; all ops/workflow YAML now validated with a strict duplicate-key loader). The edge-network theory itself is still unproven — waits on CI #11.
 
 ### CI-FAIL-011 [bug] CI #9 verify fails at compose-health-check — PyYAML not installed on the runner
 - Date: 2026-11-14 · Ticket: P0-088 · Severity: S1 (CI red on main)
@@ -81,6 +81,13 @@
 - Cause: `check_compose_health.py` imports `yaml` (PyYAML) at line 45, and no CI step installs it — the verify job only pip-installs pillow/numpy for fixtures-check. ubuntu-latest runners do not ship PyYAML for the setup-python 3.12.
 - Fix: install `pyyaml==6.0.2` in the compose-health-check step before running the script.
 - Status: fixed (this commit) — waits on CI #10.
+
+### CI-FAIL-012 [bug] CI #10 image-size fails — worker image 200.8 MB vs 200 MB limit
+- Date: 2026-11-14 · Ticket: P0-084 · Severity: S2 (CI red on main, not a functional failure)
+- Symptom: CI run #10 (0ff5852), image-size job: `image-size FAIL: detag-worker:check is 200.8 MB (>= 200 MB limit, NFR-63)`; the api image is fine at 42.2 MB (< 150 MB).
+- Cause (partial): the 200 MB worker ceiling was derived from parts (bookworm-slim ~80 MB + ffmpeg stack ~45 MB + curl/certs ~15 MB + 6.2 MB worker binary ≈ 146 MB). The binary is NOT the growth — Dockerfile.worker strips it (`strip /tmp/detag-worker`, release profile `strip = "symbols"`) — so the ~55 MB growth is in the runtime layer, most likely the ffmpeg package set or the bookworm-slim base image updating since P0-084. Not proven: no layer breakdown was captured.
+- Fix: NOT attempted here — needs a layer inspection on a docker-capable runner (`docker history detag-worker:check`, or a `dive`-style breakdown) to name the fat layer, then trim that layer (or re-derive the ceiling with evidence if a base/ffmpeg update moved it). Do NOT just bump the limit without the breakdown. The image-size job could print `docker history` on failure to make the next diagnosis one-shot.
+- Status: open.
 
 ### TESTKIT-MINIO-001 [follow-up] testcontainers live legs + local-dev compose.minio.yml still reference dead MinIO images
 - Date: 2026-11-13 · Severity: S3 (not CI-blocking)

@@ -69,14 +69,12 @@ services:
     image: mailhog/mailhog:v1.0.1
     container_name: detag-mailhog
     networks:
+      - edge
       - internal
     # UI only — SMTP :1025 stays internal (the api reaches it as
     # mailhog:1025; nothing on the host needs to send mail).
     ports:
       - "8025:8025"
-    networks:
-      - edge
-      - internal
     # Healthcheck (P0-088): mailhog:1.0.1 is alpine-based, so busybox
     # wget is in the image. The messages API answers 200 with an
     # empty list when no mail has arrived yet.
