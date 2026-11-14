@@ -18,6 +18,7 @@
 //! | `pubsub` | job event channels (P0-050) | none — channels are ephemeral |
 //! | `idempotency` | idempotency response cache | the row's `expires_at` — no const here |
 //! | `jobs` | job status/progress cache | capped by `TTL_RESULT_MAX` (72 h) |
+//! | `abuse` | rate-limit abuse counters (P1-037) | the abuse window — no const here |
 //!
 //! TTLs that are not constants here are deliberately absent: a
 //! rate-limit bucket lives exactly its window, a cache entry lives
@@ -62,6 +63,8 @@ pub enum Namespace {
     Idempotency,
     /// Job status/progress cache.
     Jobs,
+    /// Rate-limit abuse counters (P1-037).
+    Abuse,
 }
 
 impl Namespace {
@@ -75,6 +78,7 @@ impl Namespace {
             Namespace::PubSub => "pubsub",
             Namespace::Idempotency => "idempotency",
             Namespace::Jobs => "jobs",
+            Namespace::Abuse => "abuse",
         }
     }
 }
@@ -109,10 +113,21 @@ pub fn usage_key(user_id: &Uuid, day: NaiveDate) -> String {
 }
 
 /// Rate-limit bucket for `scope` (e.g. `jobs_create`) and `id`
-/// (user id, api-key prefix, or IP hash).
+/// (user id, api-key id, or IP hash).
 /// (`pf:ratelimit:{scope}:{id}`.)
 pub fn rate_limit_key(scope: &str, id: &str) -> String {
     key(Namespace::RateLimit, &format!("{scope}:{id}"))
+}
+
+/// Per-key rate-limit abuse counter for `key_id` (P1-037):
+/// the denials one API key racked up inside the abuse
+/// window (`pf:abuse:api-key-ratelimit:{key_id}`). The
+/// counter lives in its own namespace — it is a trip count,
+/// not a token bucket — and expires with the window, so a
+/// sustained attack writes at most one audit row per window
+/// per key (when the count reaches the threshold).
+pub fn api_key_rate_limit_abuse_key(key_id: &Uuid) -> String {
+    key(Namespace::Abuse, &format!("api-key-ratelimit:{key_id}"))
 }
 
 /// Cache entry for `kind` (e.g. `plan`) and `id`.
@@ -175,6 +190,10 @@ mod tests {
         assert_eq!(
             job_key(&uuid()),
             "pf:jobs:0198c8d2-0000-7000-8000-000000000001"
+        );
+        assert_eq!(
+            api_key_rate_limit_abuse_key(&uuid()),
+            "pf:abuse:api-key-ratelimit:0198c8d2-0000-7000-8000-000000000001"
         );
     }
 

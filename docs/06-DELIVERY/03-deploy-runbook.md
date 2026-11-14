@@ -247,6 +247,9 @@ in a real inbox.
 | `PF_RATE_LIMIT_LOGIN_IP_BURST`, `PF_RATE_LIMIT_LOGIN_IP_REFILL_PER_MIN` | api | 20 / 10 | per-IP login-attempt bucket (P1-020): burst 20, then 10/min, across all accounts from one IP — bounds credential-stuffing runs; keyed by the sha256 of the client IP |
 | `PF_RATE_LIMIT_REGISTER_EMAIL_BURST`, `PF_RATE_LIMIT_REGISTER_EMAIL_REFILL_PER_MIN` | api | 5 / 1 | per-email registration bucket (P1-020): burst 5, then 1/min; keyed by the sha256 of the email; duplicate attempts spend it too |
 | `PF_RATE_LIMIT_RESET_ACCOUNT_BURST`, `PF_RATE_LIMIT_RESET_ACCOUNT_REFILL_PER_MIN` | api | 10 / 1 | per-account password-reset bucket (P1-020): the bucket exists for the reset flow (P1-025); no reset endpoint exists yet, so nothing spends from it today |
+| `PF_API_KEY_RATE_LIMIT_BURST`, `PF_API_KEY_RATE_LIMIT_REFILL_PER_MIN` | api | 60 / 60 | per-API-key default-tier bucket (P1-037): burst 60, then 1/s — deliberately lower than the user IP tier (120/120); keyed by the key UUID, checked by the extractor after the scope check |
+| `PF_API_KEY_RATE_LIMIT_HIGH_BURST`, `PF_API_KEY_RATE_LIMIT_HIGH_REFILL_PER_MIN` | api | 600 / 600 | per-API-key `high`-tier bucket (P1-037): burst 600, then 10/s — for trusted integrations; a key's tier lives on its row (`rate_limit_tier`, NULL = default, unknown names fall back to default) |
+| `PF_API_KEY_RATE_LIMIT_ABUSE_THRESHOLD`, `PF_API_KEY_RATE_LIMIT_ABUSE_WINDOW_SECS` | api | 5 / 3600 | per-key rate-limit abuse log (P1-037): one `api_key.rate_limit_tripped` audit row per key per window, written when denials in the window reach the threshold |
 | `PF_PUBLIC_BASE_URL` | api | http://localhost:8080 | used in signed URLs |
 | `PF_DOMAIN` | caddy (compose) | localhost | public domain caddy serves (P0-087): localhost = plain HTTP; a public DNS name gets auto-HTTPS; prod sets the real domain and PF_PUBLIC_BASE_URL to match |
 | `PF_API_PORT` | api | 8080 | port the api binds on PF_API_HOST |

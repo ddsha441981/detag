@@ -53,6 +53,24 @@ pub const API_KEY_ROTATION_OVERLAP_DEFAULT_SECS: u64 = 86_400;
 /// the P1-034 extractor.
 pub const KNOWN_SCOPES: &[&str] = &["jobs:write", "jobs:read", "webhooks:manage"];
 
+/// The per-key rate-limit tiers (P1-037, FR-A-06): the values
+/// `api_keys.rate_limit_tier` may carry. `default` is the
+/// tier a NULL row value resolves to; `high` is the
+/// operator-granted tier for trusted integrations (its burst
+/// / refill come from `PF_API_KEY_RATE_LIMIT_HIGH_*`). Any
+/// other value falls back to `default` (never to a bigger
+/// bucket, never to a denial) — a typo'd tier degrades, it
+/// does not break the integration. The tier is set out of
+/// band (direct row update — no endpoint sets it yet).
+pub const API_KEY_RATE_LIMIT_TIER_DEFAULT: &str = "default";
+/// The `high` per-key rate-limit tier (P1-037).
+pub const API_KEY_RATE_LIMIT_TIER_HIGH: &str = "high";
+
+/// The audit action for a per-key rate-limit abuse trip
+/// (P1-037): written when one key's denials inside the abuse
+/// window reach `PF_API_KEY_RATE_LIMIT_ABUSE_THRESHOLD`.
+pub const API_KEY_RATE_LIMIT_TRIPPED_ACTION: &str = "api_key.rate_limit_tripped";
+
 /// Generate a fresh presented secret: `pf_live_` + 32
 /// base64url characters. OS RNG; every call differs.
 pub fn generate_secret() -> String {
@@ -144,5 +162,22 @@ mod tests {
         assert!(!is_known_scope("jobs:delete"));
         assert!(!is_known_scope("admin"));
         assert!(!is_known_scope(""));
+    }
+
+    #[test]
+    fn rate_limit_tier_names_are_the_two_documented_values() {
+        // P1-037: exactly two tier names; anything else falls
+        // back to default (the resolver lives in the api — see
+        // `detag_api::rate_limit::resolve_api_key_tier`).
+        assert_eq!(API_KEY_RATE_LIMIT_TIER_DEFAULT, "default");
+        assert_eq!(API_KEY_RATE_LIMIT_TIER_HIGH, "high");
+        assert_ne!(
+            API_KEY_RATE_LIMIT_TIER_DEFAULT,
+            API_KEY_RATE_LIMIT_TIER_HIGH
+        );
+        assert_eq!(
+            API_KEY_RATE_LIMIT_TRIPPED_ACTION,
+            "api_key.rate_limit_tripped"
+        );
     }
 }

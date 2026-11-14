@@ -61,8 +61,16 @@
 //! re-stamps `last_used_at`, throttled to once per 300 s
 //! (`API_KEY_LAST_USED_THROTTLE_SECS`); a denied request is
 //! not a use. The key's `rate_limit_tier` rides the context
-//! for P1-037 — the tier is resolved here, not enforced
-//! (there is no 429 from this ticket).
+//! and is ENFORCED here (P1-037, FR-A-06): after the scope
+//! check, one token is spent from the key's tier bucket
+//! (`default` 60 burst / 60 per min from config — lower than
+//! the user IP tier 120/120 — or `high` 600/600 for keys
+//! whose row says so); an empty bucket answers 429 `PF-3007`
+//! with `Retry-After` and the key bucket's `X-RateLimit-*`
+//! trio, and repeated trips write one
+//! `api_key.rate_limit_tripped` audit row per key per hour.
+//! A Redis error fails open (warn logged) — the scope check
+//! already ran, so only the rate limit degrades.
 //!
 //! P1-016 owns the rest: the precedence (Bearer wins, and stays
 //! winning — see below) and the CSRF posture documentation. A
@@ -188,6 +196,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+use crate::rate_limit::{check_api_key_rate_limit, denied_response};
 use crate::services::api_keys::{note_key_use, verify_api_key, VerifyApiKeyError};
 use crate::services::revocation::is_jti_revoked;
 use crate::{problem::ProblemResponse, request_id::RequestId, AppState};
@@ -525,6 +534,34 @@ impl FromRequestParts<AppState> for AuthContext {
                 };
                 if !key.scopes.iter().any(|scope| scope == required) {
                     return Err(reject(AppError::Forbidden));
+                }
+                // The per-key rate limit (P1-037, FR-A-06): the
+                // key's tier bucket spends one token per verified
+                // request. A denial is 429 `PF-3007` with the
+                // key bucket's `X-RateLimit-*` trio + `Retry-After`
+                // — BEFORE `note_key_use`, so a denied request
+                // is not a use (the P1-034 rule, applied to the
+                // rate limit too). A Redis error fails OPEN (warn
+                // logged): the P0-103 decision — a cache outage
+                // must not take auth down; the scope check
+                // already ran, so only the rate limit degrades.
+                match check_api_key_rate_limit(state, &key).await {
+                    Ok(decision) => {
+                        if !decision.result.allowed {
+                            return Err(denied_response(
+                                decision.result,
+                                decision.limit,
+                                request_id,
+                            ));
+                        }
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            error = %err,
+                            key_id = %key.id,
+                            "api-keys: rate-limit check failed, failing open"
+                        );
+                    }
                 }
                 note_key_use(state, &key).await;
                 return Ok(Self {
