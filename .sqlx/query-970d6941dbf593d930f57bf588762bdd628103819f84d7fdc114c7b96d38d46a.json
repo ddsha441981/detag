@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE jobs SET status = $2, updated_at = now() WHERE id = $1\n         RETURNING id, user_id, upload_id, kind, mode, params, status, stage,\n             progress, priority, lane, attempts, idempotency_key, error, attestation_id,\n             webhook_url, started_at, finished_at, created_at, updated_at",
+  "query": "SELECT j.id, j.user_id, j.upload_id, j.kind, j.mode, j.params, j.status,\n                 j.stage, j.progress, j.priority, j.lane, j.attempts, j.idempotency_key,\n                 j.error, j.attestation_id, j.webhook_url, j.started_at, j.finished_at,\n                 j.created_at, j.updated_at, j.key_id, k.prefix AS \"key_prefix?\"\n             FROM jobs j LEFT JOIN api_keys k ON k.id = j.key_id\n             WHERE ($1::uuid IS NULL OR j.user_id = $1)\n               AND ($2::uuid IS NULL OR j.key_id = $2)\n             ORDER BY j.created_at DESC, j.id DESC\n             LIMIT $3",
   "describe": {
     "columns": [
       {
@@ -222,12 +222,35 @@
             "name": "updated_at"
           }
         }
+      },
+      {
+        "ordinal": 20,
+        "name": "key_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "jobs",
+            "name": "key_id"
+          }
+        }
+      },
+      {
+        "ordinal": 21,
+        "name": "key_prefix?",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "api_keys",
+            "name": "prefix"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
         "Uuid",
-        "Text"
+        "Uuid",
+        "Int8"
       ]
     },
     "nullable": [
@@ -250,8 +273,10 @@
       true,
       true,
       false,
+      false,
+      true,
       false
     ]
   },
-  "hash": "4e2193cffd816d5343c3d2ebf968c077b66079c97f2dcfc29a25365c85206f42"
+  "hash": "970d6941dbf593d930f57bf588762bdd628103819f84d7fdc114c7b96d38d46a"
 }

@@ -17,4 +17,5 @@ pub mod refresh;
 pub mod register;
 pub mod revocation;
 pub mod sessions;
+pub mod usage_attribution;
 pub mod verification;

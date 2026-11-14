@@ -110,6 +110,28 @@ pub async fn by_secret_hash(
     .map_err(RepoError::from_sqlx)
 }
 
+/// Load one key by id (P1-038, attribution): any row,
+/// including revoked and expired ones — the caller decides
+/// what a dead row means (attribution reads history, so a
+/// revoked key's past usage is still attributable to it).
+/// `None` when no row has this id.
+pub async fn by_id(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    key_id: Uuid,
+) -> Result<Option<ApiKey>, RepoError> {
+    sqlx::query_as!(
+        ApiKey,
+        r#"SELECT id, user_id, name, prefix, secret_hash, scopes,
+               last_used_at, revoked_at, expires_at, rate_limit_tier, created_at, updated_at
+           FROM api_keys
+           WHERE id = $1"#,
+        key_id,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
 /// Load one of the user's keys by id (P1-035, rotation
 /// target): the row must belong to `user_id`, or the caller
 /// gets `None` — a foreign id reads exactly like an unknown

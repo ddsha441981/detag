@@ -178,6 +178,7 @@ async fn seed_queued_job(app: &TestApp, user_id: Uuid) -> Uuid {
             lane: "standard",
             params: json!({}),
             idempotency_key: None,
+            key_id: None,
         },
     )
     .await

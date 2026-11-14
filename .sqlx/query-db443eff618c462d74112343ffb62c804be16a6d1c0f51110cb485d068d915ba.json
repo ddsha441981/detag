@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, upload_id, kind, mode, params, status, stage,\n             progress, priority, lane, attempts, idempotency_key, error, attestation_id,\n             webhook_url, started_at, finished_at, created_at, updated_at\n         FROM jobs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
+  "query": "SELECT id, user_id, upload_id, kind, mode, params, status, stage,\n             progress, priority, lane, attempts, idempotency_key, error, attestation_id,\n             webhook_url, started_at, finished_at, created_at, updated_at, key_id\n         FROM jobs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
   "describe": {
     "columns": [
       {
@@ -222,6 +222,17 @@
             "name": "updated_at"
           }
         }
+      },
+      {
+        "ordinal": 20,
+        "name": "key_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "jobs",
+            "name": "key_id"
+          }
+        }
       }
     ],
     "parameters": {
@@ -250,8 +261,9 @@
       true,
       true,
       false,
-      false
+      false,
+      true
     ]
   },
-  "hash": "3078a19fc992816342ec3ee1e3fa9b4178a4ce5b22c384971edc71c05527efc8"
+  "hash": "db443eff618c462d74112343ffb62c804be16a6d1c0f51110cb485d068d915ba"
 }

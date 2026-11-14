@@ -8,7 +8,10 @@
 //! "POST resolve with action" under the abuse-reports row.
 //! All handlers are the shared 501 stub until their Phase 4/5
 //! tickets land — except `POST /v1/admin/users/{id}/suspend`
-//! and `/restore`, real since P1-008 (in this file).
+//! and `/restore`, real since P1-008 (in this file), `GET
+//! /v1/admin/users`, real since P1-009, `POST
+//! /v1/admin/users/{id}/impersonate`, real since P1-010, and
+//! `GET /v1/admin/jobs`, real since P1-038 (in this file).
 //!
 //! Both live handlers take [`AdminContext`]: the extractor
 //! verifies the Bearer <redacted> and requires the role to be admin
@@ -30,8 +33,8 @@ use crate::{
     problem::ProblemResponse,
     services::{
         admin::{
-            impersonate_user, restore_user, search_users, suspend_user, AdminError,
-            ImpersonateResponse, ReasonRequest, UserSearchPage,
+            impersonate_user, list_jobs, restore_user, search_users, suspend_user, AdminError,
+            AdminJobsPage, ImpersonateResponse, ReasonRequest, UserSearchPage,
         },
         register::UserResponse,
     },
@@ -102,6 +105,85 @@ pub async fn search_users_handler(
         .into_response(),
         Err(AdminError::Validation(_)) | Err(AdminError::NotFound) => {
             // Search takes no validated body and never 404s.
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(AdminError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
+/// Query params for `GET /v1/admin/jobs` (P1-038): all
+/// optional. `user_id` / `key_id` narrow the list to one
+/// owner's jobs / one key's jobs (both absent lists
+/// everything); `limit` clamps to 1..=100 (default 20);
+/// `cursor` is the opaque keyset from the previous page.
+#[derive(Debug, Deserialize)]
+pub struct ListJobsQuery {
+    pub user_id: Option<Uuid>,
+    pub key_id: Option<Uuid>,
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
+}
+
+/// GET /v1/admin/jobs (P1-038): browse jobs, newest first.
+/// Admin + support (the read-only role) may call it; a
+/// verified plain user gets 403 `PF-1002` from the extractor,
+/// no credential gets 401 `PF-1001`. Each row shows the
+/// display prefix of the API key that created the job
+/// (`key_prefix` is null for a web / JWT-created job) — the
+/// prefix is the only key material this view ever shows.
+/// Answers the api-spec pagination shape (`{"items": [...],
+/// "next_cursor": "..."}` — `next_cursor` omitted on the
+/// last page). A tampered cursor is 422 `PF-2002`; a
+/// non-numeric `limit` or a malformed uuid filter is rejected
+/// by the `Query` extractor the same way (the error mapper
+/// rewrites the framework 400 to the 422 problem).
+#[utoipa::path(
+    get,
+    path = "/v1/admin/jobs",
+    params(
+        ("user_id" = Option<Uuid>, Query, description = "Only this owner's jobs"),
+        ("key_id" = Option<Uuid>, Query, description = "Only this API key's jobs (key-scoped attribution)"),
+        ("limit" = Option<u32>, Query, description = "Page size, clamped to 1..=100 (default 20)"),
+        ("cursor" = Option<String>, Query, description = "Opaque keyset from the previous page's next_cursor")
+    ),
+    responses(
+        (status = 200, description = "One page of jobs with the creating key's prefix", body = AdminJobsPage),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified plain user)", body = Problem),
+        (status = 422, description = "Tampered cursor, bad limit, or malformed uuid filter", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn list_jobs_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    _admin: AdminReadContext,
+    Query(params): Query<ListJobsQuery>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    match list_jobs(
+        &state,
+        params.user_id,
+        params.key_id,
+        params.limit,
+        params.cursor,
+    )
+    .await
+    {
+        Ok(page) => Json(page).into_response(),
+        Err(AdminError::InvalidCursor) => ProblemResponse(AppError::ValidationFailed.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response(),
+        Err(AdminError::Validation(_) | AdminError::NotFound) => {
+            // Listing takes no validated body and never 404s.
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
                 .into_response()
         }
@@ -290,7 +372,7 @@ pub fn router() -> Router<AppState> {
                 .route("/users/{id}/restore", post(restore))
                 .route("/users/{id}/quota-grant", post(stub))
                 .route("/users/{id}/impersonate", post(impersonate))
-                .route("/jobs", get(stub))
+                .route("/jobs", get(list_jobs_handler))
                 .route("/jobs/{id}/reprocess", post(stub))
                 .route("/jobs/{id}/cancel", post(stub))
                 .route("/dlq", get(stub))
