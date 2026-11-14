@@ -173,6 +173,30 @@ is expired by the time the revoke step runs (the P1-035
 precedent — read the user's email back from the users row
 if the helper did not return it).
 
+## API-key ACL matrix (P1-040)
+
+`apps/api/tests/api_key_matrix.rs` is the registry the
+extractor's scope table answers to: one row per `/v1` route
+(65 rows), each naming what an API key gets — `Allowed`
+(a key carrying the named scope reaches the handler, 501
+on the stubs), `Forbidden` (any key is 403 `PF-1002`),
+`Unprotected` (no credential is checked at all — the plain
+501 stub answers anonymous and key alike), or `Ignored`
+(the handler takes no credential, so the anonymous and key
+responses are identical). The completeness test fails if a
+`ROUTE_TABLE` entry has no row or a row names no route, so
+the matrix cannot drift from the router silently. The
+`Unprotected` rows are gaps recorded honestly, not 403s:
+the route's handler ticket adds the extractor/guard and
+flips the row in the same commit — except the ones that are
+public by design (`GET /v1/plans`, the provider webhooks,
+abuse intake), which the row's note names. Scope-negative
+coverage walks every `Allowed` row with a key lacking the
+row's scope (403), and a separate test proves an admin
+user's own key is 403 on every live admin route ("no admin
+ever"). P1-042's full roles matrix reuses this registry
+shape.
+
 ## Property testing (P0-096)
 
 Property tests live in `crates/core/tests/prop/` (cursor codec,
