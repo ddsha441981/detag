@@ -37,22 +37,39 @@ services:
     # Host-side psql / migrate / seed.
     ports:
       - "5432:5432"
+    # CI-FAIL-010: published ports do not take effect for a service
+    # attached ONLY to the `internal: true` network (CI #9: `ps`
+    # showed plain `5432/tcp`, no host mapping, and `just migrate`
+    # from the host timed out on the pool while in-network queries
+    # worked). The data services join `edge` too in dev so their
+    # published ports actually work from the host. Prod is unaffected
+    # (this file is dev-only; prod uses compose.prod.yml).
+    networks:
+      - edge
+      - internal
 
   redis:
     # Host-side redis-cli + smoke-ping (PF_REDIS_URL=localhost:6379).
     ports:
       - "6379:6379"
+    networks:
+      - edge
+      - internal
 
   garage:
     # S3 API for host-side tools (dev only). Garage has no console UI,
     # so only :9000 is published (MinIO's :9001 console is gone with it).
     ports:
       - "9000:9000"
+    networks:
+      - edge
+      - internal
 
   mailhog:
     image: mailhog/mailhog:v1.0.1
     container_name: detag-mailhog
     networks:
+      - edge
       - internal
     # UI only — SMTP :1025 stays internal (the api reaches it as
     # mailhog:1025; nothing on the host needs to send mail).
@@ -86,3 +103,6 @@ services:
     # runs on the host and polls the worker /metrics (P0-082/P0-090).
     ports:
       - "9092:9092"
+    networks:
+      - edge
+      - internal

@@ -43,8 +43,8 @@ def _data_deps():
     return {
         "postgres": {"condition": "service_healthy"},
         "redis": {"condition": "service_healthy"},
-        "minio": {"condition": "service_healthy"},
-        "bootstrap": {"condition": "service_completed_successfully"},
+        "garage": {"condition": "service_healthy"},
+        "bootstrap-lifecycle": {"condition": "service_completed_successfully"},
     }
 
 
@@ -52,8 +52,8 @@ def _dev_services():
     return {
         "postgres": {"healthcheck": _hc()},
         "redis": {"healthcheck": _hc()},
-        "minio": {"healthcheck": _hc()},
-        "bootstrap": {"restart": "no", "depends_on": {"minio": {"condition": "service_healthy"}}},
+        "garage": {"healthcheck": _hc()},
+        "bootstrap-lifecycle": {"restart": "no", "depends_on": {"garage": {"condition": "service_healthy"}}},
         "api": {"depends_on": _data_deps()},
         "worker": {"depends_on": _data_deps()},
         "web": {"healthcheck": _hc(start="5s")},
@@ -140,7 +140,7 @@ class TestCheckServices(unittest.TestCase):
 
     def test_api_missing_bootstrap_dep_fails(self):
         services = _dev_services()
-        del services["api"]["depends_on"]["bootstrap"]
+        del services["api"]["depends_on"]["bootstrap-lifecycle"]
         failures = check_services(services, IMAGE_HEALTHCHECKS)
         self.assertTrue(any("api" in f and "bootstrap" in f for f in failures))
 
@@ -158,7 +158,7 @@ class TestCheckServices(unittest.TestCase):
 
     def test_bootstrap_must_stay_one_shot(self):
         services = _dev_services()
-        services["bootstrap"]["restart"] = "unless-stopped"
+        services["bootstrap-lifecycle"]["restart"] = "unless-stopped"
         failures = check_services(services, IMAGE_HEALTHCHECKS)
         self.assertTrue(any("bootstrap" in f for f in failures))
 
