@@ -178,3 +178,73 @@ both recovered per ASSUMPTION-010, see below.
   `ubuntu.sources` every time; extract the `.env` password with
   the `grep`-first form; then `pg_ctlcluster 16 main start` +
   setsid redis + recreate `pf` role/db + `just migrate`.
+
+---
+
+# P1-030 — Email flow tests (15th coordinator, 2026-11-14)
+
+## Tickets done
+- **P1-030 — Email flow tests** (commit 9e4f55e,
+  `test(auth): P1-030 email flow tests (FR-A-01)`, merged to main
+  as 451ad6f). New `apps/api/tests/email_flow.rs` — 6 tests:
+  outbox assertions for verify / reset / email-change
+  (verify-to-new + alert-to-old) / lockout, plus fake-SMTP e2e
+  for the verify and reset flows (the token is read from the
+  DELIVERED mail, not the outbox). `detag-mailer` added as an api
+  dev-dependency for the drain. Test-strategy doc gained an
+  "Email flow tests (P1-030)" section.
+- Phase 1 now **30/111**. Next: P1-031 (email send rate limits).
+
+## Verify
+- `just verify` green: **691 passed, 0 failed** (685 + 6 new),
+  attempt 1, ~36 min. Commit linter passes on the ticket commit.
+  No VM reset during this run; services were up at start.
+
+## Findings (both fixed in the ticket, recorded for the next coordinator)
+- Lettre sends both mail parts quoted-printable, so the equals
+  sign in the action link's query string arrives as `=3D` — a
+  naive read of the token after `token=` is shifted by two
+  characters and the endpoint 401s (PF-1010). The suite
+  QP-decodes the captured DATA first (`qp_decode` in the test
+  file). Any future test that reads a token out of a delivered
+  mail must decode first, not string-search the raw DATA.
+- A password reset queues a `new-login-digest` mail, so the
+  reset e2e's second drain legitimately claims 1 row (the
+  digest) — only the third drain is empty. The test asserts the
+  digest delivery explicitly.
+- The e2e tests run on their own scratch databases (testkit
+  `TestCtx`, dropped at the end) because `drain_once` claims
+  every due row — on the shared harness DB one test's drain
+  would mark another test's mail sent.
+
+## Open issues
+- CI-FAIL-012 (S1, open): CI #10 image-size — worker image
+  200.8 MB vs the 200 MB gate. NOT fixed: the binary IS
+  stripped, so the ~55 MB growth is in the runtime layer
+  (likely ffmpeg/base image) — needs `docker history` layer
+  inspection on a docker-capable runner; do NOT just bump the
+  limit.
+- CI-FAIL-010 (S1, fixed on main, unproven): the edge-network
+  fix (2b6b99d) was itself broken (duplicate `networks:` key
+  on mailhog — plain `yaml.safe_load` does NOT catch duplicate
+  keys) and repaired (0d683e4). Waits on CI #11.
+- CI-FAIL-011 (fixed, confirmed in CI #10) and CI-FAIL-013
+  (fixed 78ceec8, waits on CI #11) are on main as e150a37.
+- DISK-QUOTA-001 (S2, open): `target/` regrowing; no EDQUOT
+  hit this run. TESTKIT-MINIO-001 (S3, open). FLAKY-001/002/003
+  (S4, open): no flakes in this run's verify.
+
+## What the next coordinator must know
+- Current ticket: **P1-031 — Email send rate limits** (per-recipient
+  hourly caps per template class: verify 3, reset 3, marketing 0;
+  abuse log entries on trips). Then P1-032 (email ops docs),
+  P1-033 (key generation).
+- `just verify` takes ~36 min now; run targeted binaries first
+  when iterating, full verify before committing.
+- NEVER push, fetch, set a remote, or rebase — GitHub sync is
+  the driver's job. NEVER force-push.
+- Main is at 451ad6f (P1-030 merge). The driver owns the CI #11
+  verdict on e150a37's repairs.
+- The `{{ token` redaction trap (see P1-029 above) still applies
+  to template files; the P1-030 QP finding is a different trap
+  (delivered-mail decoding) — see above.
