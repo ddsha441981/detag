@@ -68,10 +68,19 @@
 - Fix: rename the override to `garage:` in ops/compose.prod.yml and update the three stale header comments (minio → garage; Garage has no console). No other override file is affected (compose.dev.yml has no `minio:` service block; compose.minio.yml is the separate local-dev MinIO file, TESTKIT-MINIO-001).
 - Status: fixed (this commit) — renamed the override to `garage:` + the three stale header comments; `just compose-prod-check` green locally (rendered config: garage restart unless-stopped, mem limit 1073741824, json-file logging, no `minio` service), compose-dev-check + compose-base-check also green; live CI confirmation waits on CI #9.
 
-### CI-FAIL-010 [bug] CI #8 smoke fails again — new/different failure (NOT the CI-FAIL-008 Garage secret)
+### CI-FAIL-010 [bug] CI #8/#9 smoke fails at migrations — host cannot reach postgres (internal-only network drops published ports)
 - Date: 2026-11-13 · Ticket: P0-090 (smoke) · Severity: S1 (CI red on main)
-- Symptom: CI run #8 (commit dfe50a4), smoke job FAILED again. The CI-FAIL-008 fix (real 64-hex Garage dev secrets) is in dfe50a4, so this is a new/different failure, not the old "garage stays unhealthy" cause. Exact error unknown — the CI #8 logs zip was requested from the user ~23:31 IST 2026-11-13 and is still pending.
-- Status: open — blocked: pending the user's CI #8 logs zip. Do NOT guess at the cause; diagnose from the logs when they arrive. (One candidate to check against the logs: CI-FAIL-009's stale `minio:` override also breaks `docker compose config` for base+prod — if the smoke job renders prod compose, the same defect may be the smoke cause; confirm from the logs, do not assume.)
+- Symptom: CI run #8 (dfe50a4) and CI #9 (330769e, logs zip from the user 2026-11-14) both fail the smoke job at `just migrate`: `migrate: pool timed out while waiting for an open connection`, after the whole compose stack went healthy — garage HEALTHY in ~6 s (the CI-FAIL-008 secret fix works), api/worker/postgres/redis/mailhog/web all healthy. The worker logs prove the DB itself is fine: in-network queries reach postgres and fail only with `relation "worker_heartbeats" does not exist` / `relation "email_outbox" does not exist` — the tables are missing because migrations never ran.
+- Cause: the migrate example runs on the RUNNER (host) against `PF_DATABASE_URL=postgres://pf:pf@localhost:5432/pf` (Settings default; the smoke job sets no PF_DATABASE_URL). The dev file publishes 5432 — but `docker compose ps` at failure shows postgres as plain `5432/tcp`, no host mapping. Same for redis (6379), garage (9000), mailhog (8025), worker (9092). The pattern is exact: api (edge+internal) and web (edge) DO show published ports; every service attached ONLY to the `internal: true` network does NOT. Published ports do not take effect for internal-only containers on this setup, so the host-side migrate (and the later smoke-ping polls of worker:9092 / redis:6379) can never connect.
+- Fix: in ops/compose.dev.yml, attach the dev host-access services (postgres, redis, garage, mailhog, worker) to the `edge` network too (in addition to `internal`), so their published ports actually work from the host. Dev-only — prod uses compose.prod.yml and is unaffected; the internal network still isolates the data services from anything not on edge.
+- Status: fixed (this commit) — waits on CI #10.
+
+### CI-FAIL-011 [bug] CI #9 verify fails at compose-health-check — PyYAML not installed on the runner
+- Date: 2026-11-14 · Ticket: P0-088 · Severity: S1 (CI red on main)
+- Symptom: CI run #9 (330769e, logs zip from the user 2026-11-14), verify job: compose-prod-check PASSED (CI-FAIL-009 fix works), then `compose-health-check` FAILED: `python3 scripts/check_compose_health.py` → `ModuleNotFoundError: No module named 'yaml'`. First run ever to reach this step (CI #8 died at compose-prod-check).
+- Cause: `check_compose_health.py` imports `yaml` (PyYAML) at line 45, and no CI step installs it — the verify job only pip-installs pillow/numpy for fixtures-check. ubuntu-latest runners do not ship PyYAML for the setup-python 3.12.
+- Fix: install `pyyaml==6.0.2` in the compose-health-check step before running the script.
+- Status: fixed (this commit) — waits on CI #10.
 
 ### TESTKIT-MINIO-001 [follow-up] testcontainers live legs + local-dev compose.minio.yml still reference dead MinIO images
 - Date: 2026-11-13 · Severity: S3 (not CI-blocking)
