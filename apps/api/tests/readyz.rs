@@ -53,9 +53,16 @@ async fn http_get(port: u16, path: &str) -> std::io::Result<(String, String)> {
     Ok((status, body.to_string()))
 }
 
-/// Poll /healthz until it answers 200 (panics after 10 s).
+/// Poll /healthz until it answers 200 (panics after 30 s).
+///
+/// FLAKY-004: the 10 s deadline was too tight when all four tests
+/// spawn their apis in parallel (four 454 MB debug binaries booting
+/// at once on 1.5 shared CPUs — the spawned apis bind fast but
+/// /healthz does not answer for ~11 s; the apis are slow, not dead).
+/// 30 s still catches an api that never becomes healthy, but
+/// tolerates a loaded box.
 async fn wait_for_healthz(port: u16) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     loop {
         if let Ok(Ok((status, _))) =
             timeout(Duration::from_secs(1), http_get(port, "/healthz")).await
@@ -65,7 +72,7 @@ async fn wait_for_healthz(port: u16) {
             }
         }
         if std::time::Instant::now() > deadline {
-            panic!("api did not become healthy on port {port} within 10 s");
+            panic!("api did not become healthy on port {port} within 30 s");
         }
         sleep(Duration::from_millis(100)).await;
     }
