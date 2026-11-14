@@ -16,11 +16,16 @@
 
 pub mod drain;
 pub mod error;
+pub mod rate_limit;
 pub mod smtp;
 pub mod templates;
 
 pub use drain::{backoff_delay_secs, drain_once, DrainConfig, DrainOutcome};
 pub use error::MailError;
+pub use rate_limit::{
+    is_over_cap, template_class, templates_for_class, MailClass, RateLimitConfig,
+    RATE_LIMIT_WINDOW_SECS,
+};
 pub use smtp::{LettreTransport, MailTransport, MemoryTransport, OutgoingMail, SmtpConfig};
 pub use templates::{RenderedMail, TemplateEngine, TEMPLATES};
 

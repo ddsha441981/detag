@@ -98,6 +98,28 @@ the outbox, which claims every due row, so each runs on its own
 scratch database (testkit `TestCtx`) — the shared harness DB
 would let one test's drain mark another test's mail sent.
 
+## Email send caps (P1-031)
+
+`crates/mailer/tests/drain.rs` proves the per-recipient hourly
+caps at the drain, the only choke point: 3 verification mails
+send and the 4th is parked (`rate_limited: 1`, nothing sent,
+abuse audit row `email.rate_limit_tripped` with hash/template/
+class/cap/count and no raw address); the same for reset; a
+marketing-class row parks on sight (cap 0, even the first one);
+the 3rd mail under the cap still sends; backdating `sent_at`
+past the hour re-opens the window; the cap is per recipient
+(3 sends to A do not spend B's budget); `email-change-verify`
+shares the verify class with `verify-email` (2 + 1 fill it, the
+next trips it); and four `lockout-notice` alerts to one address
+all send — transactional alerts are never capped. The count
+itself is pinned in `crates/core/tests/repos_live.rs`
+(`count_sent_recent_for_recipient`: only sent rows, only the
+named templates, only the named hash, only inside the window).
+A test that samples `now` before enqueueing will see nothing
+due — `claim_due` needs `scheduled_at <= now`, and the rows'
+`scheduled_at` is their enqueue time, so pass a fresh
+`Utc::now()` at drain time.
+
 ## Property testing (P0-096)
 
 Property tests live in `crates/core/tests/prop/` (cursor codec,

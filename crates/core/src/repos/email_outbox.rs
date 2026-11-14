@@ -216,6 +216,48 @@ fn truncate_error(error: &str) -> String {
     }
 }
 
+/// Count mails SENT to one recipient (by `to_hash`) for a set of
+/// templates in the last `window_secs` seconds — `sent_at` inside
+/// the window, not `created_at`: the cap is on sends, so a row
+/// still queued (or parked unsent) does not spend it, and a row
+/// sent twice under at-least-once delivery counts twice.
+///
+/// P1-031: the drain's per-recipient hourly send cap. The
+/// caller passes the templates of one mail class (verify /
+/// reset / marketing, see `detag_mailer::rate_limit`) and the
+/// row's `to_hash`;
+/// `now` is the caller's clock (the drain passes its own
+/// `Utc::now()`, same frame as the claim — see `claim_due`).
+/// This is the recipient-side counterpart of
+/// [`count_recent_for_user`], which counts enqueues per user +
+/// single template for the resend limit (P1-002): the two
+/// answer different questions (sends vs mints, recipient vs
+/// user, class vs template) and both stay.
+pub async fn count_sent_recent_for_recipient(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    templates: &[&str],
+    to_hash: &str,
+    window_secs: i64,
+    now: DateTime<Utc>,
+) -> Result<i64, RepoError> {
+    let names: Vec<String> = templates.iter().map(|t| t.to_string()).collect();
+    let row = sqlx::query!(
+        r#"SELECT COUNT(*) AS "count!"
+           FROM email_outbox
+           WHERE to_hash = $1
+             AND template = ANY($2)
+             AND sent_at >= $4::timestamptz - make_interval(secs => $3)"#,
+        to_hash,
+        &names,
+        window_secs as f64,
+        now,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(row.count)
+}
+
 /// Count mails queued for one user + template in the last
 /// `window_secs` seconds (sent or unsent — the mailer marks
 /// rows sent, it never deletes them).

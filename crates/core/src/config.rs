@@ -184,6 +184,23 @@ pub struct Settings {
     /// Env: PF_MAILER_DRAIN_BATCH — max outbox rows one drain
     /// pass claims (P1-028). Default 25.
     pub mailer_drain_batch: u32,
+    /// Env: PF_MAILER_VERIFY_CAP_PER_HOUR — max verification
+    /// mails (`verify-email` + `email-change-verify`) the drain
+    /// sends to one recipient address per hour (P1-031).
+    /// Default 3. The 4th mail in the hour is parked (dropped)
+    /// and the trip is written to the abuse audit log
+    /// (`email.rate_limit_tripped`).
+    pub mailer_verify_cap_per_hour: u32,
+    /// Env: PF_MAILER_RESET_CAP_PER_HOUR — max password-reset
+    /// mails the drain sends to one recipient address per hour
+    /// (P1-031). Default 3; same park + audit behaviour.
+    pub mailer_reset_cap_per_hour: u32,
+    /// Env: PF_MAILER_MARKETING_CAP_PER_HOUR — max marketing
+    /// mails the drain sends to one recipient address per hour
+    /// (P1-031). Default 0: no marketing mail is ever sent in
+    /// v1 (transactional-only stance) — any marketing-class row
+    /// is parked on sight. Raise deliberately to enable.
+    pub mailer_marketing_cap_per_hour: u32,
     /// Env: PF_ENGINE_MODELS_DIR
     pub engine_models_dir: String,
     /// Env: PF_ENGINE_GPU — GPU device count; 0 means CPU-only/off.
@@ -388,6 +405,9 @@ impl Default for Settings {
             mailer_backoff_base_secs: 60,
             mailer_drain_interval_secs: 30,
             mailer_drain_batch: 25,
+            mailer_verify_cap_per_hour: 3,
+            mailer_reset_cap_per_hour: 3,
+            mailer_marketing_cap_per_hour: 0,
             engine_models_dir: "./models".to_string(),
             engine_gpu: 0,
             engine_tiles_max: 1024,
@@ -464,6 +484,15 @@ const FIELD_VARS: &[(&str, &str)] = &[
         "PF_MAILER_DRAIN_INTERVAL_SECS",
     ),
     ("mailer_drain_batch", "PF_MAILER_DRAIN_BATCH"),
+    (
+        "mailer_verify_cap_per_hour",
+        "PF_MAILER_VERIFY_CAP_PER_HOUR",
+    ),
+    ("mailer_reset_cap_per_hour", "PF_MAILER_RESET_CAP_PER_HOUR"),
+    (
+        "mailer_marketing_cap_per_hour",
+        "PF_MAILER_MARKETING_CAP_PER_HOUR",
+    ),
     ("engine_models_dir", "PF_ENGINE_MODELS_DIR"),
     ("engine_gpu", "PF_ENGINE_GPU"),
     ("engine_tiles_max", "PF_ENGINE_TILES_MAX"),
@@ -614,6 +643,9 @@ impl Settings {
             mailer_backoff_base_secs: field!(mailer_backoff_base_secs, u64),
             mailer_drain_interval_secs: field!(mailer_drain_interval_secs, u64),
             mailer_drain_batch: field!(mailer_drain_batch, u32),
+            mailer_verify_cap_per_hour: field!(mailer_verify_cap_per_hour, u32),
+            mailer_reset_cap_per_hour: field!(mailer_reset_cap_per_hour, u32),
+            mailer_marketing_cap_per_hour: field!(mailer_marketing_cap_per_hour, u32),
             engine_models_dir: field!(engine_models_dir, String),
             engine_gpu: field!(engine_gpu, u8),
             engine_tiles_max: field!(engine_tiles_max, u32),

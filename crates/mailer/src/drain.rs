@@ -31,12 +31,17 @@
 //! before the relay answers) would lose mail silently.
 
 use crate::error::MailError;
+use crate::rate_limit::{
+    is_over_cap, template_class, templates_for_class, MailClass, RateLimitConfig,
+    RATE_LIMIT_WINDOW_SECS,
+};
 use crate::smtp::{MailTransport, OutgoingMail};
 use crate::templates::TemplateEngine;
 use chrono::{DateTime, Duration, Utc};
 use detag_core::checksum::sha256_hex;
 use detag_core::config::Settings;
 use detag_core::db::DbPool;
+use detag_core::repos::audit_logs::{self, NewAuditLog};
 use detag_core::repos::email_outbox::{self, OutboxMail};
 use detag_core::repos::users;
 use serde_json::json;
@@ -73,6 +78,10 @@ pub struct DrainConfig {
     pub base_url: String,
     /// `PF_MAIL_FROM` — the sender of every mail.
     pub from: String,
+    /// Per-class hourly send caps (P1-031) —
+    /// `PF_MAILER_*_CAP_PER_HOUR` (verify 3 / reset 3 /
+    /// marketing 0).
+    pub rate_limits: RateLimitConfig,
 }
 
 impl DrainConfig {
@@ -85,6 +94,7 @@ impl DrainConfig {
             interval_secs: settings.mailer_drain_interval_secs,
             base_url: settings.public_base_url.clone(),
             from: settings.mail_from.clone(),
+            rate_limits: RateLimitConfig::from_settings(settings),
         }
     }
 }
@@ -100,6 +110,10 @@ pub struct DrainOutcome {
     pub transient_failed: usize,
     /// Rows parked (permanent failure — never claimed again).
     pub permanent_failed: usize,
+    /// Rows parked for tripping a send cap (P1-031) — the
+    /// subset of `permanent_failed` that hit a rate limit
+    /// rather than a data/relay error.
+    pub rate_limited: usize,
 }
 
 /// Exponential backoff after the n-th failed attempt (1-based):
@@ -116,6 +130,8 @@ enum SendOutcome {
     Sent,
     TransientFailed,
     PermanentFailed,
+    /// Parked for tripping a per-recipient send cap (P1-031).
+    RateLimited,
 }
 
 /// What recipient resolution found.
@@ -199,6 +215,13 @@ pub async fn drain_once<T: MailTransport>(
             SendOutcome::Sent => outcome.sent += 1,
             SendOutcome::TransientFailed => outcome.transient_failed += 1,
             SendOutcome::PermanentFailed => outcome.permanent_failed += 1,
+            // A rate-limited row is parked, so it counts in
+            // `permanent_failed` too — `rate_limited` is the
+            // subset that tripped a cap rather than erroring.
+            SendOutcome::RateLimited => {
+                outcome.permanent_failed += 1;
+                outcome.rate_limited += 1;
+            }
         }
     }
     Ok(outcome)
@@ -222,6 +245,40 @@ async fn send_one<T: MailTransport>(
             return record_transient(pool, row, config, now, &err.to_string()).await;
         }
     };
+    // P1-031: per-recipient hourly send cap, checked after the
+    // recipient resolved (so the count is for a real address)
+    // and before any render or send. Transactional alerts have
+    // no cap (`None`) and skip the query entirely. A count
+    // failure is transient — a database hiccup must not lose
+    // the mail, so the row is rescheduled and retried.
+    let class = template_class(&row.template);
+    if let Some(cap) = config.rate_limits.cap_for_class(class) {
+        let to_hash = row.to_hash.clone().unwrap_or_default();
+        match email_outbox::count_sent_recent_for_recipient(
+            pool,
+            templates_for_class(class),
+            &to_hash,
+            RATE_LIMIT_WINDOW_SECS,
+            now,
+        )
+        .await
+        {
+            Ok(sent) if is_over_cap(sent, cap) => {
+                return rate_limited(pool, row, config, class, cap, sent).await;
+            }
+            Ok(_) => {}
+            Err(err) => {
+                return record_transient(
+                    pool,
+                    row,
+                    config,
+                    now,
+                    &format!("rate-limit count failed: {err}"),
+                )
+                .await;
+            }
+        }
+    }
     // The render context is the payload plus the drain's own
     // variables. A non-object payload cannot render — park it:
     // the payload is fixed, retrying cannot help.
@@ -279,6 +336,77 @@ async fn send_one<T: MailTransport>(
             }
         }
     }
+}
+
+/// Park a row for tripping a send cap (P1-031): the mail is
+/// dropped — not retried into the next hour — and the trip is
+/// written to the abuse audit log (`email.rate_limit_tripped`,
+/// actor/target the user from the payload, `after` carrying
+/// the recipient hash, template, class, cap and the sent count
+/// — never a raw address, NFR-42). The audit is best-effort:
+/// a failed insert logs loudly but the row is still parked —
+/// enforcement must not depend on the log write succeeding.
+/// Returns [`SendOutcome::RateLimited`], never `Sent`.
+async fn rate_limited(
+    pool: &DbPool,
+    row: &OutboxMail,
+    config: &DrainConfig,
+    class: MailClass,
+    cap: u32,
+    sent: i64,
+) -> SendOutcome {
+    let reason = format!(
+        "email rate limit: {} cap {}/hour, {} sent in the last hour",
+        class.as_str(),
+        cap,
+        sent
+    );
+    tracing::warn!(
+        outbox_id = %row.id,
+        template = %row.template,
+        class = class.as_str(),
+        cap_per_hour = cap,
+        sent_in_window = sent,
+        "outbox mail rate-limited — parked, abuse audit written"
+    );
+    let user_id = row
+        .payload
+        .get("user_id")
+        .and_then(|v| v.as_str())
+        .and_then(|raw| Uuid::parse_str(raw).ok());
+    if let Err(err) = audit_logs::insert(
+        pool,
+        &NewAuditLog {
+            actor_user_id: user_id,
+            actor_client: None,
+            action: "email.rate_limit_tripped".to_string(),
+            target_type: "user".to_string(),
+            target_id: user_id.map(|id| id.to_string()),
+            before: None,
+            after: Some(json!({
+                "to_hash": row.to_hash,
+                "template": row.template,
+                "class": class.as_str(),
+                "cap_per_hour": cap,
+                "sent_in_window": sent,
+            })),
+            reason: Some(reason.clone()),
+        },
+    )
+    .await
+    {
+        tracing::error!(
+            outbox_id = %row.id,
+            error = %err,
+            "rate-limit trip: abuse audit insert failed — row still parked"
+        );
+    }
+    // Park, then report the rate-limit outcome (not plain
+    // PermanentFailed — the pass counts the subset separately).
+    // A failed park is logged inside `park`; the row stays
+    // claimable and trips again next pass.
+    park(pool, row, config, &reason).await;
+    SendOutcome::RateLimited
 }
 
 /// Park a row: it can never be sent, so stop claiming it.

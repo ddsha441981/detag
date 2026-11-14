@@ -10,8 +10,10 @@
 
 use chrono::{Duration, Utc};
 use detag_core::checksum::sha256_hex;
-use detag_core::repos::{email_outbox, email_outbox::NewOutboxMail, users};
-use detag_mailer::{backoff_delay_secs, drain_once, DrainConfig, MemoryTransport, TemplateEngine};
+use detag_core::repos::{audit_logs, email_outbox, email_outbox::NewOutboxMail, users};
+use detag_mailer::{
+    backoff_delay_secs, drain_once, DrainConfig, MemoryTransport, RateLimitConfig, TemplateEngine,
+};
 use detag_testkit::TestCtx;
 use serde_json::json;
 use uuid::Uuid;
@@ -24,6 +26,11 @@ fn drain_config() -> DrainConfig {
         interval_secs: 30,
         base_url: "http://localhost:8080".to_string(),
         from: "noreply@detag.local".to_string(),
+        rate_limits: RateLimitConfig {
+            verify_cap_per_hour: 3,
+            reset_cap_per_hour: 3,
+            marketing_cap_per_hour: 0,
+        },
     }
 }
 
@@ -129,6 +136,7 @@ async fn drain_retries_with_backoff_then_sends() {
             sent: 0,
             transient_failed: 1,
             permanent_failed: 0,
+            rate_limited: 0,
         }
     );
     assert_eq!(transport.sent_count(), 0, "nothing sent yet");
@@ -408,6 +416,337 @@ async fn drain_parks_email_change_verify_with_no_pending_email() {
         .expect("drain pass");
     assert_eq!(outcome.permanent_failed, 1);
     assert_eq!(transport.sent_count(), 0, "no fallback to the old address");
+
+    ctx.close().await;
+}
+
+// --- P1-031: per-recipient hourly send caps ---
+
+/// Enqueue `n` rows of one template for one recipient and drain
+/// once; the caller asserts the outcome. The token varies per
+/// row so the rows are distinct mails, not duplicates.
+async fn enqueue_n(
+    ctx: &TestCtx,
+    email: &str,
+    template: &str,
+    user_id: Uuid,
+    n: usize,
+) -> Vec<Uuid> {
+    let mut ids = Vec::with_capacity(n);
+    for i in 0..n {
+        ids.push(
+            enqueue(
+                ctx,
+                email,
+                template,
+                json!({ "user_id": user_id, "token": format!("tok-{template}-{i}") }),
+            )
+            .await,
+        );
+    }
+    ids
+}
+
+/// Read back one outbox row's stored error, for asserting the
+/// park reason on a rate-limited row.
+async fn stored_error(ctx: &TestCtx, template: &str, id: Uuid) -> Option<String> {
+    email_outbox::unsent_for_template(&ctx.pool, template)
+        .await
+        .expect("read back")
+        .into_iter()
+        .find(|r| r.id == id)
+        .and_then(|r| r.last_error)
+}
+
+/// The abuse audit rows for one trip, oldest first.
+async fn trip_audits(ctx: &TestCtx) -> Vec<detag_core::repos::audit_logs::AuditLog> {
+    audit_logs::list_for_action(&ctx.pool, "email.rate_limit_tripped")
+        .await
+        .expect("read audits")
+}
+
+#[tokio::test]
+async fn drain_parks_fourth_verify_mail_in_an_hour_and_audits_the_trip() {
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let email = "ivan-verify@example.com";
+    let user_id = make_user(&ctx, email).await;
+    let config = drain_config();
+
+    // Three verification mails go out inside the hour.
+    enqueue_n(&ctx, email, "verify-email", user_id, 3).await;
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &config, Utc::now())
+        .await
+        .expect("first pass");
+    assert_eq!(outcome.sent, 3);
+    assert_eq!(outcome.rate_limited, 0);
+
+    // The fourth trips the cap: parked, never sent, audited.
+    let fourth = enqueue(
+        &ctx,
+        email,
+        "verify-email",
+        json!({ "user_id": user_id, "token": "tok-verify-4" }),
+    )
+    .await;
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &config, Utc::now())
+        .await
+        .expect("second pass");
+    assert_eq!(outcome.claimed, 1);
+    assert_eq!(outcome.sent, 0);
+    assert_eq!(outcome.permanent_failed, 1);
+    assert_eq!(outcome.rate_limited, 1);
+    assert_eq!(transport.sent_count(), 3, "the 4th mail never left");
+    assert!(
+        stored_error(&ctx, "verify-email", fourth)
+            .await
+            .unwrap_or_default()
+            .contains("rate limit"),
+        "the park reason names the cap"
+    );
+
+    // The trip is in the abuse audit log: hash, not address.
+    let audits = trip_audits(&ctx).await;
+    assert_eq!(audits.len(), 1, "exactly one trip logged");
+    let audit = &audits[0];
+    assert_eq!(
+        audit.target_id.as_deref(),
+        Some(user_id.to_string()).as_deref()
+    );
+    let after = audit.after.clone().expect("trip carries facts");
+    assert_eq!(after["to_hash"], sha256_hex(email.as_bytes()));
+    assert_eq!(after["template"], "verify-email");
+    assert_eq!(after["class"], "verify");
+    assert_eq!(after["cap_per_hour"], 3);
+    assert_eq!(after["sent_in_window"], 3);
+    assert!(
+        !after.to_string().contains(email),
+        "no raw address in the audit row: {after}"
+    );
+
+    // Parked is terminal: the next pass has nothing to do.
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &config, Utc::now())
+        .await
+        .expect("third pass");
+    assert_eq!(outcome.claimed, 0);
+    assert_eq!(trip_audits(&ctx).await.len(), 1, "no second audit");
+
+    ctx.close().await;
+}
+
+#[tokio::test]
+async fn drain_parks_fourth_reset_mail_in_an_hour() {
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let email = "judy-reset@example.com";
+    let user_id = make_user(&ctx, email).await;
+    let config = drain_config();
+
+    enqueue_n(&ctx, email, "password-reset", user_id, 3).await;
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &config, Utc::now())
+        .await
+        .expect("first pass");
+    assert_eq!(outcome.sent, 3);
+
+    enqueue_n(&ctx, email, "password-reset", user_id, 1).await;
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &config, Utc::now())
+        .await
+        .expect("second pass");
+    assert_eq!(outcome.sent, 0);
+    assert_eq!(outcome.rate_limited, 1);
+    assert_eq!(transport.sent_count(), 3);
+    let audits = trip_audits(&ctx).await;
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].after.clone().expect("facts")["class"], "reset");
+
+    ctx.close().await;
+}
+
+#[tokio::test]
+async fn drain_parks_marketing_mail_on_sight() {
+    // Marketing cap is 0: no marketing mail is ever sent in
+    // v1 — even the first one trips, before any render.
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let email = "mallory-mkt@example.com";
+    let user_id = make_user(&ctx, email).await;
+    let config = drain_config();
+
+    enqueue(
+        &ctx,
+        email,
+        "marketing-newsletter",
+        json!({ "user_id": user_id }),
+    )
+    .await;
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &config, Utc::now())
+        .await
+        .expect("drain pass");
+    assert_eq!(outcome.sent, 0);
+    assert_eq!(outcome.rate_limited, 1);
+    assert_eq!(transport.sent_count(), 0);
+    let audits = trip_audits(&ctx).await;
+    assert_eq!(audits.len(), 1);
+    let after = audits[0].after.clone().expect("facts");
+    assert_eq!(after["class"], "marketing");
+    assert_eq!(after["cap_per_hour"], 0);
+    assert_eq!(after["sent_in_window"], 0);
+
+    ctx.close().await;
+}
+
+#[tokio::test]
+async fn drain_sends_third_verify_mail_under_the_cap() {
+    // The cap is 3/hour: the 3rd mail still goes — the trip
+    // is at the 4th, not the 3rd.
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let email = "karl-under@example.com";
+    let user_id = make_user(&ctx, email).await;
+    let config = drain_config();
+
+    enqueue_n(&ctx, email, "verify-email", user_id, 2).await;
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &config, Utc::now())
+        .await
+        .expect("first pass");
+    assert_eq!(outcome.sent, 2);
+
+    enqueue_n(&ctx, email, "verify-email", user_id, 1).await;
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &config, Utc::now())
+        .await
+        .expect("second pass");
+    assert_eq!(outcome.sent, 1, "3rd of 3 sends");
+    assert_eq!(outcome.rate_limited, 0);
+    assert_eq!(transport.sent_count(), 3);
+    assert_eq!(trip_audits(&ctx).await.len(), 0, "no trip logged");
+
+    ctx.close().await;
+}
+
+#[tokio::test]
+async fn drain_cap_window_expires_after_an_hour() {
+    // Three sends, then the hour passes (sent_at backdated
+    // past the window): the next mail sends again.
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let email = "lara-window@example.com";
+    let user_id = make_user(&ctx, email).await;
+    let config = drain_config();
+
+    let ids = enqueue_n(&ctx, email, "verify-email", user_id, 3).await;
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &config, Utc::now())
+        .await
+        .expect("first pass");
+    assert_eq!(outcome.sent, 3);
+
+    let old = Utc::now() - Duration::minutes(61);
+    for id in ids {
+        sqlx::query("UPDATE email_outbox SET sent_at = $1 WHERE id = $2")
+            .bind(old)
+            .bind(id)
+            .execute(&ctx.pool)
+            .await
+            .expect("backdate sent_at");
+    }
+
+    enqueue_n(&ctx, email, "verify-email", user_id, 1).await;
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &config, Utc::now())
+        .await
+        .expect("second pass");
+    assert_eq!(outcome.sent, 1, "window expired: the mail sends");
+    assert_eq!(outcome.rate_limited, 0);
+
+    ctx.close().await;
+}
+
+#[tokio::test]
+async fn drain_cap_is_per_recipient() {
+    // Three sends to one address do not spend another
+    // address's budget.
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let config = drain_config();
+
+    let user_a = make_user(&ctx, "mia-a@example.com").await;
+    let user_b = make_user(&ctx, "nina-b@example.com").await;
+    enqueue_n(&ctx, "mia-a@example.com", "verify-email", user_a, 3).await;
+    enqueue_n(&ctx, "nina-b@example.com", "verify-email", user_b, 1).await;
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &config, Utc::now())
+        .await
+        .expect("drain pass");
+    assert_eq!(outcome.sent, 4, "both recipients get their mail");
+    assert_eq!(outcome.rate_limited, 0);
+
+    ctx.close().await;
+}
+
+#[tokio::test]
+async fn drain_change_verify_shares_the_verify_cap() {
+    // `verify-email` and `email-change-verify` are one class:
+    // two of the first + one of the second fill the budget, and
+    // the next change-verify trips it.
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let email = "omar-shared@example.com";
+    let user_id = make_user(&ctx, email).await;
+    // Pending address == address on record, so both templates
+    // resolve to the same recipient hash.
+    users::set_pending_email(&ctx.pool, user_id, email)
+        .await
+        .expect("set pending email");
+    let config = drain_config();
+
+    enqueue_n(&ctx, email, "verify-email", user_id, 2).await;
+    enqueue_n(&ctx, email, "email-change-verify", user_id, 1).await;
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &config, Utc::now())
+        .await
+        .expect("first pass");
+    assert_eq!(outcome.sent, 3, "2 verify + 1 change-verify fill the cap");
+
+    enqueue_n(&ctx, email, "email-change-verify", user_id, 1).await;
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &config, Utc::now())
+        .await
+        .expect("second pass");
+    assert_eq!(outcome.sent, 0);
+    assert_eq!(outcome.rate_limited, 1);
+    let audits = trip_audits(&ctx).await;
+    assert_eq!(audits.len(), 1);
+    let after = audits[0].after.clone().expect("facts");
+    assert_eq!(after["template"], "email-change-verify");
+    assert_eq!(after["class"], "verify");
+    assert_eq!(after["sent_in_window"], 3);
+
+    ctx.close().await;
+}
+
+#[tokio::test]
+async fn drain_never_caps_transactional_alerts() {
+    // Security alerts are uncapped: four lockout notices to
+    // one address in an hour all go out — the user must hear
+    // about the hammering precisely when it happens.
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let email = "pam-alerts@example.com";
+    let user_id = make_user(&ctx, email).await;
+    let config = drain_config();
+
+    for _ in 0..4 {
+        enqueue(&ctx, email, "lockout-notice", json!({ "user_id": user_id })).await;
+    }
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &config, Utc::now())
+        .await
+        .expect("drain pass");
+    assert_eq!(outcome.sent, 4, "alerts are never capped");
+    assert_eq!(outcome.rate_limited, 0);
+    assert_eq!(trip_audits(&ctx).await.len(), 0, "no trip logged");
 
     ctx.close().await;
 }

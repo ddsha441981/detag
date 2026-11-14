@@ -65,11 +65,22 @@ not the app): unknown or already-used token → 401 `PF-1010`
 token deletes the user's previous unused tokens — one live
 token per user, so a resend invalidates the earlier link.
 Resend: at most 3 tokens minted per user per hour (counted
-from the token table, not from emails sent); unknown email,
+from `email_outbox` rows for the user + template, not from
+token rows — minting deletes token history, so the token table
+cannot count it; P1-002); unknown email,
 already-verified user, and over-limit resend all answer 204
 with no mail (no enumeration, mirroring forgot-password),
 audited as `verify-email.resend` only when a mail is actually
-queued. Unverified users cannot create jobs: the job-create
+queued. Send caps are a second, drain-side backstop (P1-031):
+the drain sends at most 3 verification mails (`verify-email`
++ `email-change-verify`) and 3 password-reset mails to one
+recipient address per hour, and no marketing mail at all
+(cap 0) — counting sent outbox rows for the recipient hash +
+class in the last hour; a 4th mail is parked (dropped, not
+retried) and the trip is written to the abuse audit log
+(`email.rate_limit_tripped`). Transactional alerts
+(`lockout-notice`, `new-login-digest`, …) are never capped.
+Unverified users cannot create jobs: the job-create
 handler calls the `require_verified` guard first — `PF-1009`
 `email_not_verified`, 403. (Note: `POST
 /v1/auth/resend-verification` is not in the original spec —

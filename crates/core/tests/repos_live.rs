@@ -61,6 +61,7 @@ fn drop_db_sql(db: &str) -> &'static str {
         "detag_p128_outbox_max" => "DROP DATABASE IF EXISTS detag_p128_outbox_max",
         "detag_p128_outbox_truncate" => "DROP DATABASE IF EXISTS detag_p128_outbox_truncate",
         "detag_p128_outbox_race" => "DROP DATABASE IF EXISTS detag_p128_outbox_race",
+        "detag_p131_outbox_rate_count" => "DROP DATABASE IF EXISTS detag_p131_outbox_rate_count",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -81,6 +82,7 @@ fn create_db_sql(db: &str) -> &'static str {
         "detag_p128_outbox_max" => "CREATE DATABASE detag_p128_outbox_max",
         "detag_p128_outbox_truncate" => "CREATE DATABASE detag_p128_outbox_truncate",
         "detag_p128_outbox_race" => "CREATE DATABASE detag_p128_outbox_race",
+        "detag_p131_outbox_rate_count" => "CREATE DATABASE detag_p131_outbox_rate_count",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -261,6 +263,96 @@ async fn outbox_claim_stops_at_max_attempts_and_park_is_terminal() {
         .expect("parked row reads back");
     assert_eq!(parked.attempts, 5, "parking sets attempts to max");
     assert_eq!(parked.last_error.as_deref(), Some("unknown template"));
+
+    teardown(pool, db).await;
+}
+
+/// P1-031: the sent-count for the drain's per-recipient cap
+/// counts only SENT rows, only for the named templates, only
+/// for the named recipient hash, and only inside the window.
+#[tokio::test]
+async fn outbox_count_sent_recent_for_recipient_counts_only_sent_in_window() {
+    let db = "detag_p131_outbox_rate_count";
+    let pool = setup(db).await;
+    let now = Utc::now();
+    let hash = "deadbeef-rate";
+    let other_hash = "deadbeef-other";
+
+    // One recent verify send (counts) + one verify send 61 min
+    // ago (outside the window) + one unsent verify row (never
+    // sent) + one recent reset send (other template) + one
+    // recent change-verify send (same class) + one recent
+    // verify send to another recipient.
+    let recent = enqueue_outbox(&pool, "verify-email", None).await;
+    let old = enqueue_outbox(&pool, "verify-email", None).await;
+    let _unsent = enqueue_outbox(&pool, "verify-email", None).await;
+    let reset = enqueue_outbox(&pool, "password-reset", None).await;
+    let change = enqueue_outbox(&pool, "email-change-verify", None).await;
+    let _other = enqueue_outbox(&pool, "verify-email", None).await;
+    // The helper enqueues with a fixed to_hash; re-point the
+    // rows at the two recipients under test.
+    for (id, to_hash) in [
+        (recent, hash),
+        (old, hash),
+        (reset, hash),
+        (change, hash),
+        (_other, other_hash),
+    ] {
+        sqlx::query("UPDATE email_outbox SET to_hash = $2 WHERE id = $1")
+            .bind(id)
+            .bind(to_hash)
+            .execute(&pool)
+            .await
+            .expect("re-point to_hash");
+    }
+    for id in [recent, old, reset, change, _other] {
+        email_outbox::mark_sent(&pool, id).await.expect("mark sent");
+    }
+    sqlx::query("UPDATE email_outbox SET sent_at = $2 WHERE id = $1")
+        .bind(old)
+        .bind(now - Duration::minutes(61))
+        .execute(&pool)
+        .await
+        .expect("backdate old send");
+
+    let verify_templates = ["verify-email", "email-change-verify"];
+    let count = email_outbox::count_sent_recent_for_recipient(
+        &pool,
+        &verify_templates,
+        hash,
+        3600,
+        Utc::now(),
+    )
+    .await
+    .expect("count");
+    assert_eq!(
+        count, 2,
+        "recent verify + recent change-verify only: old is out of window, unsent never sent, reset is another template"
+    );
+    let count = email_outbox::count_sent_recent_for_recipient(
+        &pool,
+        &["password-reset"],
+        hash,
+        3600,
+        Utc::now(),
+    )
+    .await
+    .expect("count reset");
+    assert_eq!(count, 1, "the reset send counts in its own class");
+    let count = email_outbox::count_sent_recent_for_recipient(
+        &pool,
+        &verify_templates,
+        other_hash,
+        3600,
+        Utc::now(),
+    )
+    .await
+    .expect("count other recipient");
+    assert_eq!(count, 1, "another recipient has its own budget");
+    let count = email_outbox::count_sent_recent_for_recipient(&pool, &[], hash, 3600, Utc::now())
+        .await
+        .expect("count empty set");
+    assert_eq!(count, 0, "no templates means nothing to count");
 
     teardown(pool, db).await;
 }

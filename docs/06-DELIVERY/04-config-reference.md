@@ -27,7 +27,10 @@
 | `PF_MAILER_BACKOFF_BASE_SECS` | `60` | mailer |
 | `PF_MAILER_DRAIN_BATCH` | `25` | mailer |
 | `PF_MAILER_DRAIN_INTERVAL_SECS` | `30` | mailer |
+| `PF_MAILER_MARKETING_CAP_PER_HOUR` | `0` | mailer |
 | `PF_MAILER_MAX_ATTEMPTS` | `5` | mailer |
+| `PF_MAILER_RESET_CAP_PER_HOUR` | `3` | mailer |
+| `PF_MAILER_VERIFY_CAP_PER_HOUR` | `3` | mailer |
 | `PF_MAIL_FROM` | `noreply@detag.local` | mailer |
 | `PF_METRICS_HOST` | `127.0.0.1` | api, worker |
 | `PF_METRICS_PORT` | `9090` | api |
