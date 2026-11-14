@@ -87,8 +87,11 @@ async fn ip_bucket_trips_at_threshold() {
     let ip = fresh_ip();
     // Five requests: admitted (the stub answers 501 — the
     // status is the stub's business; admission is what matters).
+    // The probe route is a PLAIN stub (`GET /v1/plans`) —
+    // since P1-034 the jobs stub takes AuthContext, so an
+    // unauthenticated probe there is 401, not the stub's 501.
     for i in 1..=5 {
-        let res = app.request(request(Method::GET, "/v1/jobs", &ip)).await;
+        let res = app.request(request(Method::GET, "/v1/plans", &ip)).await;
         assert_eq!(
             res.status,
             StatusCode::NOT_IMPLEMENTED,
@@ -107,7 +110,7 @@ async fn ip_bucket_trips_at_threshold() {
         );
     }
     // Sixth: denied — 429 + PF-3007 problem+json + Retry-After.
-    let res = app.request(request(Method::GET, "/v1/jobs", &ip)).await;
+    let res = app.request(request(Method::GET, "/v1/plans", &ip)).await;
     assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(hdr(&res, "x-ratelimit-limit"), Some("5"));
     assert_eq!(hdr(&res, "x-ratelimit-remaining"), Some("0"));
@@ -119,7 +122,7 @@ async fn ip_bucket_trips_at_threshold() {
     assert_eq!(json["request_id"], REQUEST_ID, "{json}");
     // A different IP has its own bucket: admitted again.
     let res = app
-        .request(request(Method::GET, "/v1/jobs", &fresh_ip()))
+        .request(request(Method::GET, "/v1/plans", &fresh_ip()))
         .await;
     assert_eq!(res.status, StatusCode::NOT_IMPLEMENTED);
 }

@@ -519,9 +519,19 @@ immature — 401 `PF-1010`, never `PF-1011` (expired). The
 locked claims shape is now nine keys (P1-022 adds `nbf` =
 `iat` on every minted token; a pre-P1-022 token without
 `nbf` still verifies — it defaults to 0, long past). A Bearer
-API key is 401 `PF-1001` (no key table is read yet — the
-API-key leg is the E1.4 integration point and its
-verification lands with P1-034, "Key auth extractor"). A
+API key verifies by sha256 hash lookup (P1-034, FR-A-06):
+the lookup is live-keys only (a revoked key reads exactly
+like an unknown one — 401 `PF-1001`), the owner must be
+`active` (ADR-0024 — suspend revokes sessions but not keys,
+and a key has no expiry), and then the scope check runs by
+route — jobs writes need `jobs:write`, jobs reads
+`jobs:read`, webhook endpoints `webhooks:manage` — a key
+without the route's scope, or on a route the table does not
+name, is 403 `PF-1002` (fail closed; keys never reach admin
+routes). A verified use re-stamps `last_used_at`, throttled
+to once per 300 s; a denied request is not a use. The key's
+`rate_limit_tier` rides the verified context — resolved
+here, enforced by P1-037 (no 429 from this ticket). A
 session cookie, alone, is 401 `PF-1001` — FINAL (P1-016):
 the `detag_refresh` cookie holds a refresh token, which is
 not an access credential. User status is NOT checked here —
@@ -662,7 +672,7 @@ test (`migration_purge_cascade_triggers.rs`).
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/v1/api-keys` | list (prefix + last4 only) |
-| POST | `/v1/api-keys` | create; full secret shown once; scope: `jobs:write`, `jobs:read`, `webhooks:manage`. Secret is `pf_live_` + 24 random bytes base64url (32 chars); only its sha256 is stored (`secret_hash`, unique). Response 201 carries the full secret once (id, name, prefix, secret, scopes, created_at); listings show prefix + last4 only. Name: display-name rules (1–100 chars, no control chars); scopes: ≥1, each known, no duplicates — else 422 `PF-2002`. Max 10 live keys per user (revoked do not count) — the 11th is 409 `PF-2011`; the count + insert run under the user's row lock so concurrent creates cannot overshoot. Creation is audited (`api_key.created`, no secret/hash). No plan gate and no verified-email requirement in P1-033 (see ASSUMPTION-015 in ISSUES.md). |
+| POST | `/v1/api-keys` | create; full secret shown once; scope: `jobs:write`, `jobs:read`, `webhooks:manage`. Secret is `pf_live_` + 24 random bytes base64url (32 chars); only its sha256 is stored (`secret_hash`, unique). Response 201 carries the full secret once (id, name, prefix, secret, scopes, created_at); listings show prefix + last4 only. Name: display-name rules (1–100 chars, no control chars); scopes: ≥1, each known, no duplicates — else 422 `PF-2002`. Max 10 live keys per user (revoked do not count) — the 11th is 409 `PF-2011`; the count + insert run under the user's row lock so concurrent creates cannot overshoot. Creation is audited (`api_key.created`, no secret/hash). No plan gate and no verified-email requirement in P1-033 (see ASSUMPTION-015 in ISSUES.md). Verification is P1-034: hash lookup (live keys only), owner must be `active` (ADR-0024), scope check by route (jobs writes `jobs:write`, jobs reads `jobs:read`, webhook endpoints `webhooks:manage` — anything else 403 `PF-1002`); a verified use re-stamps `last_used_at`, throttled to once per 300 s. |
 | DELETE | `/v1/api-keys/{id}` | revoke |
 
 ### Uploads

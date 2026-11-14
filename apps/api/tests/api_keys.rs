@@ -12,9 +12,10 @@
 //! this loop has no Argon2id in it — the token is minted once
 //! up front — so the HTTP version does not flake).
 //!
-//! Key verification itself is P1-034's ticket: these tests
-//! assert the stored shape the extractor will read, not that
-//! a key authenticates yet.
+//! Key verification is P1-034's ticket (hash lookup, scope
+//! check, throttled `last_used_at` — proven in
+//! tests/extractor.rs): these tests assert the stored shape
+//! the extractor reads, not that a key authenticates.
 
 mod common;
 

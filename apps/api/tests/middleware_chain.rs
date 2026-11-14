@@ -158,16 +158,19 @@ async fn real_requests_carry_cors_secure_headers_and_request_id() {
 
 #[tokio::test]
 async fn stub_errors_carry_the_same_headers_as_problem_json() {
+    // The probe route is a PLAIN stub (`GET /v1/plans`) —
+    // since P1-034 the jobs stub takes AuthContext, so an
+    // unauthenticated probe there is 401, not the stub's 501.
     let router = router_with_origin(ORIGIN);
     let res = router
         .oneshot(request(
             Method::GET,
-            "/v1/jobs",
+            "/v1/plans",
             Some(ORIGIN),
             Body::empty(),
         ))
         .await
-        .expect("oneshot /v1/jobs");
+        .expect("oneshot /v1/plans");
     assert_eq!(res.status(), StatusCode::NOT_IMPLEMENTED);
     assert_eq!(
         res.headers()
@@ -355,7 +358,11 @@ async fn wrong_origin_gets_no_acao() {
 /// P0-104: the caps are per route class, not one global cap.
 /// A 65 KiB body is over the auth class (64 KiB) but far under
 /// the jobs class (1 MiB): the same bytes are 413 on auth and
-/// admitted (stub 501) on jobs.
+/// admitted (past the limit) on jobs. Since P1-034 the jobs
+/// stub takes AuthContext, so the admitted body reaches the
+/// extractor and answers 401 (no credential) — NOT 413: the
+/// cap did not trip. The jobs cap itself is pinned by
+/// `oversize_body_rejected_on_jobs_too` (> 1 MiB → 413).
 #[tokio::test]
 async fn body_caps_differ_per_route_class() {
     let body = vec![b'x'; 65 * 1024];
@@ -391,9 +398,11 @@ async fn body_caps_differ_per_route_class() {
         .expect("oneshot same body on jobs");
     assert_eq!(
         res.status(),
-        StatusCode::NOT_IMPLEMENTED,
-        "65 KiB is under the jobs class cap (1 MiB)"
+        StatusCode::UNAUTHORIZED,
+        "65 KiB is under the jobs class cap (1 MiB) — it passes the limit and reaches the extractor"
     );
+    let json = json_body(res).await;
+    assert_eq!(json["code"], "PF-1001", "{json}");
 }
 
 /// P0-104: the billing class is the webhook cap (256 KiB) — a

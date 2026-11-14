@@ -205,6 +205,13 @@
 - Evidence it is not a P1-033 regression: P1-033 touches no boot/healthz code (route nesting + api_keys modules + openapi/docs only); `just verify` was green at P1-031 (707 passed) with this same test on the same VM; readyz.rs untouched since P0-066.
 - Status: open — first occurrence; per the flaky policy (two failures without a product change = quarantine) this is one strike. Re-running `just verify` is the workaround; a fix (longer healthz deadline, serialising the spawns, or a hardening-ticket change to the test) belongs to a hardening ticket, not P1-033.
 
+### FLAKY-005 [flaky] `worker_starts_and_exits_zero_on_sigterm` failed once — worker did not exit within 10 s of SIGTERM (P1-034)
+- Date: 2026-11-14 · Ticket: P1-034
+- Symptom: `apps/worker/tests/shutdown.rs` — `worker_starts_and_exits_zero_on_sigterm` failed in `just verify` attempt 5 (the ONLY failure: 725 passed, 1 failed) with `worker did not exit within 10 s of SIGTERM` at `shutdown.rs:75`. The worker had logged `models verified` + `started (queues: ...)` and was still running when SIGTERM was sent.
+- Cause (suspected): load/timing only. P1-034 touches no worker code (api + core api_keys only, no worker files in the tree); the test passes 3/3 in isolation immediately after (0.37 s / 0.26 s / 0.20 s — the worker exits in well under a second unloaded). The failure came at the very end of a ~32 min full-verify run, when the worker's drain path (mail-drain loop + heartbeat + monitor join) ran under a loaded 1.5-CPU VM — same family as FLAKY-001/FLAKY-004 (deadline too tight for a loaded box, not a product regression).
+- Evidence it is not a P1-034 regression: P1-034's diff contains no worker file; the test passed in isolation 3/3 with no code change; no stray worker processes were left behind.
+- Status: open — first occurrence; per the flaky policy (two failures without a product change = quarantine) this is one strike. Re-running `just verify` is the workaround; a fix (longer exit deadline, or a hardening-ticket change to the test) belongs to a hardening ticket, not P1-034.
+
 ### FLAKY-003 [flaky] `readyz_degraded_when_storage_down` passed with storage "ok" once (P0-093)
 - Date: 2026-11-12 · Ticket: P0-093
 - Symptom: `apps/api/tests/readyz.rs` — the test points the api at a "closed" S3 port from `free_port()` and expects 503, but got 200 with `"storage":{"ok":true,"latency_ms":57}`. Passed 5/5 in isolation immediately after, with no code change.

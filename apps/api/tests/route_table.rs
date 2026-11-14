@@ -36,7 +36,9 @@
 //!    /v1/auth/logout-all` + P1-019 `GET /v1/me/sessions` +
 //!    `DELETE /v1/me/sessions/{id}` answer 401 PF-1001 (no
 //!    credential — the Bearer extractor rejects before the
-//!    handler runs).
+//!    handler runs). P1-034's jobs nest (9 routes) + the
+//!    webhook-endpoints nest (4 routes) use the authenticated
+//!    stub, so they answer 401 PF-1001 the same way.
 //!
 //! The probes send a fixed `x-request-id` and assert the 501
 //! problem body echoes it — that proves the whole chain at
@@ -216,11 +218,13 @@ async fn every_table_entry_resolves_to_the_stub() {
         // /v1/admin/users, P1-010 admin impersonate, and
         // P1-017 POST /v1/auth/logout-all, and P1-019 GET
         // /v1/me/sessions + DELETE /v1/me/sessions/{id}, and
-        // P1-033 POST /v1/api-keys: real
-        // handlers behind an auth extractor — the probe sends no
-        // credential, so the extractor rejects with 401 PF-1001
-        // (not 501) and echoes the probe id (the route exists;
-        // each handler's own test covers its success paths).
+        // P1-033 POST /v1/api-keys, and P1-034 the jobs nest +
+        // the webhook-endpoints nest (the authenticated stub):
+        // real handlers behind an auth extractor — the probe
+        // sends no credential, so the extractor rejects with
+        // 401 PF-1001 (not 501) and echoes the probe id (the
+        // route exists; each handler's own test covers its
+        // success paths).
         if ((*method == "GET" || *method == "PATCH" || *method == "DELETE") && *path == "/v1/me")
             || (*method == "POST"
                 && (*path == "/v1/admin/users/{id}/suspend"
@@ -231,6 +235,10 @@ async fn every_table_entry_resolves_to_the_stub() {
             || (*method == "GET" && *path == "/v1/admin/users")
             || (*method == "GET" && *path == "/v1/me/sessions")
             || (*method == "DELETE" && *path == "/v1/me/sessions/{id}")
+            || *path == "/v1/jobs"
+            || path.starts_with("/v1/jobs/")
+            || *path == "/v1/webhook-endpoints"
+            || path.starts_with("/v1/webhook-endpoints/")
         {
             let req = Request::builder()
                 .method(Method::from_bytes(method.as_bytes()).expect("method parses"))

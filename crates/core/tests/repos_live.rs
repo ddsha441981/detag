@@ -14,7 +14,7 @@
 //! The `pf` role needs CREATEDB (granted in the VM dev setup; CI's
 //! postgres service user has it).
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use detag_core::db::{connect, DbPool, PoolConfig};
 use detag_core::migrate::migrate_up;
 use detag_core::repos::error::RepoError;
@@ -66,6 +66,7 @@ fn drop_db_sql(db: &str) -> &'static str {
         "detag_p128_outbox_race" => "DROP DATABASE IF EXISTS detag_p128_outbox_race",
         "detag_p131_outbox_rate_count" => "DROP DATABASE IF EXISTS detag_p131_outbox_rate_count",
         "detag_p133_api_keys" => "DROP DATABASE IF EXISTS detag_p133_api_keys",
+        "detag_p134_api_keys_lookup" => "DROP DATABASE IF EXISTS detag_p134_api_keys_lookup",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -88,6 +89,7 @@ fn create_db_sql(db: &str) -> &'static str {
         "detag_p128_outbox_race" => "CREATE DATABASE detag_p128_outbox_race",
         "detag_p131_outbox_rate_count" => "CREATE DATABASE detag_p131_outbox_rate_count",
         "detag_p133_api_keys" => "CREATE DATABASE detag_p133_api_keys",
+        "detag_p134_api_keys_lookup" => "CREATE DATABASE detag_p134_api_keys_lookup",
         _ => panic!("unknown P0-041 test db {db}"),
     }
 }
@@ -481,6 +483,102 @@ async fn api_keys_create_counts_only_live_keys() {
         1,
         "failed create counts nothing"
     );
+
+    teardown(pool, db).await;
+}
+
+#[tokio::test]
+async fn api_keys_lookup_by_hash_is_live_only_and_touch_stamps() {
+    // P1-034: `by_secret_hash` finds a live key by its hash
+    // and nothing else — an unknown hash finds nothing, and a
+    // REVOKED key does not verify (the extractor's 401 must
+    // not distinguish unknown from revoked). `touch_last_used_at`
+    // stamps the row the extractor reads back.
+    let db = "detag_p134_api_keys_lookup";
+    let pool = setup(db).await;
+    let user = users::create(&pool, "keys-lookup@example.com", "h")
+        .await
+        .expect("seed user");
+
+    let key = api_keys::create(
+        &pool,
+        &NewApiKey {
+            user_id: user.id,
+            name: "CI deploy".to_string(),
+            prefix: "pf_live_aB3x".to_string(),
+            secret_hash: "d".repeat(64),
+            scopes: vec!["jobs:read".to_string()],
+        },
+    )
+    .await
+    .expect("create key");
+    assert!(key.last_used_at.is_none(), "fresh key was never used");
+
+    let found = api_keys::by_secret_hash(&pool, &"d".repeat(64))
+        .await
+        .expect("lookup live key");
+    assert_eq!(found.as_ref().map(|k| k.id), Some(key.id));
+    assert!(
+        api_keys::by_secret_hash(&pool, &"e".repeat(64))
+            .await
+            .expect("lookup unknown hash")
+            .is_none(),
+        "an unknown hash finds nothing"
+    );
+
+    // Revoking the key (P1-036 owns the revoke path; the row
+    // is flipped directly here) takes it out of the lookup.
+    sqlx::query("UPDATE api_keys SET revoked_at = now() WHERE id = $1")
+        .bind(key.id)
+        .execute(&pool)
+        .await
+        .expect("revoke key");
+    assert!(
+        api_keys::by_secret_hash(&pool, &"d".repeat(64))
+            .await
+            .expect("lookup revoked key")
+            .is_none(),
+        "a revoked key must not verify"
+    );
+
+    // The touch stamps `last_used_at` with the given instant
+    // (read back through the same lookup the extractor uses).
+    // Postgres `timestamptz` keeps microseconds, so the stamp
+    // is built at microsecond precision — a nanosecond stamp
+    // would read back truncated and the equality below would
+    // fail on precision, not on behaviour.
+    let stamp = DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
+        .expect("microsecond stamp round-trips");
+    api_keys::touch_last_used_at(&pool, key.id, stamp)
+        .await
+        .expect("touch");
+    let reread = api_keys::by_secret_hash(&pool, &"d".repeat(64))
+        .await
+        .expect("reread revoked key");
+    assert!(
+        reread.is_none(),
+        "the touch must not resurrect a revoked key in the lookup"
+    );
+    let live = api_keys::create(
+        &pool,
+        &NewApiKey {
+            user_id: user.id,
+            name: "local".to_string(),
+            prefix: "pf_live_cD4y".to_string(),
+            secret_hash: "f".repeat(64),
+            scopes: vec!["jobs:read".to_string()],
+        },
+    )
+    .await
+    .expect("create second key");
+    api_keys::touch_last_used_at(&pool, live.id, stamp)
+        .await
+        .expect("touch second key");
+    let reread_live = api_keys::by_secret_hash(&pool, &"f".repeat(64))
+        .await
+        .expect("reread live key")
+        .expect("live key still looks up");
+    assert_eq!(reread_live.last_used_at, Some(stamp));
 
     teardown(pool, db).await;
 }

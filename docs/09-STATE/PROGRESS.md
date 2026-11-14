@@ -5,7 +5,7 @@
 ## Where we are
 
 - **Current phase:** 1 — Identity & Billing
-- **Current ticket:** P1-034 — Key auth extractor
+- **Current ticket:** P1-035 — Key rotation
 - **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007). P0-083 size gate likewise deferred to CI (DOCKER-001, no docker daemon here); Dockerfile.api + gate implemented, AC unticked until CI runs green. P0-088 AC ("smoke enforces health") and P0-090 AC ("smoke green in CI") likewise unticked until the smoke job goes green in CI — `just smoke` + the CI job are implemented, but the workflow files can't reach GitHub yet (CI-WORKFLOWS-001). Remote CI runs the STALE workflow — local checks added since ~09:20 IST never ran remotely.
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
@@ -14,7 +14,7 @@
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
 | 0 | Foundation & Platform Baseline | 105 / 108 | P0-034/046/083 implemented but unverified (DOCKER-001) — live ACs + exit gates for `just dev`/`just smoke`/CI deferred to docker-capable CI |
-| 1 | Identity & Billing | 33 / 111 | — |
+| 1 | Identity & Billing | 34 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
 | 4 | Console & Admin | 0 / 102 | — |
@@ -25,11 +25,11 @@
 
 | Signal | Value |
 | --- | --- |
-| `just verify` | green (fmt + clippy -D warnings + tests; smoke excluded per ADR-0017 — `just smoke` exists now, still excluded: no docker daemon here) — 718 passed, 0 failed (P1-033; 707 + 11 new: 4 core unit + 1 repos_live + 6 api_keys; full run ~31 min, attempt 3 — attempt 1 failed only on readyz 4/4, FLAKY-004 parallel-startup latency; attempt 2 SIGTERMed by the 15th VM reset at ~19.5 min, 20 binaries green, no failures) — `just openapi-check` + `just route-table-check` + `just config-table-check` + `just env-check` + schema-docs-check + `just sqlx-prepare-check` + `just snapshots-check` green; `just compose-prod-check` red only because the 12th VM reset wiped the `docker` binary (DOCKER-001) — the CI-FAIL-009 fix itself verified statically (no `minio:` in base/prod, `garage:` present, both files parse; live render waits on CI) |
+| `just verify` | green (fmt + clippy -D warnings + tests; smoke excluded per ADR-0017 — `just smoke` exists now, still excluded: no docker daemon here) — 728 passed, 0 failed (P1-034; 718 + 10 new: 2 core unit + 8 extractor; full run ~33 min, attempt 6 — attempt 5 failed only on FLAKY-005 worker-shutdown 10 s exit deadline, first occurrence, 3/3 isolated passes, no code change) — `just openapi-check` + `just route-table-check` + `just config-table-check` + `just env-check` + `just sqlx-prepare-check` + `just snapshots-check` green; `just compose-prod-check` red only because the `docker` binary is gone (DOCKER-001) — P1-034 touches no compose files. CI #18 (run #22, on 8a65cd4) is the first FULLY GREEN CI run ever — verify ✓, smoke ✓, image-size ✓, cargo-deny ✓, gitleaks ✓; CI-FAIL-019 (linter rejects FLAKY ids) fixed + pushed by the parent (a5b8425, merged 60ecc0f); CI #19 / Commits #23 will confirm. |
 | Coverage (core/engine/api) | 96.8% / 99.1% / 92.6% (worker 83.8%) — all above NFR-50 floors (85/80/75/70); report-only until Phase 2 (`just coverage-gate` exists, OFF) — re-measured 2026-11-13 during P1-001 (`just coverage` green) |
 | Golden suite | — |
 | Bench snapshot (image 4K p95 / video factor) | full-job 4K mean 545 ms (scaffold chain — see Bench history; p95 not tracked yet, criterion mean/median in `crates/engine/benches/baselines/`) / video factor n/a (input-prep only; real factor needs the Phase 2 video pipeline) |
-| Open issues by severity | S1: 1 (CI-FAIL-012 — worker image 200.8 MB vs the 200 MB gate, open, needs `docker history` inspection on a docker-capable runner, do NOT just bump the limit) · S2: 1 (DISK-QUOTA-001 — `target/` regrows toward the quota; `cargo clean` is the mitigation) · S3: 1 (TESTKIT-MINIO-001) · S4: 4 (FLAKY-001 shutdown drain, FLAKY-002 pubsub slow-consumer, FLAKY-003 readyz storage-down port race, FLAKY-004 readyz parallel-startup latency — new in P1-033) |
+| Open issues by severity | S1: 0 open (CI-FAIL-017/018 fixed, waiting on CI; CI-FAIL-019 fixed + pushed by the parent) · S2: 1 (DISK-QUOTA-001 — `target/` regrows toward the quota; `cargo clean` is the mitigation) · S3: 1 (TESTKIT-MINIO-001) · S4: 5 (FLAKY-001 shutdown drain — fixed, FLAKY-002 pubsub slow-consumer — fixed both legs, FLAKY-003 readyz storage-down port race, FLAKY-004 readyz parallel-startup latency, FLAKY-005 worker-shutdown 10 s exit deadline — new in P1-034, one strike) |
 | owner-input-needed items | 0 |
 
 ## Notes
@@ -38,6 +38,7 @@
 - 10th VM reset (~19:35 IST 2026-11-13): services restored per ASSUMPTION-010 (see its update in ISSUES.md — incl. the `.env` password-extraction trap); `just`/`cargo` need `~/.local/bin` + `~/.cargo/bin` on PATH in every exec call.
 - 11th VM reset (~21:31 IST 2026-11-13): the 10th coordinator was runtime-interrupted mid-P1-025 with the whole ticket uncommitted; the 11th coordinator resumed, verified the tree, restored services the same way (binaries + data dir survived, `pf` role/db recreated, all migrations re-applied incl. the new `password_reset_token_purpose` one), and finished + committed P1-025 on main. Branch rule from P1-026: work on branch `phase-1`, merge each ticket into main locally (no rebase, no push).
 - P1-026 done 2026-11-13 (11th coordinator): password policy + pwned check, `just verify` green 654 passed; verify was blocked mid-ticket by DISK-QUOTA-001 (linker SIGBUS = disk quota; `cargo clean` freed 361.7 GiB). COMMITS-LINT-001 fixed right after (linter accepts CI-FAIL-xxx/SCHEMA-DOC-xxx ids; CI fixes must use scope `ops`, not `ci`). Main has since moved via the parent's CI fixes (b047d40 config table, dfe50a4 merge incl. CI-FAIL-007 ffmpeg + CI-FAIL-008 Garage secret); the P1-026 merge (a485ace) resolved one conflict (DECISIONS.md ADR-0020 vs ADR-0021 — both kept, mine renumbered).
+- P1-034 done 2026-11-14 (23rd coordinator, resuming the 19th's uncommitted tree — verified, finished, committed as one commit `a32cc0e`): key auth extractor — sha256 hash lookup, live keys only (`by_secret_hash`, revoked reads exactly like unknown — 401 `PF-1001`); owner must be `active` (ADR-0024); scope check by route from `MatchedPath` (jobs writes `jobs:write`, jobs reads `jobs:read`, webhook endpoints `webhooks:manage`, anything else 403 `PF-1002`, fail closed); verified use re-stamps `last_used_at`, throttled to once per 300 s; key's `rate_limit_tier` rides the context (resolved, enforced by P1-037). Jobs (9) + webhook-endpoints (4) stubs take `AuthContext` via `stub_authed`; `AuthContext::require_scope` is the handler-level check. `just verify` green 728 passed (718 + 10 new), attempt 6, ~33 min; attempt 5 failed only on FLAKY-005 (worker shutdown, first occurrence — recorded in ISSUES.md, 3/3 isolated passes, NOT a P1-034 regression). Drift checks green (openapi/route-table/config-table/env/sqlx-prepare/snapshots). Merged to main with the FLAKY-002 second-leg fix (`b9d781c`, subject amended from `0a600f5` to the linter-compliant form — FLAKY-002 in ticket position + NFR-52 trace) as its own commit.
 - P1-033 done 2026-11-14 (18th coordinator, resuming the 17th's uncommitted tree — verified, finished, committed as one commit `05cab58`): key generation — `pf_live_` + 24B base64url secret shown once, sha256 stored (unique index, migration `20261114030933`), 10-live-keys cap (11th is 409 `PF-2011`, row-locked count + insert, 12-concurrent-creates → exactly 10×201 + 2×409), `api_key.created` audit with no secret/hash; ASSUMPTION-015 (no plan gate, no verified-email requirement). `just verify` green 718 passed (707 + 11 new), attempt 3, ~31 min. Attempt 1 failed only on readyz 4/4 → FLAKY-004 (parallel-startup latency on this 1.5-CPU VM; passes with `--test-threads=1`, passed in attempt 3; NOT a P1-033 regression); attempt 2 SIGTERMed by the 15th VM reset (~10:47 IST, 20 binaries green, no failures) — services restored per ASSUMPTION-010 (the replay DID restore the binaries this time). Docs: api-spec, data-model, test-strategy, openapi + route-table regenerated.
 - P1-032 done 2026-11-14 (17th coordinator, `17a0072`): email ops docs — new `docs/06-DELIVERY/05-email-ops.md` (transactional-only stance, 8 templates + caps, sender config, SPF/DKIM/DMARC placeholders with owner decision #4 pending, test addresses, outbox/audit SQL, troubleshooting); docs-only, config-table-check + env-check green.
 - P1-031 done 2026-11-14 (17th coordinator, resuming the 16th's uncommitted tree — verified, finished, committed as one commit `db92b74`): per-recipient hourly send caps in the drain (verify 3 / reset 3 / marketing 0, ADR-0023), `just verify` green 707 passed (691 + 16 new), attempt 1, ~35 min. While it ran, CI #12 was diagnosed (verify failed at compose-env-check — CI-FAIL-015, fixed dc18c58, merged to main as 56a9108; CI-FAIL-014 CLOSED) and CI #13 (on 56a9108) failed at compose-secrets-check — the 015 fix backfired (`minioadmin-secret-key` is not an allowed dev placeholder, so the secrets check flags it while the env check demands it match .env.example) → CI-FAIL-016, fixed this run (`971c394`: `minioadmin` on both sides + regenerated config table; all four checks green locally), merged to main with P1-031. CI #13 also has a NEW cargo-deny failure and a Commits #17 failure — both need the user's logs zip to diagnose (requested in main chat ~08:15 IST).
@@ -48,10 +49,10 @@
 
 ## Next-up queue (top 5)
 
-1. P1-034 — Key auth extractor
-2. P1-035 — Key rotation
-3. P1-036 — Key revoke
-4. CI #13 logs zip (cargo-deny NEW failure + Commits #17 failure — undiagnosable without the logs)
+1. P1-035 — Key rotation
+2. P1-036 — Key revoke
+3. P1-037 — Per-key rate limits
+4. CI #19 / Commits #23 results (CI-FAIL-019 linter fix confirmation — parent's run)
 
 ## Bench history (append-only)
 
