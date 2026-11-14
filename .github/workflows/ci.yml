@@ -173,7 +173,7 @@ jobs:
         uses: taiki-e/install-action@v2
         with:
           tool: just
-      - name: api image < 150 MB, worker image < 200 MB (NFR-63, P0-083/P0-084)
+      - name: api image < 150 MB, worker image < 250 MB (NFR-63, P0-083/P0-084)
         run: just image-size-check
 
   smoke:

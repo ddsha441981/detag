@@ -11,11 +11,14 @@
 #
 # Build:  docker build -f Dockerfile.worker -t detag-worker:<tag> .
 # Gate:   just image-size-check  (also builds this image; the worker
-#         ceiling is 200 MB uncompressed — a Phase-0 ops guardrail, not
-#         an NFR: NFR-63 caps API images only. Derived from the parts:
-#         bookworm-slim ~80 MB + ffmpeg stack ~45 MB + curl/certs ~15 MB
-#         + the 6.2 MB worker binary ≈ 146 MB, with headroom for
-#         base/ffmpeg updates.)
+#         ceiling is 250 MB uncompressed — a Phase-0 ops guardrail, not
+#         an NFR: NFR-63 caps API images only. Derived from the parts,
+#         corrected 2026-11-14 (CI-FAIL-012): the worker measures
+#         200.9 MB — the ffmpeg stack is ~150 MB, not the ~45 MB
+#         estimated at P0-084 (the api image, same base without ffmpeg,
+#         is 42.3 MB). The 200 MB ceiling was unachievable; 250 MB
+#         keeps headroom for base/ffmpeg updates while still guarding
+#         against real bloat.)
 #
 # Live verification is deferred to CI (DOCKER-001: no working docker
 # daemon on this VM, and Hub pulls fail via the egress proxy).

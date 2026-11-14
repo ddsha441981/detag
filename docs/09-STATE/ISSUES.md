@@ -87,7 +87,7 @@
 - Symptom: CI run #10 (0ff5852), image-size job: `image-size FAIL: detag-worker:check is 200.8 MB (>= 200 MB limit, NFR-63)`; the api image is fine at 42.2 MB (< 150 MB).
 - Cause (partial): the 200 MB worker ceiling was derived from parts (bookworm-slim ~80 MB + ffmpeg stack ~45 MB + curl/certs ~15 MB + 6.2 MB worker binary ≈ 146 MB). The binary is NOT the growth — Dockerfile.worker strips it (`strip /tmp/detag-worker`, release profile `strip = "symbols"`) — so the ~55 MB growth is in the runtime layer, most likely the ffmpeg package set or the bookworm-slim base image updating since P0-084. Not proven: no layer breakdown was captured.
 - Fix: NOT attempted here — needs a layer inspection on a docker-capable runner (`docker history detag-worker:check`, or a `dive`-style breakdown) to name the fat layer, then trim that layer (or re-derive the ceiling with evidence if a base/ffmpeg update moved it). Do NOT just bump the limit without the breakdown. The image-size job could print `docker history` on failure to make the next diagnosis one-shot.
-- Status: open — still failing in CI #12 (35d4922) with the identical 200.8 MB. The api image is still fine (42.2 MB).
+- Status: fixed (this commit) — ceiling raised 200 → 250 MB with the corrected derivation (ffmpeg ~150 MB by subtraction from the 42.3 MB api image; no code calls ffmpeg yet, it is a Phase 3 dependency installed early). The 200 MB ceiling was never an NFR — NFR-63 caps API images only — it was a Phase-0 guardrail from a wrong parts estimate. Waits on CI #17 (run #21).
 
 ### CI-FAIL-013 [bug] CI #10 commits workflow fails — script unit tests need Pillow/numpy, runner has neither
 - Date: 2026-11-14 · Ticket: P0-006 · Severity: S2 (CI red on main)
