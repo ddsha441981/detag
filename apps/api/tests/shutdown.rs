@@ -1,12 +1,33 @@
 //! P0-023: the spawned api server drains an in-flight request on
 //! SIGTERM and exits 0.
 //!
-//! The test holds a request open with a raw socket (partial headers,
-//! no final blank line), sends SIGTERM, completes the request, and
+//! The test holds a request open with a raw socket — a COMPLETE head
+//! and a PARTIAL body — sends SIGTERM, completes the body, and
 //! asserts the server still answers it — a killed server would drop
 //! it, a graceful one drains it. SIGINT shares the same code path
 //! (`shutdown_signal` selects on both), so only SIGTERM is exercised
 //! here: it is the signal orchestrators send.
+//!
+//! Why a split BODY, not split headers (FLAKY-001, fixed 2026-11-14):
+//! the old version sent partial headers (no final blank line), then
+//! SIGTERM, then the blank line — and failed intermittently with
+//! `Connection reset by peer`. Root cause, confirmed in the hyper
+//! 1.12 source: graceful shutdown is `disable_keep_alive()`, which
+//! CLOSES the connection when `is_idle()` — and a connection whose
+//! request head is not yet fully parsed counts as idle (the
+//! keep-alive state only goes busy once a head is parsed). So a
+//! partial-headers request is dropped, not drained, whenever the
+//! drain starts before the final blank line arrives. With a complete
+//! head + partial body the request IS in flight (the handler awaits
+//! the body), so hyper waits for it — and the handler cannot answer
+//! before the signal, because it awaits the full body. Deterministic.
+//!
+//! The body is `{not json` (malformed JSON) to POST /v1/auth/register:
+//! the Json extractor rejects it with 422 PF-2002 before any DB
+//! write, so the test has no side effects. A 500 ms settle delay
+//! after the head lets the server parse it before the signal;
+//! without it SIGTERM could land before the parse and hit the same
+//! idle-close path.
 //!
 //! P0-090 regression: `tokio::time::timeout(SHUTDOWN_TIMEOUT, ...)`
 //! used to wrap the whole server run, so the api force-exited 30 s
@@ -93,29 +114,42 @@ async fn sigterm_drains_in_flight_request_and_exits_zero() {
         .expect("spawn detag-api");
     wait_for_healthz(port).await;
 
-    // Hold a request open: headers without the final blank line, so the
-    // server is waiting on this connection — the request is in flight.
-    // `Connection: close` so the server closes after answering, which
-    // lets the graceful shutdown finish once we are done.
+    // Hold a request open with a COMPLETE head and a PARTIAL body:
+    // POST /v1/auth/register, Content-Length 9, body `{not json`
+    // (malformed JSON -> 422 PF-2002, no DB writes). The head is
+    // parsed at once, so hyper dispatches the request and the Json
+    // extractor awaits the rest of the body — the request is
+    // genuinely in flight. `Connection: close` so the server closes
+    // after answering, which lets the graceful shutdown finish once
+    // we are done.
     let mut stream = TcpStream::connect(("127.0.0.1", port))
         .await
         .expect("connect to api");
     stream
-        .write_all(b"GET /healthz HTTP/1.1\r\nHost: x\r\nConnection: close\r\n")
+        .write_all(b"POST /v1/auth/register HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 9\r\nConnection: close\r\n\r\n{not ")
         .await
-        .expect("send partial request");
+        .expect("send request head + partial body");
+
+    // Let the server parse the head and start awaiting the body
+    // (~1 ms of work; 500 ms is a generous settle margin). Without
+    // this, SIGTERM could land before the head is parsed — hyper
+    // treats a connection with no parsed head as idle and closes it
+    // on drain (FLAKY-001).
+    sleep(Duration::from_millis(500)).await;
 
     // SIGTERM while the request is in flight.
     let pid = child.id();
     let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
     assert_eq!(rc, 0, "SIGTERM to pid {pid} must succeed");
 
-    // Complete the request AFTER the signal: a graceful server still
-    // answers it (no dropped in-flight request).
+    // Complete the body AFTER the signal: a graceful server still
+    // answers it (no dropped in-flight request). The handler cannot
+    // have answered before the signal — it awaits the full body —
+    // so the response is necessarily produced during the drain.
     stream
-        .write_all(b"\r\n")
+        .write_all(b"json")
         .await
-        .expect("complete the in-flight request");
+        .expect("complete the in-flight request body");
     let mut response = Vec::new();
     timeout(Duration::from_secs(5), stream.read_to_end(&mut response))
         .await
@@ -123,12 +157,12 @@ async fn sigterm_drains_in_flight_request_and_exits_zero() {
         .expect("read response");
     let response = String::from_utf8_lossy(&response);
     assert!(
-        response.starts_with("HTTP/1.1 200"),
-        "in-flight request must get 200, got: {response}"
+        response.starts_with("HTTP/1.1 422"),
+        "in-flight request must get 422, got: {response}"
     );
     assert!(
-        response.ends_with("ok"),
-        "in-flight request body must be 'ok', got: {response}"
+        response.contains("PF-2002"),
+        "in-flight request body must carry PF-2002, got: {response}"
     );
     drop(stream);
 
