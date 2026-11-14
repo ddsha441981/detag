@@ -63,16 +63,21 @@ async fn wait_for_log_line(rx: &Receiver<String>, needle: &str, child: &mut Chil
     }
 }
 
-/// Wait for the child to exit (panics after 10 s, killing it first).
+/// Wait for the child to exit (panics after 30 s, killing it first).
+///
+/// FLAKY-005: the 10 s deadline was too tight at the end of a loaded
+/// full-verify run (CI #20: 727/728 passed, this test alone failed;
+/// the worker exits in 0.2-0.37 s unloaded). 30 s still catches a
+/// worker that never exits, but tolerates a loaded box.
 async fn wait_for_exit(child: &mut Child) -> std::process::ExitStatus {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     loop {
         match child.try_wait() {
             Ok(Some(status)) => return status,
             Ok(None) => {
                 if std::time::Instant::now() > deadline {
                     let _ = child.kill();
-                    panic!("worker did not exit within 10 s of SIGTERM");
+                    panic!("worker did not exit within 30 s of SIGTERM");
                 }
             }
             Err(err) => panic!("try_wait: {err}"),
