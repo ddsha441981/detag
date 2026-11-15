@@ -395,6 +395,35 @@ parses through the same `Entitlements::from_value`), so
 the profile, the middleware (P1-051), and the snapshot
 can never disagree about what a plan grants.
 
+## Quota counters (P1-050)
+
+Usage is counted twice, on purpose, and the two counts
+must agree — `crates/core/src/usage.rs` (FR-P-02 /
+FR-P-07) + `crates/core/tests/usage_live.rs` (4 live
+tests) + 3 in-crate unit tests. `UsageMeter::record`
+adds to the Redis day-hash (`pf:usage:{user}:{YYYY-MM-DD}`,
+fields `images` / `video_seconds`, 48 h TTL) with one
+atomic Lua script (HINCRBY both fields + EXPIRE), then
+upserts the durable `usage_counters` row
+(`repos::usage_counters::increment`, ON CONFLICT add).
+The day is always UTC, from the injected clock — the
+AC test freezes the clock at 23:59:59 UTC, records into
+the 15th, advances two seconds past midnight, and proves
+the 16th's counters start at zero while the 15th's are
+untouched, in Redis AND in the DB. Ten concurrent
+records land as exactly 10 in both stores (no lost
+update). A dead Redis fails the record closed (no DB row
+either — the Redis write is first, so a Redis failure
+never reaches the DB). `reconcile_day` repairs drift
+with the DB winning, compare-and-set (a concurrent
+record moves the hash and the CAS fails rather than
+wiping the record); the nightly schedule that runs it is
+P1-082's. The video-seconds estimator is the upload's
+known duration rounded up; an unknown duration reserves
+nothing (ASSUMPTION-016 — no bitrate data exists to
+invent an estimate from; the completion true-up in
+P1-079 charges the real seconds).
+
 ## Property testing (P0-096)
 
 Property tests live in `crates/core/tests/prop/` (cursor codec,

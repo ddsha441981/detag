@@ -37,3 +37,71 @@ pub async fn for_user_day(
     .await
     .map_err(RepoError::from_sqlx)
 }
+
+/// Add to a user's counters for a UTC day (P1-050, the
+/// write-through leg of metering): insert the row when the
+/// user has used nothing that day, else add to the existing
+/// row. One statement, so concurrent increments cannot lose
+/// a count (the row lock serializes the upserts). Both
+/// deltas must be >= 0 — the callers never decrement a
+/// counter (a correction goes through reconciliation, which
+/// overwrites, never through here).
+pub async fn increment(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+    day: NaiveDate,
+    images: i32,
+    video_seconds: i32,
+) -> Result<UsageCounter, RepoError> {
+    debug_assert!(images >= 0 && video_seconds >= 0);
+    sqlx::query_as!(
+        UsageCounter,
+        "INSERT INTO usage_counters (user_id, day, images_used, video_seconds_used)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id, day) DO UPDATE SET
+           images_used = usage_counters.images_used + EXCLUDED.images_used,
+           video_seconds_used = usage_counters.video_seconds_used + EXCLUDED.video_seconds_used,
+           updated_at = now()
+         RETURNING user_id, day, images_used, video_seconds_used, updated_at",
+        user_id,
+        day,
+        images,
+        video_seconds,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
+/// Overwrite a user's counters for a UTC day (P1-050,
+/// reconciliation): the DB row is the source of truth, so a
+/// correction sets the row to the reconciled values instead
+/// of adding to it. Inserts the row when none exists (a day
+/// the user used but whose row is missing is a zero row that
+/// drifted, not a missing day).
+pub async fn overwrite(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+    day: NaiveDate,
+    images: i32,
+    video_seconds: i32,
+) -> Result<UsageCounter, RepoError> {
+    debug_assert!(images >= 0 && video_seconds >= 0);
+    sqlx::query_as!(
+        UsageCounter,
+        "INSERT INTO usage_counters (user_id, day, images_used, video_seconds_used)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id, day) DO UPDATE SET
+           images_used = EXCLUDED.images_used,
+           video_seconds_used = EXCLUDED.video_seconds_used,
+           updated_at = now()
+         RETURNING user_id, day, images_used, video_seconds_used, updated_at",
+        user_id,
+        day,
+        images,
+        video_seconds,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}

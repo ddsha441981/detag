@@ -26,6 +26,7 @@ pub mod telemetry;
 pub mod tokens;
 pub mod tx;
 pub mod types;
+pub mod usage;
 pub mod user_agent;
 
 /// Crate version (workspace version).
