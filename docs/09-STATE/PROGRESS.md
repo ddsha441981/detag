@@ -5,7 +5,7 @@
 ## Where we are
 
 - **Current phase:** 1 — Identity & Billing
-- **Current ticket:** P1-047 — Authz docs
+- **Current ticket:** P1-048 — Role escalation tests
 - **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007). P0-083 size gate likewise deferred to CI (DOCKER-001, no docker daemon here); Dockerfile.api + gate implemented, AC unticked until CI runs green. P0-088 AC ("smoke enforces health") and P0-090 AC ("smoke green in CI") likewise unticked until the smoke job goes green in CI — `just smoke` + the CI job are implemented, but the workflow files can't reach GitHub yet (CI-WORKFLOWS-001). Remote CI runs the STALE workflow — local checks added since ~09:20 IST never ran remotely.
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
@@ -14,7 +14,7 @@
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
 | 0 | Foundation & Platform Baseline | 105 / 108 | P0-034/046/083 implemented but unverified (DOCKER-001) — live ACs + exit gates for `just dev`/`just smoke`/CI deferred to docker-capable CI |
-| 1 | Identity & Billing | 46 / 111 | — |
+| 1 | Identity & Billing | 47 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
 | 4 | Console & Admin | 0 / 102 | — |
@@ -25,7 +25,7 @@
 
 | Signal | Value |
 | --- | --- |
-| `just verify` | green (fmt + clippy -D warnings + tests; smoke excluded per ADR-0017 — `just smoke` exists now, still excluded: no docker daemon here) — 793 passed, 0 failed (P1-046; attempt 2, ~44 min, no flakes — attempt 1 failed only on privileged_audit's absolute-count assertion, fixed to baseline-delta) — `just openapi-check` + `just route-table-check` + `just config-table-check` + `just env-check` + `just sqlx-prepare-check` + `just snapshots-check` green; `just compose-prod-check` red only because the `docker` binary is gone (DOCKER-001) — P1-046 touches no compose files. The 24th VM reset hit mid-`cargo test --no-run` (~11:40 IST) — services restored per ASSUMPTION-010 (replay pid 766 ran ~20 min, the longest yet; `pf` role/db recreated, all 17 migrations re-applied); the verify itself was unaffected. CI #27 + Commits #27 (run #27, on aca304b) are BOTH GREEN — third consecutive fully-green run; CI #28 + Commits #28 (run #28, on 3348ce3) in progress. |
+| `just verify` | green (fmt + clippy -D warnings + tests; smoke excluded per ADR-0017 — `just smoke` exists now, still excluded: no docker daemon here) — 793 passed, 0 failed (P1-047; attempt 2, ~41 min, no flakes — attempt 1 killed by the 25th VM reset mid-admin_impersonate_audit, services restored per ASSUMPTION-010: apt reinstall ~12 min, `pf` role/db recreated, all 17 migrations re-applied) — `just openapi-check` + `just route-table-check` + `just config-table-check` + `just env-check` + `just sqlx-prepare-check` + `just snapshots-check` green; `just compose-prod-check` red only because the `docker` binary is gone (DOCKER-001) — P1-047 touches no compose files. The 25th VM reset hit mid-`just verify` attempt 1 (~13:47 IST) — restored per ASSUMPTION-010 (apt-get update 11.5 min on the cogentco mirror + install; `pf` role/db recreated, all 17 migrations re-applied); the verify itself was re-run from scratch. CI #27 + Commits #27 (run #27, on aca304b) are BOTH GREEN — third consecutive fully-green run; CI #28 + Commits #28 (run #28, on 3348ce3) in progress. |
 | Coverage (core/engine/api) | 96.8% / 99.1% / 92.6% (worker 83.8%) — all above NFR-50 floors (85/80/75/70); report-only until Phase 2 (`just coverage-gate` exists, OFF) — re-measured 2026-11-13 during P1-001 (`just coverage` green) |
 | Golden suite | — |
 | Bench snapshot (image 4K p95 / video factor) | full-job 4K mean 545 ms (scaffold chain — see Bench history; p95 not tracked yet, criterion mean/median in `crates/engine/benches/baselines/`) / video factor n/a (input-prep only; real factor needs the Phase 2 video pipeline) |
@@ -34,6 +34,7 @@
 
 ## Notes
 
+- P1-047 done 2026-11-15 (35th coordinator, adopting the 34th's uncommitted tree — verified, finished, committed as one commit `6ecf10e`, merged as `7dbae45`): Authz docs — new `docs/06-DELIVERY/07-admin-guide.md` (roles, the full 19-route rendered matrix with capability / admitted / live-or-stub / audit action cross-checked against `Capability::for_route` + `audit_action_for`, denial shape, audit trail — actions not attempts — and the change procedure: capability + route row + guard + tests + docs in the same commit, with the policy items that need an owner decision). Doc fixes: `authz.rs` module doc (stubs are enforced promises since P1-043, not unguarded), api-spec + test-strategy pointers to the guide, and the stale `authz_matrix.rs` module doc saying the same. Docs-only, no code. `just verify` green: 793 passed, 0 failed (same count as P1-046), attempt 2, ~41 min, no flakes; attempt 1 killed by the 25th VM reset mid-admin_impersonate_audit — services restored per ASSUMPTION-010 (apt reinstall ~12 min, `pf` role/db recreated, all 17 migrations re-applied). Drift checks green (openapi / route-table / config-table / env / sqlx-prepare / snapshots).
 - P1-046 done 2026-11-15 (34th coordinator, adopting the 33rd's uncommitted tree — verified, finished, committed as one commit): Privileged action audit middleware — new `apps/api/src/audit_middleware.rs` + `Capability::audit_action_for` / `audit_target_type_for` in `apps/api/src/authz.rs` (9 write actions) + new `apps/api/tests/privileged_audit.rs` (3 tests: live writes exactly one row each; middleware audits a write with no manual call; denied/stub writes + reads audit nothing). Wiring the 33rd left out: the module declaration, the middleware on the `/v1/admin` nest via `from_fn_with_state` (`admin::router` + `api_router` now take the state), and the `AuditHandled` marker on the three live handlers. Targeted green: privileged_audit 3/3 (twice), lib 57/57, admin_guard 3/3, authz_matrix 3/3, api_key_matrix 4/4, route_table 3/3. Full `just verify` green: 793 passed, 0 failed (786 + 7 new), attempt 2, ~44 min, no flakes; attempt 1 failed only on privileged_audit (absolute-count assertion counted a leftover row from the earlier standalone run — harness DB persists across runs; fixed to baseline-delta assertions); drift checks green. The 24th VM reset hit mid-`cargo test --no-run` (~11:40 IST) — restored per ASSUMPTION-010 (replay pid 766 ran ~20 min, the longest yet; `pf` role/db recreated, all 17 migrations re-applied).
 - P1-045 done 2026-11-15 (32nd coordinator implemented, 33rd coordinator adopted the running verify, finished + committed as one commit): IDOR sweep v1 — new `apps/api/tests/idor_sweep.rs` (3 tests): live keys + sessions proven 404 `PF-2010` cross-user with the resource untouched afterwards; 18 stub resource routes (jobs, uploads, webhook-endpoints, api-keys list) pinned at 501 `PF-5004` — no leak — with the 404 proof landing with each handler ticket. Targeted green: idor_sweep 3/3. Full `just verify` green: 786 passed, 0 failed (783 + 3 new), attempt 2, ~44 min, no flakes; drift checks green.
 - P1-044 done 2026-11-15 (32nd coordinator): Support read-only — new `apps/api/tests/support_readonly.rs` (4 tests): matrix assert (support admitted exactly on `.read` capabilities), support reads the two live views with real rows (users search, jobs list, no key material), support admitted on all 8 stub reads (501), all 9 writes 403 `PF-1002` with no state change (denied suspend/restore/impersonate leave the targets untouched, no audit rows). Targeted green: support_readonly 4/4. Full `just verify` green: 783 passed, 0 failed (779 + 4 new), attempt 1, ~46 min, no flakes; drift checks green.
@@ -61,9 +62,8 @@
 
 ## Next-up queue (top 5)
 
-1. P1-047 — Authz docs
-2. P1-048 — Role escalation tests
-3. CI #27 / Commits #27 results (both SUCCESS on aca304b — third consecutive fully-green run); CI #28 / Commits #28 (on 3348ce3) in progress
+1. P1-048 — Role escalation tests
+2. CI #27 / Commits #27 results (both SUCCESS on aca304b — third consecutive fully-green run); CI #28 / Commits #28 (on 3348ce3) in progress
 
 ## Bench history (append-only)
 
