@@ -5,7 +5,7 @@
 ## Where we are
 
 - **Current phase:** 1 — Identity & Billing
-- **Current ticket:** P1-041 — API-key docs page
+- **Current ticket:** P1-042 — Roles + permission matrix
 - **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007). P0-083 size gate likewise deferred to CI (DOCKER-001, no docker daemon here); Dockerfile.api + gate implemented, AC unticked until CI runs green. P0-088 AC ("smoke enforces health") and P0-090 AC ("smoke green in CI") likewise unticked until the smoke job goes green in CI — `just smoke` + the CI job are implemented, but the workflow files can't reach GitHub yet (CI-WORKFLOWS-001). Remote CI runs the STALE workflow — local checks added since ~09:20 IST never ran remotely.
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
@@ -14,7 +14,7 @@
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
 | 0 | Foundation & Platform Baseline | 105 / 108 | P0-034/046/083 implemented but unverified (DOCKER-001) — live ACs + exit gates for `just dev`/`just smoke`/CI deferred to docker-capable CI |
-| 1 | Identity & Billing | 40 / 111 | — |
+| 1 | Identity & Billing | 41 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
 | 4 | Console & Admin | 0 / 102 | — |
@@ -25,7 +25,7 @@
 
 | Signal | Value |
 | --- | --- |
-| `just verify` | green (fmt + clippy -D warnings + tests; smoke excluded per ADR-0017 — `just smoke` exists now, still excluded: no docker daemon here) — 769 passed, 0 failed (P1-040; 765 + 4 new: api_key_matrix; attempt 1, ~35 min, no flakes; readyz 4/4 in parallel again) — `just openapi-check` + `just route-table-check` + `just config-table-check` + `just env-check` + `just sqlx-prepare-check` + `just snapshots-check` green; `just compose-prod-check` red only because the `docker` binary is gone (DOCKER-001) — P1-040 touches no compose files. CI #27 + Commits #27 (run #27, on aca304b) are BOTH GREEN — third consecutive fully-green run; CI #28 + Commits #28 (run #28, on 3348ce3) in progress. |
+| `just verify` | green (fmt + clippy -D warnings + tests; smoke excluded per ADR-0017 — `just smoke` exists now, still excluded: no docker daemon here) — 769 passed, 0 failed (P1-041; docs-only, no new tests; attempt 2, ~38 min, no flakes; attempt 1 killed by the 21st VM reset at 42 binaries green, 0 failed) — `just openapi-check` + `just route-table-check` + `just config-table-check` + `just env-check` + `just sqlx-prepare-check` + `just snapshots-check` green; `just compose-prod-check` red only because the `docker` binary is gone (DOCKER-001) — P1-041 touches no compose files. CI #27 + Commits #27 (run #27, on aca304b) are BOTH GREEN — third consecutive fully-green run; CI #28 + Commits #28 (run #28, on 3348ce3) in progress. |
 | Coverage (core/engine/api) | 96.8% / 99.1% / 92.6% (worker 83.8%) — all above NFR-50 floors (85/80/75/70); report-only until Phase 2 (`just coverage-gate` exists, OFF) — re-measured 2026-11-13 during P1-001 (`just coverage` green) |
 | Golden suite | — |
 | Bench snapshot (image 4K p95 / video factor) | full-job 4K mean 545 ms (scaffold chain — see Bench history; p95 not tracked yet, criterion mean/median in `crates/engine/benches/baselines/`) / video factor n/a (input-prep only; real factor needs the Phase 2 video pipeline) |
@@ -34,6 +34,7 @@
 
 ## Notes
 
+- P1-041 done 2026-11-15 (30th coordinator, adopting the 29th's uncommitted tree — verified, finished, committed as one commit): API-key docs page — new `docs/06-DELIVERY/06-api-keys-guide.md` (getting-started guide per api-spec: curl + TypeScript + Python examples, Python compiles, TS typechecks under --strict; security notes on storage, rotation, revocation). Docs-only, no code. `just verify` green: 769 passed, 0 failed, attempt 2, ~38 min — attempt 1 was killed by the 21st VM reset (~05:45 IST, mid-sessions tests, 42 binaries green, 0 failed); services restored per ASSUMPTION-010 (the os-intent replay did the reinstall this time, ~15 min in `apt-get update` + installs; `pf` role/db recreated, all 17 migrations re-applied) and the verify re-run from scratch; see the ASSUMPTION-010 update line for the 21st reset (replay-based restore).
 - P1-040 done 2026-11-15 (29th coordinator): Key ACL matrix rows — new `apps/api/tests/api_key_matrix.rs` (4 tests): one row per `/v1` route (65 rows: 13 `Allowed` / 14 `Forbidden` / 29 `Unprotected` / 9 `Ignored`), each walked live with a full-scope key plus the anonymous control. The 13 gated routes answer 501 to a key carrying the row's scope and 403 to a key lacking it; the 14 forbidden rows are 403 to any key, including an admin user's own key ("no admin ever"); the 9 auth routes ignore the key (identical responses); the 29 `Unprotected` rows answer 501 to everyone — recorded as gaps except the ones public by design. The completeness test fails on a route without a row. Docs: test-strategy ACL-matrix section + security-testing P1-040 bullet. `just verify` green: 769 passed, 0 failed (765 + 4 new), attempt 1, ~35 min, no flakes.
 - P1-039 done 2026-11-15 (29th coordinator, adopting the 28th's uncommitted tree — verified, finished, committed as one commit): the API-key lifecycle suite — new `apps/api/tests/api_key_lifecycle.rs` (3 tests): one key walked through the whole lifecycle in order on a frozen clock — create (201, full secret shown once) → use (both scopes reach the jobs stubs, `last_used_at` stamped) → rotate (replacement row, same name + scopes) → old-valid-in-window (both secrets authenticate, old still 501 one second before the deadline) → expired (past the window the old secret is the generic 401 `PF-1001`, the new one keeps working) → revoked (the replacement dies immediately, no grace; the old secret stays dead) — with the audit trail asserted at the end (exactly one `api_key.created` / `api_key.rotated` / `api_key.revoked` row, in order, no secret or hash in any); a directly-expired key (its `expires_at` set in the past, not via rotation) is 401 at the HTTP layer and frees its cap slot (10 keys + expire one, the 11th create is 201 again); scope enforcement in the ticket's phrasing — a `jobs:read`-only key cannot create (POST /v1/jobs and POST /v1/api-keys both 403 `PF-1002`, GET /v1/jobs 501), mirrored by a write-only key that writes but cannot read. Docs: test-strategy API-key lifecycle section + security-testing P1-039 bullet. `just verify` green: 765 passed, 0 failed (762 + 3 new), attempt 2, ~31 min — attempt 1 killed by the 20th VM reset (~03:45 IST, mid-run in admin_impersonate_audit; services restored per ASSUMPTION-010, see its new update line); readyz 4/4 in parallel in 11.38 s, so the FLAKY-004 30 s deadline held on its first full-verify run after the fix. The 28th coordinator's own attempt 3 had already reported the same 765 count — this run independently confirms it.
 - P1-006 verification (2026-11-13, 10th coordinator): the earlier "P1-006 ticked but no separate commit" note was a MISREAD — `f41354b feat(auth): P1-006 email change flow (token, alert, swap on verify)` exists as its own commit (26 files: verification service, email_change tests, `email_change_token_purpose` migration), directly followed by P1-007's own commit `a944c2b`. No history rewrite needed or done.
@@ -55,9 +56,9 @@
 
 ## Next-up queue (top 5)
 
-1. P1-041 — API-key docs page
-2. P1-042 — Roles + permission matrix
-3. P1-043 — Admin route guard
+1. P1-042 — Roles + permission matrix
+2. P1-043 — Admin route guard
+3. P1-044 — Support read-only
 4. CI #27 / Commits #27 results (both SUCCESS on aca304b — third consecutive fully-green run); CI #28 / Commits #28 (on 3348ce3) in progress
 
 ## Bench history (append-only)
