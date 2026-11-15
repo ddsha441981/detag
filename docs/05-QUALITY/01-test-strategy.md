@@ -280,6 +280,25 @@ absence of its audit row). The harness DB persists across
 runs, so the list assertions filter by the test's own prefix
 / `user_id`, never an exact unfiltered count.
 
+## IDOR sweep v1 (P1-045)
+
+Cross-user access returns 404, never 200 (a leak) and
+never 403 (a leak by another name — it confirms the thing
+exists) — `apps/api/tests/idor_sweep.rs` (FR-A-07 / T13,
+NFR-31). The two live families are proven end to end:
+keys (B revoking / rotating A's key is 404 `PF-2010`, the
+key still authenticates afterwards, A revoking it is 204,
+and then it is 401) and sessions (B's list never contains
+A's session, B deleting A's session is 404, A's session is
+still listed afterwards, A deleting it is 204). Jobs,
+uploads, webhook-endpoints and the api-keys list have no
+handler yet, so the sweep pins their current answer — 501
+`PF-5004` to an authenticated cross-user caller (and to an
+anonymous caller on the plain upload stubs) — no data, no
+200, no 403. The 404 ownership proof for each of those
+families lands with its handler ticket, and this test then
+gains the live rows and loses the stub rows.
+
 ## Property testing (P0-096)
 
 Property tests live in `crates/core/tests/prop/` (cursor codec,
