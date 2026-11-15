@@ -190,6 +190,63 @@ impl Capability {
             _ => None,
         }
     }
+
+    /// The audit action for an admin WRITE route, by method +
+    /// route template (P1-046, FR-A-07): the audit trail's
+    /// action name for the privileged action the route
+    /// performs. `None` for reads (reads are not audited —
+    /// the trail records actions, not views) and for
+    /// non-admin routes.
+    ///
+    /// The action is per ROUTE, not per capability: suspend
+    /// / restore / quota-grant share `AdminUsersWrite` but
+    /// audit as `user.suspended` / `user.restored` /
+    /// `admin.users.quota_granted`. The live names are the
+    /// ones the services already write (P1-008, P1-010), so
+    /// a middleware row and a service row for the same action
+    /// are indistinguishable by action — they differ only in
+    /// payload richness. A new admin write route gets its
+    /// action here, in the same change as its matrix row —
+    /// and the audit middleware (`crate::audit_middleware`)
+    /// audits it from this table alone, so no handler can
+    /// forget its audit row.
+    pub fn audit_action_for(method: &Method, path: &str) -> Option<&'static str> {
+        match (method.as_str(), path) {
+            ("POST", "/v1/admin/users/{id}/suspend") => Some("user.suspended"),
+            ("POST", "/v1/admin/users/{id}/restore") => Some("user.restored"),
+            ("POST", "/v1/admin/users/{id}/quota-grant") => Some("admin.users.quota_granted"),
+            ("POST", "/v1/admin/users/{id}/impersonate") => Some("user.impersonated"),
+            ("POST", "/v1/admin/jobs/{id}/reprocess") => Some("admin.jobs.reprocessed"),
+            ("POST", "/v1/admin/jobs/{id}/cancel") => Some("admin.jobs.cancelled"),
+            ("PUT", "/v1/admin/flags") => Some("admin.flags.updated"),
+            ("PUT", "/v1/admin/plans") => Some("admin.plans.updated"),
+            ("POST", "/v1/admin/abuse-reports/{id}/resolve") => {
+                Some("admin.abuse_reports.resolved")
+            }
+            _ => None,
+        }
+    }
+
+    /// The audit target type for an admin write route, by
+    /// method + route template (P1-046): the `target_type`
+    /// column the middleware writes. Mirrors
+    /// [`Capability::audit_action_for`] — `None` exactly
+    /// when that is `None`.
+    pub fn audit_target_type_for(method: &Method, path: &str) -> Option<&'static str> {
+        match (method.as_str(), path) {
+            ("POST", "/v1/admin/users/{id}/suspend")
+            | ("POST", "/v1/admin/users/{id}/restore")
+            | ("POST", "/v1/admin/users/{id}/quota-grant")
+            | ("POST", "/v1/admin/users/{id}/impersonate") => Some("user"),
+            ("POST", "/v1/admin/jobs/{id}/reprocess") | ("POST", "/v1/admin/jobs/{id}/cancel") => {
+                Some("job")
+            }
+            ("PUT", "/v1/admin/flags") => Some("flags"),
+            ("PUT", "/v1/admin/plans") => Some("plans"),
+            ("POST", "/v1/admin/abuse-reports/{id}/resolve") => Some("abuse_report"),
+            _ => None,
+        }
+    }
 }
 
 /// The matrix decision: may `role` use `capability`?
@@ -352,6 +409,80 @@ mod tests {
                 "{method} {path}: must not map"
             );
         }
+    }
+
+    #[test]
+    fn audit_actions_cover_every_admin_write_and_no_read() {
+        // The audit tables ride the route table: every admin
+        // write route has exactly one audit action + target
+        // type, every admin read route has neither, and
+        // non-admin routes have neither. A new admin write
+        // route without an audit row fails here — the
+        // middleware cannot audit what this table does not
+        // name (P1-046).
+        use crate::routes::ROUTE_TABLE;
+        use axum::http::Method;
+        let mut writes = 0;
+        let mut reads = 0;
+        for (method, path) in ROUTE_TABLE {
+            if !path.starts_with("/v1/admin/") {
+                assert_eq!(
+                    Capability::audit_action_for(
+                        &Method::from_bytes(method.as_bytes()).unwrap(),
+                        path
+                    ),
+                    None,
+                    "{method} {path}: not an admin route"
+                );
+                continue;
+            }
+            let m = Method::from_bytes(method.as_bytes()).unwrap();
+            let capability = Capability::for_route(&m, path)
+                .unwrap_or_else(|| panic!("{method} {path}: no matrix row"));
+            let is_read = capability.code().ends_with(".read");
+            let action = Capability::audit_action_for(&m, path);
+            let target_type = Capability::audit_target_type_for(&m, path);
+            if is_read {
+                reads += 1;
+                assert_eq!(action, None, "{method} {path}: reads are not audited");
+                assert_eq!(target_type, None, "{method} {path}: reads have no target");
+            } else {
+                writes += 1;
+                assert!(
+                    action.is_some(),
+                    "{method} {path}: write without an audit action"
+                );
+                assert!(
+                    target_type.is_some(),
+                    "{method} {path}: write without an audit target type"
+                );
+            }
+        }
+        assert_eq!(writes, 9, "9 admin write routes");
+        assert_eq!(reads, 10, "10 admin read routes");
+    }
+
+    #[test]
+    fn audit_action_names_are_unique() {
+        // Two routes auditing under one action would merge
+        // distinct privileged actions into one trail entry
+        // kind — each write route gets its own name.
+        use crate::routes::ROUTE_TABLE;
+        use axum::http::Method;
+        let mut actions = std::collections::HashSet::new();
+        for (method, path) in ROUTE_TABLE {
+            if !path.starts_with("/v1/admin/") {
+                continue;
+            }
+            let m = Method::from_bytes(method.as_bytes()).unwrap();
+            if let Some(action) = Capability::audit_action_for(&m, path) {
+                assert!(
+                    actions.insert(action),
+                    "{method} {path}: duplicate action {action}"
+                );
+            }
+        }
+        assert_eq!(actions.len(), 9, "one action per write route");
     }
 
     #[test]
