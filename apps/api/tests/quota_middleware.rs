@@ -6,7 +6,7 @@
 //! FR-P-06 upgrade hint (`PF-3001` images, `PF-3002`
 //! video-seconds, `PF-3008` concurrency — ADR-0026) and the
 //! `X-Quota-*` headers; an inside-quota request reaches the
-//! stub's 501 with the same headers. The ten tests:
+//! stub's 501 with the same headers. The nine tests:
 //!
 //! - `image_quota_exceeded_is_429_pf3001_with_headers` —
 //!   Free at 10/10 images, image upload → 429 `PF-3001`,
@@ -33,7 +33,9 @@
 //!   empty body (with or without a JSON content-type — the
 //!   matrix probe sends the latter), and `{}` with no
 //!   `upload_id`, are all the stub's 501 (the probe
-//!   shapes, untouched).
+//!   shapes, untouched) — and since P1-052 they carry the
+//!   caller's quota headers too (every create response
+//!   does; the no-headers carve-out is gone).
 //! - `malformed_json_body_is_422_pf2002` — a non-empty body
 //!   that is not valid JSON is 422 `PF-2002` (the manual
 //!   parse keeps the `Json` extractor's problem shape).
@@ -485,7 +487,9 @@ async fn no_body_or_no_upload_id_still_reaches_stub() {
         "PF-5004",
         "not_implemented",
     );
-    assert!(res.headers.get("x-quota-images-remaining").is_none());
+    // P1-052: every create response carries the headers —
+    // Free, no usage: 10 images left, 0 video-seconds.
+    assert_eq!(quota_headers(&res), ("10".to_string(), "0".to_string()));
 
     // The matrix probe's shape: empty body WITH a JSON
     // content-type — the same stub, not a 422 (the P1-051
@@ -498,7 +502,7 @@ async fn no_body_or_no_upload_id_still_reaches_stub() {
         "PF-5004",
         "not_implemented",
     );
-    assert!(res.headers.get("x-quota-images-remaining").is_none());
+    assert_eq!(quota_headers(&res), ("10".to_string(), "0".to_string()));
 
     let res = post_job(&app, &token, json!({})).await;
     assert_problem(
@@ -507,7 +511,7 @@ async fn no_body_or_no_upload_id_still_reaches_stub() {
         "PF-5004",
         "not_implemented",
     );
-    assert!(res.headers.get("x-quota-images-remaining").is_none());
+    assert_eq!(quota_headers(&res), ("10".to_string(), "0".to_string()));
 }
 
 #[tokio::test]
