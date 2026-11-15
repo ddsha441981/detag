@@ -21,6 +21,7 @@ pub mod redis;
 pub mod repos;
 pub mod seed;
 pub mod shutdown;
+pub mod slots;
 pub mod state_machine;
 pub mod telemetry;
 pub mod tokens;
