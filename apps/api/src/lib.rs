@@ -59,6 +59,7 @@
 //! the same outer layers a success does (CORS, secure headers,
 //! request id), so the mapper is innermost.
 
+pub mod audit_middleware;
 pub mod auth;
 pub mod authz;
 pub mod body_limit;
@@ -200,7 +201,7 @@ pub fn build_router(state: AppState, metrics: Metrics) -> Router {
     // HSTS on the deployment environment, P0-102) — clone it
     // before `with_state` moves it into the router.
     let headers_state = state.clone();
-    let mut router = routes::api_router();
+    let mut router = routes::api_router(&state);
     if docs_enabled {
         router = router.merge(openapi::docs_router());
     }

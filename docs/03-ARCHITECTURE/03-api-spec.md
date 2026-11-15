@@ -739,8 +739,17 @@ P1-044 the support contract is pinned on its own: support
 reads the two live views with real rows (users search, jobs
 list — no key material), is admitted on all 8 stub reads
 (501), and every one of the 9 writes is 403 `PF-1002` with
-no state change. The full rendered matrix lands in the
-admin guide with P1-047.
+no state change. Since P1-046 the audit is automatic:
+`apps/api/src/audit_middleware.rs` sits on the `/v1/admin`
+nest and writes exactly one audit row for a successful admin
+write from the route metadata in `Capability`
+(`audit_action_for` / `audit_target_type_for` — one action
+per write route, reads never audited); the three live writes
+(suspend / restore / impersonate) keep the row their
+services write inside the mutation's transaction and mark
+the response `AuditHandled`, so the middleware stands down
+and the row exists exactly once. The full rendered matrix
+lands in the admin guide with P1-047.
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/v1/admin/metrics/dashboard` | jobs today, success rate, p95, queue depth, MRR, DAU |

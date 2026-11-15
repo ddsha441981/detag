@@ -147,7 +147,7 @@ pub const ROUTE_TABLE: &[(&str, &str)] = &[
 /// — upload bytes never transit the api (presigned S3 PUTs), and
 /// the nest without a limit layer cannot be capped by accident
 /// by a future streaming endpoint.
-pub fn api_router() -> Router<AppState> {
+pub fn api_router(state: &AppState) -> Router<AppState> {
     Router::new()
         .merge(
             auth::router().layer(crate::body_limit::body_limit_layer_for(
@@ -166,7 +166,7 @@ pub fn api_router() -> Router<AppState> {
             )),
         )
         .merge(
-            admin::router().layer(crate::body_limit::body_limit_layer_for(
+            admin::router(state.clone()).layer(crate::body_limit::body_limit_layer_for(
                 crate::body_limit::BodyLimitClass::Standard,
             )),
         )

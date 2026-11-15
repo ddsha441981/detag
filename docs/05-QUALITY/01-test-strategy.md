@@ -299,6 +299,44 @@ anonymous caller on the plain upload stubs) — no data, no
 families lands with its handler ticket, and this test then
 gains the live rows and loses the stub rows.
 
+## Privileged action audit middleware (P1-046)
+
+Route metadata drives automatic audit for admin writes, so
+no handler can forget its audit row —
+`apps/api/tests/privileged_audit.rs` (FR-A-07 / T13,
+NFR-31). The middleware (`apps/api/src/audit_middleware.rs`)
+sits on the `/v1/admin` nest and reads the action + target
+type from `Capability::audit_action_for` /
+`audit_target_type_for` in `apps/api/src/authz.rs` (one
+action per write route — 9 writes, 10 reads, pinned by the
+`audit_actions_cover_every_admin_write_and_no_read` unit
+test, and the actions are unique per route). The three live
+writes each write exactly one row (suspend `user.suspended`
+with before `active` → after `suspended` and the reason
+verbatim; restore `user.restored`; impersonate
+`user.impersonated` with `after.expires_in` 900) — their
+services write the row inside the mutation's transaction
+and the handler marks the response `AuditHandled`, so the
+middleware stands down; a duplicate row here means the
+marker protocol broke. The mechanism proof layers the
+middleware over a fake handler with no manual audit call: a
+200 write audits one `admin.flags.updated` row (actor the
+admin, target type `flags`, no target id), a 501 from the
+same route audits nothing, and a 200 read audits nothing.
+On the real app a denied write (support suspend, 403), an
+admitted stub write (admin quota-grant, 501) and a
+successful read (admin user search, 200) each audit nothing
+— the trail records actions, not attempts or views. A
+handler that wants rich payloads on a middleware-written
+row attaches `AuditDetail`; without it the row carries the
+action, actor and target, and no before/after. When the
+audit insert itself fails the middleware answers 500 (a
+privileged action without its audit row is a failed
+request, not a silent gap). Wiring note: axum 0.8's
+`middleware::from_fn` cannot extract `State` — the nest
+uses `from_fn_with_state`, so `admin::router` and
+`api_router` take the state as a parameter.
+
 ## Property testing (P0-096)
 
 Property tests live in `crates/core/tests/prop/` (cursor codec,

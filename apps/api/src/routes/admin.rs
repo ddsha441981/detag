@@ -36,6 +36,7 @@ use super::{
     stub,
 };
 use crate::{
+    audit_middleware::{audit_admin_writes, AuditHandled},
     auth::{AdminContext, AdminReadContext},
     problem::ProblemResponse,
     services::{
@@ -49,6 +50,7 @@ use crate::{
 };
 use axum::{
     extract::{Extension, Path, Query, State},
+    middleware,
     response::{IntoResponse, Json, Response},
     routing::{get, post},
     Router,
@@ -241,7 +243,16 @@ pub async fn suspend(
         .into_response();
     };
     match suspend_user(&state, &admin_user, user_id, &req).await {
-        Ok(outcome) => Json(UserResponse::from(outcome.user)).into_response(),
+        Ok(outcome) => {
+            // The service wrote the audit row in the same
+            // transaction as the mutation (P1-008) — mark the
+            // response so the P1-046 middleware stands down and
+            // the row exists exactly once (also on the
+            // idempotent no-op, which deliberately writes none).
+            let mut response = Json(UserResponse::from(outcome.user)).into_response();
+            response.extensions_mut().insert(AuditHandled);
+            response
+        }
         Err(AdminError::Validation(errors)) => {
             ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
         }
@@ -293,7 +304,13 @@ pub async fn restore(
         .into_response();
     };
     match restore_user(&state, &admin_user, user_id).await {
-        Ok(outcome) => Json(UserResponse::from(outcome.user)).into_response(),
+        Ok(outcome) => {
+            // Same marker protocol as suspend (P1-046): the
+            // service owns the row, the middleware stands down.
+            let mut response = Json(UserResponse::from(outcome.user)).into_response();
+            response.extensions_mut().insert(AuditHandled);
+            response
+        }
         // Restore takes no body and no cursor, so Validation
         // and InvalidCursor are unreachable here — they share
         // the enum with suspend and search.
@@ -348,7 +365,13 @@ pub async fn impersonate(
         .into_response();
     };
     match impersonate_user(&state, &admin_user, user_id, &req).await {
-        Ok(response) => Json(response).into_response(),
+        Ok(response) => {
+            // Same marker protocol as suspend (P1-046): the
+            // service owns the row, the middleware stands down.
+            let mut response = Json(response).into_response();
+            response.extensions_mut().insert(AuditHandled);
+            response
+        }
         Err(AdminError::Validation(errors)) => {
             ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
         }
@@ -397,7 +420,18 @@ async fn admin_read_stub(
 /// quota-grant / impersonate), jobs (browse / reprocess / cancel),
 /// flags, plans, audit, abuse reports, attestations, system —
 /// plus the public abuse intake at `/v1/abuse`.
-pub fn router() -> Router<AppState> {
+///
+/// The nest carries the P1-046 audit middleware
+/// ([`audit_admin_writes`]): a successful admin write gets
+/// exactly one audit row from the route metadata, unless the
+/// handler marked its response [`AuditHandled`] (the three live
+/// writes do — their services write the row in the mutation's
+/// transaction). Reads and non-2xx responses audit nothing.
+/// The middleware needs the state ([`middleware::from_fn`]
+/// cannot extract `State`, so it is
+/// [`middleware::from_fn_with_state`] with a clone), which is
+/// why this router takes it.
+pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .nest(
             "/v1/admin",
@@ -418,7 +452,8 @@ pub fn router() -> Router<AppState> {
                 .route("/abuse-reports", get(admin_read_stub))
                 .route("/abuse-reports/{id}/resolve", post(admin_stub))
                 .route("/attestations", get(admin_read_stub))
-                .route("/system", get(admin_read_stub)),
+                .route("/system", get(admin_read_stub))
+                .layer(middleware::from_fn_with_state(state, audit_admin_writes)),
         )
         .nest("/v1/abuse", Router::new().route("/", post(stub)))
 }

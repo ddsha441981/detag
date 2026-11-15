@@ -5,7 +5,7 @@
 ## Where we are
 
 - **Current phase:** 1 — Identity & Billing
-- **Current ticket:** P1-046 — Privileged action audit middleware
+- **Current ticket:** P1-047 — Authz docs
 - **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007). P0-083 size gate likewise deferred to CI (DOCKER-001, no docker daemon here); Dockerfile.api + gate implemented, AC unticked until CI runs green. P0-088 AC ("smoke enforces health") and P0-090 AC ("smoke green in CI") likewise unticked until the smoke job goes green in CI — `just smoke` + the CI job are implemented, but the workflow files can't reach GitHub yet (CI-WORKFLOWS-001). Remote CI runs the STALE workflow — local checks added since ~09:20 IST never ran remotely.
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
@@ -14,7 +14,7 @@
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
 | 0 | Foundation & Platform Baseline | 105 / 108 | P0-034/046/083 implemented but unverified (DOCKER-001) — live ACs + exit gates for `just dev`/`just smoke`/CI deferred to docker-capable CI |
-| 1 | Identity & Billing | 45 / 111 | — |
+| 1 | Identity & Billing | 46 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
 | 4 | Console & Admin | 0 / 102 | — |
@@ -25,7 +25,7 @@
 
 | Signal | Value |
 | --- | --- |
-| `just verify` | green (fmt + clippy -D warnings + tests; smoke excluded per ADR-0017 — `just smoke` exists now, still excluded: no docker daemon here) — 786 passed, 0 failed (P1-045; attempt 2, ~44 min, no flakes — attempt 1 died at fmt-check, fixed with `cargo fmt`) — `just openapi-check` + `just route-table-check` + `just config-table-check` + `just env-check` + `just sqlx-prepare-check` + `just snapshots-check` green; `just compose-prod-check` red only because the `docker` binary is gone (DOCKER-001) — P1-045 touches no compose files. The 23rd VM reset hit just after the P1-043 verify finished (~09:41 IST) — services restored per ASSUMPTION-010 (replay-based reinstall, `pf` role/db recreated, all 17 migrations re-applied); the verify itself was unaffected. CI #27 + Commits #27 (run #27, on aca304b) are BOTH GREEN — third consecutive fully-green run; CI #28 + Commits #28 (run #28, on 3348ce3) in progress. |
+| `just verify` | green (fmt + clippy -D warnings + tests; smoke excluded per ADR-0017 — `just smoke` exists now, still excluded: no docker daemon here) — 793 passed, 0 failed (P1-046; attempt 2, ~44 min, no flakes — attempt 1 failed only on privileged_audit's absolute-count assertion, fixed to baseline-delta) — `just openapi-check` + `just route-table-check` + `just config-table-check` + `just env-check` + `just sqlx-prepare-check` + `just snapshots-check` green; `just compose-prod-check` red only because the `docker` binary is gone (DOCKER-001) — P1-046 touches no compose files. The 24th VM reset hit mid-`cargo test --no-run` (~11:40 IST) — services restored per ASSUMPTION-010 (replay pid 766 ran ~20 min, the longest yet; `pf` role/db recreated, all 17 migrations re-applied); the verify itself was unaffected. CI #27 + Commits #27 (run #27, on aca304b) are BOTH GREEN — third consecutive fully-green run; CI #28 + Commits #28 (run #28, on 3348ce3) in progress. |
 | Coverage (core/engine/api) | 96.8% / 99.1% / 92.6% (worker 83.8%) — all above NFR-50 floors (85/80/75/70); report-only until Phase 2 (`just coverage-gate` exists, OFF) — re-measured 2026-11-13 during P1-001 (`just coverage` green) |
 | Golden suite | — |
 | Bench snapshot (image 4K p95 / video factor) | full-job 4K mean 545 ms (scaffold chain — see Bench history; p95 not tracked yet, criterion mean/median in `crates/engine/benches/baselines/`) / video factor n/a (input-prep only; real factor needs the Phase 2 video pipeline) |
@@ -34,6 +34,7 @@
 
 ## Notes
 
+- P1-046 done 2026-11-15 (34th coordinator, adopting the 33rd's uncommitted tree — verified, finished, committed as one commit): Privileged action audit middleware — new `apps/api/src/audit_middleware.rs` + `Capability::audit_action_for` / `audit_target_type_for` in `apps/api/src/authz.rs` (9 write actions) + new `apps/api/tests/privileged_audit.rs` (3 tests: live writes exactly one row each; middleware audits a write with no manual call; denied/stub writes + reads audit nothing). Wiring the 33rd left out: the module declaration, the middleware on the `/v1/admin` nest via `from_fn_with_state` (`admin::router` + `api_router` now take the state), and the `AuditHandled` marker on the three live handlers. Targeted green: privileged_audit 3/3 (twice), lib 57/57, admin_guard 3/3, authz_matrix 3/3, api_key_matrix 4/4, route_table 3/3. Full `just verify` green: 793 passed, 0 failed (786 + 7 new), attempt 2, ~44 min, no flakes; attempt 1 failed only on privileged_audit (absolute-count assertion counted a leftover row from the earlier standalone run — harness DB persists across runs; fixed to baseline-delta assertions); drift checks green. The 24th VM reset hit mid-`cargo test --no-run` (~11:40 IST) — restored per ASSUMPTION-010 (replay pid 766 ran ~20 min, the longest yet; `pf` role/db recreated, all 17 migrations re-applied).
 - P1-045 done 2026-11-15 (32nd coordinator implemented, 33rd coordinator adopted the running verify, finished + committed as one commit): IDOR sweep v1 — new `apps/api/tests/idor_sweep.rs` (3 tests): live keys + sessions proven 404 `PF-2010` cross-user with the resource untouched afterwards; 18 stub resource routes (jobs, uploads, webhook-endpoints, api-keys list) pinned at 501 `PF-5004` — no leak — with the 404 proof landing with each handler ticket. Targeted green: idor_sweep 3/3. Full `just verify` green: 786 passed, 0 failed (783 + 3 new), attempt 2, ~44 min, no flakes; drift checks green.
 - P1-044 done 2026-11-15 (32nd coordinator): Support read-only — new `apps/api/tests/support_readonly.rs` (4 tests): matrix assert (support admitted exactly on `.read` capabilities), support reads the two live views with real rows (users search, jobs list, no key material), support admitted on all 8 stub reads (501), all 9 writes 403 `PF-1002` with no state change (denied suspend/restore/impersonate leave the targets untouched, no audit rows). Targeted green: support_readonly 4/4. Full `just verify` green: 783 passed, 0 failed (779 + 4 new), attempt 1, ~46 min, no flakes; drift checks green.
 - P1-043 done 2026-11-15 (31st coordinator implemented, 32nd coordinator adopted the running verify, finished + committed as one commit): Admin route guard — `admin_stub` / `admin_read_stub` in `apps/api/src/routes/admin.rs` put the matrix guard on all 14 admin stubs; new `apps/api/tests/admin_guard.rs` (3 tests: 19-route walk, audit row proof, denied/stub audit-nothing); route-table probe + API-key matrix updated for the guard (14 rows `Unprotected` → `Forbidden`, counts 13/28/15/9); three doc comments fixed for the baked-in `<redacted>` pipeline trap. Targeted green: admin_guard 3/3, api_key_matrix 4/4, authz_matrix 3/3, route_table 3/3. Full `just verify` green: 779 passed, 0 failed (776 + 3 new), attempt 1, ~48 min, no flakes; drift checks green. The 23rd VM reset hit just after the verify finished (~09:41 IST) — restored per ASSUMPTION-010 (replay-based reinstall, `pf` role/db recreated, all 17 migrations re-applied).
@@ -60,8 +61,8 @@
 
 ## Next-up queue (top 5)
 
-1. P1-046 — Privileged action audit middleware
-2. P1-047 — Authz docs
+1. P1-047 — Authz docs
+2. P1-048 — Role escalation tests
 3. CI #27 / Commits #27 results (both SUCCESS on aca304b — third consecutive fully-green run); CI #28 / Commits #28 (on 3348ce3) in progress
 
 ## Bench history (append-only)
