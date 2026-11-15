@@ -23,9 +23,10 @@ pub struct Subscription {
 }
 
 /// The user's current subscription: the newest row whose
-/// status is `trialing` or `active` (a `past_due` subscription
-/// still grants the plan until it cancels — the billing
-/// tickets own that transition; `canceled` never counts).
+/// status is `trialing` or `active`. A `past_due`
+/// subscription does NOT count (it grants nothing until
+/// billing moves it back to `active` — the billing tickets
+/// own that transition); `canceled` never counts.
 /// `None` when the user has no live subscription — the caller
 /// falls back to the Free plan.
 pub async fn active_for_user(

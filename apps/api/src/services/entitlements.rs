@@ -1,5 +1,5 @@
-//! Entitlements (P1-005): the current plan + today's quota
-//! snapshot for a user.
+//! Entitlements (P1-005, P1-049): the current plan + today's
+//! quota snapshot for a user.
 //!
 //! This is THE function the quota middleware (P1-051) must
 //! reuse — the profile snapshot and the middleware's pre-check
@@ -15,10 +15,17 @@
 //! a plan change between the subscription read and the usage
 //! read shows up on the next read. That is fine for a
 //! snapshot (the middleware re-checks at job-create time).
+//!
+//! P1-049: the plan rows come through the cached catalog
+//! (`detag_core::plans::PlanCatalog`) and the entitlements
+//! through its parsed struct (`detag_core::plans::
+//! Entitlements`) — the jsonb is interpreted in exactly one
+//! place, so the profile, the middleware, and the quota
+//! snapshot can never disagree about what a plan grants.
 
 use detag_core::db::DbPool;
+use detag_core::plans::{Entitlements, PlanCache, PlanCatalog, PlanStore};
 use detag_core::repos::{plans, subscriptions, usage_counters, RepoError};
-use serde_json::Value;
 
 /// The plan, as the profile shows it: code + price. The
 /// entitlements live in the quota snapshot (the limits), not
@@ -69,37 +76,66 @@ pub enum EntitlementError {
     MissingFreePlan,
 }
 
-/// The user's current plan row: the live subscription's plan
-/// (`trialing`/`active`), else Free. A `past_due`
-/// subscription does NOT count (billing owns that
-/// transition); a `canceled` one never counts.
-pub async fn current_plan_row(
-    pool: &DbPool,
-    user_id: uuid::Uuid,
-) -> Result<plans::Plan, EntitlementError> {
-    let plan = match subscriptions::active_for_user(pool, user_id).await? {
-        Some(sub) => subscriptions::plan_for_subscription(pool, sub.plan_id).await?,
-        None => None,
-    };
-    match plan {
-        Some(plan) => Ok(plan),
-        None => plans::by_code(pool, "free")
-            .await?
-            .ok_or(EntitlementError::MissingFreePlan),
-    }
+/// Where the effective plan came from: a live subscription
+/// overrode the default, or there was no live subscription
+/// and the user is on Free.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanSource {
+    Subscription,
+    FreeDefault,
 }
 
-/// The two daily limits from a plan's entitlements jsonb.
-/// Missing/mistyped/negative keys read as 0 (fail closed).
-fn limits_of(entitlements: &Value) -> (i64, i64) {
-    let get = |key: &str| -> i64 {
-        entitlements
-            .get(key)
-            .and_then(Value::as_i64)
-            .unwrap_or(0)
-            .max(0)
+/// The user's effective plan (P1-049): the plan row, its
+/// parsed entitlements, and where it came from. The quota
+/// middleware (P1-051) and the profile both read this —
+/// they never re-derive the plan from the subscription
+/// themselves.
+#[derive(Debug, Clone)]
+pub struct ResolvedPlan {
+    pub plan: plans::Plan,
+    pub entitlements: Entitlements,
+    pub source: PlanSource,
+}
+
+/// The user's effective plan: the newest live subscription's
+/// plan (`trialing`/`active`), else Free. A `past_due`
+/// subscription does NOT count (billing owns that
+/// transition); a `canceled` one never counts. When several
+/// live subscriptions exist, the newest wins
+/// (`active_for_user` orders by `created_at DESC`). A live
+/// subscription whose plan row is gone (impossible while
+/// `plan_id` is `ON DELETE RESTRICT`, but defended anyway)
+/// falls back to Free rather than erroring.
+pub async fn effective_plan<S: PlanStore, C: PlanCache>(
+    catalog: &PlanCatalog<S, C>,
+    pool: &DbPool,
+    user_id: uuid::Uuid,
+) -> Result<ResolvedPlan, EntitlementError> {
+    let (plan, source) = match subscriptions::active_for_user(pool, user_id).await? {
+        Some(sub) => match catalog.by_id(sub.plan_id).await? {
+            Some(plan) => (plan, PlanSource::Subscription),
+            None => (
+                catalog
+                    .by_code("free")
+                    .await?
+                    .ok_or(EntitlementError::MissingFreePlan)?,
+                PlanSource::FreeDefault,
+            ),
+        },
+        None => (
+            catalog
+                .by_code("free")
+                .await?
+                .ok_or(EntitlementError::MissingFreePlan)?,
+            PlanSource::FreeDefault,
+        ),
     };
-    (get("daily_images"), get("daily_video_seconds"))
+    let entitlements = Entitlements::from_value(&plan.entitlements);
+    Ok(ResolvedPlan {
+        plan,
+        entitlements,
+        source,
+    })
 }
 
 /// The plan snapshot for a plan the caller already loaded
@@ -125,7 +161,7 @@ pub async fn quota_snapshot_for_plan(
     user_id: uuid::Uuid,
     plan: &plans::Plan,
 ) -> Result<QuotaSnapshot, EntitlementError> {
-    let limits = limits_of(&plan.entitlements);
+    let entitlements = Entitlements::from_value(&plan.entitlements);
     let today = chrono::Utc::now().date_naive();
     let used = usage_counters::for_user_day(pool, user_id, today).await?;
     let (images_used, video_used) = match used {
@@ -136,7 +172,7 @@ pub async fn quota_snapshot_for_plan(
         None => (0, 0),
     };
     Ok(QuotaSnapshot {
-        daily_images: bucket(limits.0, images_used),
-        daily_video_seconds: bucket(limits.1, video_used),
+        daily_images: bucket(entitlements.daily_images, images_used),
+        daily_video_seconds: bucket(entitlements.daily_video_seconds, video_used),
     })
 }

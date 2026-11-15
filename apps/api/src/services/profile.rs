@@ -187,12 +187,13 @@ enum ProfileTxError {
 /// (fresh enough for a read — the plan/quota reads are the
 /// live part).
 pub async fn get_profile(state: &AppState, user: &User) -> Result<ProfileResponse, ProfileError> {
-    let plan = entitlements::current_plan_row(&state.pool, user.id)
+    let resolved = entitlements::effective_plan(&state.plans, &state.pool, user.id)
         .await
         .map_err(|err| {
             tracing::error!(error = ?err, "profile: plan read failed");
             ProfileError::Internal
         })?;
+    let plan = resolved.plan;
     let quota = entitlements::quota_snapshot_for_plan(&state.pool, user.id, &plan)
         .await
         .map_err(|err| {
@@ -361,12 +362,13 @@ pub async fn patch_profile(
         }
     })?;
 
-    let plan = entitlements::current_plan_row(&state.pool, updated.id)
+    let resolved = entitlements::effective_plan(&state.plans, &state.pool, updated.id)
         .await
         .map_err(|err| {
             tracing::error!(error = ?err, "profile: plan read failed");
             ProfileError::Internal
         })?;
+    let plan = resolved.plan;
     let quota = entitlements::quota_snapshot_for_plan(&state.pool, updated.id, &plan)
         .await
         .map_err(|err| {

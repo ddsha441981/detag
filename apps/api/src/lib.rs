@@ -103,6 +103,17 @@ pub struct AppState {
     /// buckets built once from the settings, so the middleware
     /// does not rebuild them per request.
     pub rate_limit: rate_limit::RateLimitPolicy,
+    /// The plan catalog (P1-049): the seeded plans from the
+    /// DB, cached 5 min in-process (`PLAN_CACHE_TTL`); admin
+    /// edits invalidate it (P1-057). Built once here so every
+    /// request shares the cache — a catalog built per request
+    /// would never hit it.
+    pub plans: std::sync::Arc<
+        detag_core::plans::PlanCatalog<
+            detag_core::plans::SqlxPlanStore,
+            detag_core::plans::InMemoryPlanCache,
+        >,
+    >,
     /// Time source: [`SystemClock`] in production, a frozen
     /// [`ManualClock`](detag_core::clock::ManualClock) in tests.
     pub clock: Arc<dyn Clock>,
@@ -168,12 +179,19 @@ impl AppState {
         // with the settings' params. ~50 ms, once.
         let dummy_password_hash =
             hash_password(&generate_token(), &Argon2Params::from_settings(settings))?;
+        // The plan catalog (P1-049): one shared instance over
+        // the pool, so the 5-minute cache is actually shared.
+        let plans = Arc::new(detag_core::plans::PlanCatalog::new(
+            detag_core::plans::SqlxPlanStore::new(pool.clone()),
+            detag_core::plans::InMemoryPlanCache::new(),
+        ));
         Ok(Self {
             pool,
             redis,
             storage,
             settings: Arc::new(settings.clone()),
             rate_limit: rate_limit::RateLimitPolicy::from_settings(settings),
+            plans,
             clock: Arc::new(SystemClock),
             dummy_password_hash,
         })
