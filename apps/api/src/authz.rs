@@ -1,0 +1,392 @@
+//! Role + permission matrix (P1-042, FR-A-07).
+//!
+//! The single source of truth for who may do what on the admin
+//! surface: one [`Capability`] per admin operation, each with a
+//! stable code string (`"admin.users.read"`) and the roles that
+//! may use it. The guards in [`crate::auth`] (`AdminContext`,
+//! `AdminReadContext`) consult this matrix — they look the
+//! route up in [`Capability::for_route`] and enforce the row —
+//! so the table below, not the extractor type, decides who
+//! gets in. Change a row here and both the guard behaviour
+//! and the test registry follow; change neither anywhere else.
+//!
+//! # The table
+//!
+//! Roles are `user`, `support` (read-only), `admin` (FR-A-07).
+//! Every read capability admits admin + support; every write
+//! capability and impersonation admit admin only. A plain user
+//! and an anonymous caller hold no admin capability at all.
+//! Two rules ride on top of the role table, for every row:
+//! - an API key never reaches an admin route — even a key
+//!   minted by an admin user ("no admin ever", P1-040);
+//! - an impersonation token never reaches an admin route —
+//!   the token acts as its target user (P1-010).
+//!
+//! # Routes vs stubs
+//!
+//! The matrix covers all 19 admin routes in the route table,
+//! live or stub. The 5 live routes are enforced by the guards
+//! today and walked live by the test registry
+//! (`apps/api/tests/authz_matrix.rs`). The 15 stub routes
+//! take no extractor yet — their rows name the intended
+//! capability, and the guard lands with their handler ticket
+//! (P1-043 puts the guard on every `/v1/admin/*` route).
+//! A stub row is therefore a promise, not a proof: the
+//! registry's completeness test pins that the row exists, the
+//! live walk skips it until its guard lands.
+//!
+//! # Denial shape
+//!
+//! A caller who fails the matrix gets 403 `PF-1002` in the
+//! problem+json envelope (via [`AppError::Forbidden`]) — the
+//! same code as every other authorization denial, so a client
+//! cannot tell a wrong role from a key or an impersonator.
+
+use crate::auth::{AuthContext, Role};
+use axum::http::Method;
+use detag_core::error::AppError;
+
+/// One admin operation, as a code constant.
+///
+/// The code string is the stable identifier: it is what the
+/// docs, the audit trail and the test registry name. Add a
+/// capability here (never a bare string elsewhere) when a new
+/// admin operation lands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Capability {
+    /// `GET /v1/admin/metrics/dashboard`.
+    AdminDashboardRead,
+    /// `GET /v1/admin/users`.
+    AdminUsersRead,
+    /// `POST /v1/admin/users/{id}/suspend`,
+    /// `/restore`, `/quota-grant`.
+    AdminUsersWrite,
+    /// `POST /v1/admin/users/{id}/impersonate`.
+    AdminUsersImpersonate,
+    /// `GET /v1/admin/jobs`.
+    AdminJobsRead,
+    /// `POST /v1/admin/jobs/{id}/reprocess`, `/cancel`.
+    AdminJobsWrite,
+    /// `GET /v1/admin/dlq`.
+    AdminDlqRead,
+    /// `GET /v1/admin/flags`.
+    AdminFlagsRead,
+    /// `PUT /v1/admin/flags`.
+    AdminFlagsWrite,
+    /// `GET /v1/admin/plans`.
+    AdminPlansRead,
+    /// `PUT /v1/admin/plans`.
+    AdminPlansWrite,
+    /// `GET /v1/admin/audit`.
+    AdminAuditRead,
+    /// `GET /v1/admin/abuse-reports`.
+    AdminAbuseRead,
+    /// `POST /v1/admin/abuse-reports/{id}/resolve`.
+    AdminAbuseWrite,
+    /// `GET /v1/admin/attestations`.
+    AdminAttestationsRead,
+    /// `GET /v1/admin/system`.
+    AdminSystemRead,
+}
+
+impl Capability {
+    /// The stable code string for this capability.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Capability::AdminDashboardRead => "admin.dashboard.read",
+            Capability::AdminUsersRead => "admin.users.read",
+            Capability::AdminUsersWrite => "admin.users.write",
+            Capability::AdminUsersImpersonate => "admin.users.impersonate",
+            Capability::AdminJobsRead => "admin.jobs.read",
+            Capability::AdminJobsWrite => "admin.jobs.write",
+            Capability::AdminDlqRead => "admin.dlq.read",
+            Capability::AdminFlagsRead => "admin.flags.read",
+            Capability::AdminFlagsWrite => "admin.flags.write",
+            Capability::AdminPlansRead => "admin.plans.read",
+            Capability::AdminPlansWrite => "admin.plans.write",
+            Capability::AdminAuditRead => "admin.audit.read",
+            Capability::AdminAbuseRead => "admin.abuse.read",
+            Capability::AdminAbuseWrite => "admin.abuse.write",
+            Capability::AdminAttestationsRead => "admin.attestations.read",
+            Capability::AdminSystemRead => "admin.system.read",
+        }
+    }
+
+    /// The roles that may use this capability, in
+    /// privilege order. Reads admit admin + support;
+    /// writes and impersonation admit admin only.
+    pub fn allowed_roles(&self) -> &'static [Role] {
+        match self {
+            Capability::AdminDashboardRead
+            | Capability::AdminUsersRead
+            | Capability::AdminJobsRead
+            | Capability::AdminDlqRead
+            | Capability::AdminFlagsRead
+            | Capability::AdminPlansRead
+            | Capability::AdminAuditRead
+            | Capability::AdminAbuseRead
+            | Capability::AdminAttestationsRead
+            | Capability::AdminSystemRead => &[Role::Admin, Role::Support],
+            Capability::AdminUsersWrite
+            | Capability::AdminUsersImpersonate
+            | Capability::AdminJobsWrite
+            | Capability::AdminFlagsWrite
+            | Capability::AdminPlansWrite
+            | Capability::AdminAbuseWrite => &[Role::Admin],
+        }
+    }
+
+    /// Every capability in the matrix, in code order.
+    pub fn all() -> &'static [Capability] {
+        &[
+            Capability::AdminDashboardRead,
+            Capability::AdminUsersRead,
+            Capability::AdminUsersWrite,
+            Capability::AdminUsersImpersonate,
+            Capability::AdminJobsRead,
+            Capability::AdminJobsWrite,
+            Capability::AdminDlqRead,
+            Capability::AdminFlagsRead,
+            Capability::AdminFlagsWrite,
+            Capability::AdminPlansRead,
+            Capability::AdminPlansWrite,
+            Capability::AdminAuditRead,
+            Capability::AdminAbuseRead,
+            Capability::AdminAbuseWrite,
+            Capability::AdminAttestationsRead,
+            Capability::AdminSystemRead,
+        ]
+    }
+
+    /// The capability a route needs, by method + route
+    /// template (the `MatchedPath` the router matched —
+    /// `{id}` stays a template, never a concrete id).
+    /// `None` means the route is not an admin route: the
+    /// guards fail closed on it (a non-admin route must
+    /// never be wired to an admin guard by mistake).
+    pub fn for_route(method: &Method, path: &str) -> Option<Capability> {
+        use Capability::*;
+        match (method.as_str(), path) {
+            ("GET", "/v1/admin/metrics/dashboard") => Some(AdminDashboardRead),
+            ("GET", "/v1/admin/users") => Some(AdminUsersRead),
+            ("POST", "/v1/admin/users/{id}/suspend")
+            | ("POST", "/v1/admin/users/{id}/restore")
+            | ("POST", "/v1/admin/users/{id}/quota-grant") => Some(AdminUsersWrite),
+            ("POST", "/v1/admin/users/{id}/impersonate") => Some(AdminUsersImpersonate),
+            ("GET", "/v1/admin/jobs") => Some(AdminJobsRead),
+            ("POST", "/v1/admin/jobs/{id}/reprocess") | ("POST", "/v1/admin/jobs/{id}/cancel") => {
+                Some(AdminJobsWrite)
+            }
+            ("GET", "/v1/admin/dlq") => Some(AdminDlqRead),
+            ("GET", "/v1/admin/flags") => Some(AdminFlagsRead),
+            ("PUT", "/v1/admin/flags") => Some(AdminFlagsWrite),
+            ("GET", "/v1/admin/plans") => Some(AdminPlansRead),
+            ("PUT", "/v1/admin/plans") => Some(AdminPlansWrite),
+            ("GET", "/v1/admin/audit") => Some(AdminAuditRead),
+            ("GET", "/v1/admin/abuse-reports") => Some(AdminAbuseRead),
+            ("POST", "/v1/admin/abuse-reports/{id}/resolve") => Some(AdminAbuseWrite),
+            ("GET", "/v1/admin/attestations") => Some(AdminAttestationsRead),
+            ("GET", "/v1/admin/system") => Some(AdminSystemRead),
+            _ => None,
+        }
+    }
+}
+
+/// The matrix decision: may `role` use `capability`?
+///
+/// The single source — the guards and the test registry
+/// both call this, never a hand-written role comparison.
+pub fn role_has_capability(role: Role, capability: Capability) -> bool {
+    capability.allowed_roles().contains(&role)
+}
+
+/// Enforce one capability against a verified context: the
+/// guard core both admin extractors call.
+///
+/// The checks, in order — a verified JWT caller whose role
+/// the capability admits passes; anything else is 403
+/// `PF-1002`:
+/// - an API-key caller is forbidden on every capability
+///   ("no admin ever", P1-040 — the extractor's scope table
+///   already rejects keys on admin routes, this is the
+///   second line);
+/// - an impersonation token is forbidden (P1-010 — the token
+///   acts as its target user);
+/// - an unverified context fails closed (a handler never
+///   sees one — the extractor rejects it first — but the
+///   guard does not assume that);
+/// - a role the capability does not admit is forbidden.
+pub fn require_capability(auth: &AuthContext, capability: Capability) -> Result<(), AppError> {
+    if auth.api_key.is_some() {
+        return Err(AppError::Forbidden);
+    }
+    if auth.impersonator_id.is_some() {
+        return Err(AppError::Forbidden);
+    }
+    if !auth.verified {
+        return Err(AppError::Forbidden);
+    }
+    if role_has_capability(auth.role, capability) {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::{Credential, VerifiedApiKey};
+    use uuid::Uuid;
+
+    fn ctx(role: Role, api_key: bool, impersonator: bool) -> AuthContext {
+        AuthContext {
+            credential: Credential::Bearer("token".to_string()),
+            role,
+            verified: true,
+            user: None,
+            api_key: api_key.then(|| VerifiedApiKey {
+                id: Uuid::now_v7(),
+                scopes: vec!["jobs:read".to_string()],
+                rate_limit_tier: None,
+            }),
+            impersonator_id: impersonator.then(Uuid::now_v7),
+        }
+    }
+
+    #[test]
+    fn matrix_reads_admit_admin_and_support_only() {
+        // Every read capability: admin + support pass, user
+        // and anonymous fail. Every write capability and
+        // impersonation: admin only.
+        for cap in Capability::all() {
+            let is_read = cap.code().ends_with(".read");
+            assert!(
+                role_has_capability(Role::Admin, *cap),
+                "{}: admin",
+                cap.code()
+            );
+            assert_eq!(
+                role_has_capability(Role::Support, *cap),
+                is_read,
+                "{}: support (read-only)",
+                cap.code()
+            );
+            assert!(
+                !role_has_capability(Role::User, *cap),
+                "{}: plain user",
+                cap.code()
+            );
+            assert!(
+                !role_has_capability(Role::Anonymous, *cap),
+                "{}: anonymous",
+                cap.code()
+            );
+        }
+    }
+
+    #[test]
+    fn capability_codes_are_unique_and_admin_prefixed() {
+        let mut codes = std::collections::HashSet::new();
+        for cap in Capability::all() {
+            assert!(
+                cap.code().starts_with("admin."),
+                "{}: code is admin-namespaced",
+                cap.code()
+            );
+            assert!(codes.insert(cap.code()), "{}: duplicate code", cap.code());
+        }
+        assert_eq!(codes.len(), 16, "one code per capability");
+    }
+
+    #[test]
+    fn for_route_names_every_admin_route_and_nothing_else() {
+        // The route table: 20 admin routes, each with exactly
+        // one capability; non-admin routes map to None.
+        use axum::http::Method;
+        let admin_routes: &[(&str, &str)] = &[
+            ("GET", "/v1/admin/metrics/dashboard"),
+            ("GET", "/v1/admin/users"),
+            ("POST", "/v1/admin/users/{id}/suspend"),
+            ("POST", "/v1/admin/users/{id}/restore"),
+            ("POST", "/v1/admin/users/{id}/quota-grant"),
+            ("POST", "/v1/admin/users/{id}/impersonate"),
+            ("GET", "/v1/admin/jobs"),
+            ("POST", "/v1/admin/jobs/{id}/reprocess"),
+            ("POST", "/v1/admin/jobs/{id}/cancel"),
+            ("GET", "/v1/admin/dlq"),
+            ("GET", "/v1/admin/flags"),
+            ("PUT", "/v1/admin/flags"),
+            ("GET", "/v1/admin/plans"),
+            ("PUT", "/v1/admin/plans"),
+            ("GET", "/v1/admin/audit"),
+            ("GET", "/v1/admin/abuse-reports"),
+            ("POST", "/v1/admin/abuse-reports/{id}/resolve"),
+            ("GET", "/v1/admin/attestations"),
+            ("GET", "/v1/admin/system"),
+        ];
+        assert_eq!(
+            admin_routes.len(),
+            19,
+            "19 admin (method, path) pairs in the route table"
+        );
+        for (method, path) in admin_routes {
+            let m = Method::from_bytes(method.as_bytes()).unwrap();
+            assert!(
+                Capability::for_route(&m, path).is_some(),
+                "{method} {path}: no capability row"
+            );
+        }
+        // Non-admin routes and wrong methods map to None.
+        for (method, path) in [
+            (Method::GET, "/v1/me"),
+            (Method::POST, "/v1/jobs"),
+            (Method::POST, "/v1/abuse"),
+            (Method::GET, "/v1/admin/users/{id}"),
+            (Method::DELETE, "/v1/admin/users"),
+            (Method::GET, "/v1/admin"),
+        ] {
+            assert_eq!(
+                Capability::for_route(&method, path),
+                None,
+                "{method} {path}: must not map"
+            );
+        }
+    }
+
+    #[test]
+    fn require_capability_denies_keys_impersonators_and_wrong_roles() {
+        let read = Capability::AdminUsersRead;
+        let write = Capability::AdminUsersWrite;
+        // Admin passes both; support passes the read only.
+        assert!(require_capability(&ctx(Role::Admin, false, false), read).is_ok());
+        assert!(require_capability(&ctx(Role::Admin, false, false), write).is_ok());
+        assert!(require_capability(&ctx(Role::Support, false, false), read).is_ok());
+        assert!(matches!(
+            require_capability(&ctx(Role::Support, false, false), write),
+            Err(AppError::Forbidden)
+        ));
+        // A plain user fails both.
+        assert!(matches!(
+            require_capability(&ctx(Role::User, false, false), read),
+            Err(AppError::Forbidden)
+        ));
+        // An admin's own API key fails both ("no admin ever").
+        assert!(matches!(
+            require_capability(&ctx(Role::Admin, true, false), read),
+            Err(AppError::Forbidden)
+        ));
+        // An impersonation token fails both.
+        assert!(matches!(
+            require_capability(&ctx(Role::Admin, false, true), read),
+            Err(AppError::Forbidden)
+        ));
+        // Unverified fails closed.
+        let mut unverified = ctx(Role::Admin, false, false);
+        unverified.verified = false;
+        assert!(matches!(
+            require_capability(&unverified, read),
+            Err(AppError::Forbidden)
+        ));
+    }
+}

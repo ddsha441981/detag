@@ -60,6 +60,7 @@
 //! request id), so the mapper is innermost.
 
 pub mod auth;
+pub mod authz;
 pub mod body_limit;
 pub mod cors;
 pub mod error_mapper;

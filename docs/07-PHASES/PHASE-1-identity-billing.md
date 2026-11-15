@@ -361,11 +361,12 @@
 
 ## E1.5 — RBAC & authz (area: auth/rbac)
 
-- [ ] **P1-042** — Roles + permission matrix
+- [x] **P1-042** — Roles + permission matrix
   - **Type:** feat · **Area:** auth/rbac · **Est:** M · **Deps:** — · **Prio:** P1
   - **Spec:** user/support/admin capability table (code constants), role-guard middleware, 403 problem+json; matrix is the single source consumed by tests.
   - **AC:**
-    - [ ] matrix test registry live
+    - [x] matrix test registry live
+  - **Status:** DONE 2026-11-15 (31st coordinator, adopting the 30th's uncommitted tree — verified, finished, committed as one commit). New `apps/api/src/authz.rs`: 16 `Capability` code constants (`admin.users.read` …), the role table (reads admit admin + support, writes and impersonation admit admin only), the route→capability table for all 19 `/v1/admin/*` routes, and `require_capability` (403 `PF-1002` for a key, an impersonator, an unverified context, or a wrong role). The guards (`AdminContext`, `AdminReadContext`) are now matrix-driven via `guard_by_matrix` — the route's row, not the extractor type, decides; a route the matrix does not name fails closed with 403. New `apps/api/tests/authz_matrix.rs` (3 tests): a completeness test (every admin route in `ROUTE_TABLE` has exactly one row, every row names a real route), a truth-table test (each row's capability resolves through `for_route` and admits exactly the promised roles), and a live walk (the 5 live routes × anonymous / user / support / admin / an admin user's key — 401 `PF-1001` with no credential, 403 `PF-1002` for a wrong role or a key, 200 for an admitted role). The 14 stub rows are promises, not proofs — their guard lands with their handler ticket (P1-043 puts the guard on every `/v1/admin/*` route). One doc-consistency fix while adopting: the module doc said "20 admin routes" but `ROUTE_TABLE` holds 19 — corrected (the public `POST /v1/abuse` intake is not an admin route). Docs: api-spec capability-table note, test-strategy P1-042 section, security-testing P1-042 bullet. `just verify` green: 776 passed, 0 failed (769 + 7 new: 4 authz unit + 3 matrix), attempt 2 — attempt 1 died at fmt-check on the over-long assert line the doc fix introduced (fixed with `cargo fmt`); the 22nd VM reset hit mid-matrix-test before the verify (~07:42 IST, services restored per ASSUMPTION-010 — apt reinstall, `pf` role/db recreated, all 17 migrations re-applied) and the targeted matrix test was re-run green (3/3) after the restore. Drift checks green (openapi / route-table / config-table / env / sqlx-prepare / snapshots).
 
 - [ ] **P1-043** — Admin route guard
   - **Type:** feat · **Area:** auth/rbac · **Est:** M · **Deps:** P1-042 · **Prio:** P1

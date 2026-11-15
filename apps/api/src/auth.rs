@@ -114,13 +114,17 @@
 //! WHY the token is invalid.
 //!
 //! The admin guard is [`AdminContext`] (P1-008): it wraps this
-//! extractor and additionally requires the role to be
-//! [`Role::Admin`], rejecting a verified non-admin (user or
-//! support) with 403 `PF-1002`. Admin handlers take it instead
-//! of [`AuthContext`] so the role check cannot be forgotten.
+//! extractor and additionally requires the caller to hold the
+//! capability the route needs, per the matrix in
+//! [`crate::authz`] (P1-042, FR-A-07) — a verified non-admin
+//! (user or support, on a write row) is rejected with 403
+//! `PF-1002`. Admin handlers take it instead of
+//! [`AuthContext`] so the role check cannot be forgotten.
 //! Support is read-only: its readable routes take
 //! [`AdminReadContext`] (P1-009), which admits admin + support
-//! and rejects a verified plain user with the same 403.
+//! on read rows and rejects a verified plain user with the
+//! same 403. Both guards are matrix-driven: the route's row,
+//! not the extractor type, decides.
 //!
 //! # Credential sources (precedence — FINAL, P1-016)
 //!
@@ -196,6 +200,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
+use crate::authz::{require_capability, Capability};
 use crate::rate_limit::{check_api_key_rate_limit, denied_response};
 use crate::services::api_keys::{note_key_use, verify_api_key, VerifyApiKeyError};
 use crate::services::revocation::is_jti_revoked;
@@ -662,23 +667,55 @@ impl FromRequestParts<AppState> for AuthContext {
 }
 
 /// An admin-only context (P1-008): the verified [`AuthContext`]
-/// plus the guarantee that the caller's role is [`Role::Admin`].
+/// plus the guarantee that the caller holds the capability the
+/// route needs.
 ///
-/// Handlers that need admin rights take this instead of
-/// [`AuthContext`] — the role check runs in the extractor, so a
-/// handler body can never forget it. The rejections, in order:
-/// no credential / bad token / unknown user → the same 401s as
-/// `AuthContext`; a verified non-admin (user or support) → 403
-/// `PF-1002`; a context carrying `impersonator_id` → 403
-/// `PF-1002` (P1-010 — an impersonator cannot reach admin
-/// endpoints, not even to impersonate someone else). Support is
-/// read-only: its readable routes (admin search, P1-009) take
-/// [`AdminReadContext`], not this one.
+/// The check is matrix-driven (P1-042, FR-A-07): the guard
+/// looks the route up in [`Capability::for_route`] and enforces
+/// the row via [`require_capability`] — the matrix, not this
+/// type, decides who gets in. Handlers that need admin rights
+/// take this instead of [`AuthContext`] — the role check runs
+/// in the extractor, so a handler body can never forget it.
+/// The rejections, in order: no credential / bad token /
+/// unknown user → the same 401s as `AuthContext`; a route the
+/// matrix does not name → 403 `PF-1002` (fail closed); a
+/// caller the row does not admit (verified non-admin, an API
+/// key, an impersonator) → 403 `PF-1002`.
 #[derive(Debug, Clone)]
 pub struct AdminContext {
     /// The verified auth context — the admin user is always
     /// `Some` (a verified context always carries its user).
     pub auth: AuthContext,
+}
+
+/// The shared matrix enforcement both admin guards call
+/// (P1-042): resolve the route's capability from
+/// [`Capability::for_route`] and require it of the verified
+/// context. Returns `Some` rejection response when the caller
+/// fails the matrix, `None` when it passes. A route with no
+/// row fails closed with 403 `PF-1002` — a guard wired to a
+/// route the matrix does not name admits nobody, rather than
+/// everybody.
+fn guard_by_matrix(auth: &AuthContext, parts: &Parts) -> Option<Response> {
+    let path = parts
+        .extensions
+        .get::<MatchedPath>()
+        .map(|m| m.as_str())
+        .unwrap_or("");
+    let Some(capability) = Capability::for_route(&parts.method, path) else {
+        let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
+        return Some(
+            ProblemResponse(AppError::Forbidden.to_problem(Profile::Production, request_id, None))
+                .into_response(),
+        );
+    };
+    if let Err(err) = require_capability(auth, capability) {
+        let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
+        return Some(
+            ProblemResponse(err.to_problem(Profile::Production, request_id, None)).into_response(),
+        );
+    }
+    None
 }
 
 impl FromRequestParts<AppState> for AdminContext {
@@ -689,62 +726,32 @@ impl FromRequestParts<AppState> for AdminContext {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let auth = AuthContext::from_request_parts(parts, state).await?;
-        if auth.role != Role::Admin {
-            let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
-            return Err(ProblemResponse(AppError::Forbidden.to_problem(
-                Profile::Production,
-                request_id,
-                None,
-            ))
-            .into_response());
-        }
-        // An API key cannot reach admin endpoints (P1-034,
-        // FR-A-06 — "no admin ever", P1-040): the extractor's
-        // scope table already rejects keys on every admin
-        // route, but the guard is the second line — a key
-        // minted by an admin user must not admin through it
-        // even if a future ticket mis-rows the table. Same
-        // 403 PF-1002 as a wrong role.
-        if auth.api_key.is_some() {
-            let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
-            return Err(ProblemResponse(AppError::Forbidden.to_problem(
-                Profile::Production,
-                request_id,
-                None,
-            ))
-            .into_response());
-        }
-        // An impersonator cannot reach admin endpoints (P1-010):
-        // the token acts as the target user, and the admin who
-        // impersonated them must not use that token to act as an
-        // admin — not even to impersonate someone else. The
-        // rejection is the same 403 PF-1002 as a wrong role.
-        if auth.impersonator_id.is_some() {
-            let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
-            return Err(ProblemResponse(AppError::Forbidden.to_problem(
-                Profile::Production,
-                request_id,
-                None,
-            ))
-            .into_response());
+        if let Some(rejection) = guard_by_matrix(&auth, parts) {
+            return Err(rejection);
         }
         Ok(Self { auth })
     }
 }
 
 /// A read-only admin context (P1-009): the verified
-/// [`AuthContext`] plus the guarantee that the caller's role
-/// is [`Role::Admin`] or [`Role::Support`].
+/// [`AuthContext`] plus the guarantee that the caller holds
+/// the capability the route needs.
 ///
-/// Support is read-only: it may use the readable admin routes
-/// (user search, dashboard, audit query) but never a write —
-/// the write routes take [`AdminContext`], which rejects
-/// support with 403 `PF-1002`. The rejections, in order: no
-/// credential / bad token / unknown user → the same 401s as
-/// `AuthContext`; a verified plain user → 403 `PF-1002`; a
-/// context carrying `impersonator_id` → 403 `PF-1002` (P1-010
-/// — an impersonator cannot reach admin endpoints, reads
-/// included).
+/// Matrix-driven like [`AdminContext`] (P1-042, FR-A-07):
+/// the guard looks the route up in [`Capability::for_route`]
+/// and enforces the row — a read route admits admin + support,
+/// a write route admits admin only, so the same guard is
+/// correct on both; the type is retained so the call site
+/// still reads as "this handler is a read". Support is
+/// read-only by the matrix, not by this type: it may use the
+/// readable admin routes (user search, dashboard, audit
+/// query) but never a write — a write route's row admits
+/// admin only, whatever extractor it takes. The rejections,
+/// in order: no credential / bad token / unknown user → the
+/// same 401s as `AuthContext`; a route the matrix does not
+/// name → 403 `PF-1002` (fail closed); a caller the row does
+/// not admit (verified plain user, an API key, an
+/// impersonator) → 403 `PF-1002`.
 #[derive(Debug, Clone)]
 pub struct AdminReadContext {
     /// The verified auth context — the caller is always `Some`
@@ -760,39 +767,8 @@ impl FromRequestParts<AppState> for AdminReadContext {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let auth = AuthContext::from_request_parts(parts, state).await?;
-        if auth.role != Role::Admin && auth.role != Role::Support {
-            let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
-            return Err(ProblemResponse(AppError::Forbidden.to_problem(
-                Profile::Production,
-                request_id,
-                None,
-            ))
-            .into_response());
-        }
-        // An API key cannot reach admin endpoints (P1-034) —
-        // reads included, same second line as `AdminContext`.
-        if auth.api_key.is_some() {
-            let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
-            return Err(ProblemResponse(AppError::Forbidden.to_problem(
-                Profile::Production,
-                request_id,
-                None,
-            ))
-            .into_response());
-        }
-        // An impersonator cannot reach admin endpoints either
-        // (P1-010) — reads included: the token acts as the
-        // target user, and the admin who impersonated them must
-        // not use it to read the admin list, the dashboard, or
-        // the audit trail. Same 403 PF-1002 as a wrong role.
-        if auth.impersonator_id.is_some() {
-            let request_id = parts.extensions.get::<RequestId>().map(|id| id.0.as_str());
-            return Err(ProblemResponse(AppError::Forbidden.to_problem(
-                Profile::Production,
-                request_id,
-                None,
-            ))
-            .into_response());
+        if let Some(rejection) = guard_by_matrix(&auth, parts) {
+            return Err(rejection);
         }
         Ok(Self { auth })
     }
