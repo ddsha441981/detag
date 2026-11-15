@@ -350,11 +350,12 @@
     - [x] matrix complete
   - **Status:** DONE 2026-11-15 (29th coordinator). New `apps/api/tests/api_key_matrix.rs` (4 tests): the registry — one row per `/v1` route (65 rows: 13 `Allowed` / 14 `Forbidden` / 29 `Unprotected` / 9 `Ignored`), each walked live with a full-scope key plus the anonymous control, asserting status + problem code. The 13 gated routes (jobs 9 + webhook-endpoints 4) answer 501 `PF-5004` to a key carrying the row's scope and 403 `PF-1002` to a key lacking it; the 14 forbidden rows (profile, sessions, key management, `logout-all`, the 5 live admin routes) are 403 to any key — including a key minted by an admin user ("no admin ever", the guard's second line); the 9 auth routes ignore the key (anonymous and key responses identical — had an extractor run, the key would be 403 while anonymous is 401); the 29 `Unprotected` rows answer 501 to anonymous and key alike — recorded honestly as gaps (plain stubs with no credential check: uploads, billing, the admin stubs, `GET /v1/api-keys`, `POST /v1/me/export`) except the ones public by design (`GET /v1/plans`, provider webhooks, abuse intake). The completeness test fails on a route without a row (or a row without a route). The test app runs a generous key bucket (burst 1000) so the walk never trips the P1-037 rate limit — this suite asserts authorization, not rate limits. Docs: test-strategy ACL-matrix section + security-testing P1-040 bullet. `just verify` green: 769 passed, 0 failed (765 + 4 new), attempt 1, ~35 min, no flakes; readyz 4/4 in parallel again.
 
-- [ ] **P1-041** — API-key docs page
+- [x] **P1-041** — API-key docs page
   - **Type:** docs · **Area:** auth/apikeys · **Est:** S · **Deps:** P1-040 · **Prio:** P1
   - **Spec:** Getting-started curl/TS/py examples per api-spec; security notes (storage, rotation).
   - **AC:**
-    - [ ] docs committed
+    - [x] docs committed
+  - **Status:** DONE 2026-11-15 (30th coordinator, adopting the 29th's uncommitted tree — verified, finished, committed as one commit). New `docs/06-DELIVERY/06-api-keys-guide.md`: getting-started guide per api-spec — curl + TypeScript + Python examples (Python compiles, TS typechecks under --strict), security notes (storage, rotation, revocation). Docs-only ticket, no code. The guide's example secrets are placeholders marked with the `example-key` stopword (`.gitleaks.toml`) — the first commit attempt was blocked by the pre-commit gitleaks hook, which flagged the realistic-looking fake secrets; the values were rewritten to the stopword form (prefixes unchanged) and the hook passes. `just verify` green: 769 passed, 0 failed, attempt 2, ~38 min — attempt 1 (29th coordinator's run, pid 24175) was killed by the 21st VM reset at 42 binaries green, 0 failed; services restored per ASSUMPTION-010 (replay did the reinstall this time, ~15 min; `pf` role/db recreated, all 17 migrations re-applied) and the verify re-run from scratch.
 
 ---
 
