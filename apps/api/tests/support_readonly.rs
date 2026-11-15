@@ -74,7 +74,7 @@ fn unique_email(prefix: &str) -> String {
 /// bucket, so the tests never trip each other's rate limits
 /// (the P1-003 lesson).
 fn unique_xff() -> String {
-    format!("203.0.113.{}", Uuid::now_v7().as_u128() % 250 + 1)
+    format!("203.0.113.{}", Uuid::now_v7())
 }
 
 /// Register a user, return its id.

@@ -106,7 +106,7 @@ fn unique_email(prefix: &str) -> String {
 /// bucket, so tests never trip each other's rate limits (the
 /// P1-003 lesson).
 fn unique_xff() -> String {
-    format!("203.0.113.{}", Uuid::now_v7().as_u128() % 250 + 1)
+    format!("203.0.113.{}", Uuid::now_v7())
 }
 
 fn json_request(method: Method, uri: &str, body: Value) -> Request<axum::body::Body> {
