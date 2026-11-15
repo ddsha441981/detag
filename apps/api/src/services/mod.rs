@@ -13,6 +13,7 @@ pub mod password;
 pub mod password_reset;
 pub mod profile;
 pub mod pwned;
+pub mod quota;
 pub mod refresh;
 pub mod register;
 pub mod revocation;
