@@ -101,6 +101,14 @@ pub struct Problem {
     /// exactly the RFC 7807 fields the contract test locks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub field_errors: Option<Vec<FieldError>>,
+    /// Plan-matrix link (P1-054, FR-P-06). Present ONLY on quota
+    /// denials (`PF-3001` / `PF-3002` / `PF-3008`) — the
+    /// `{PF_PUBLIC_BASE_URL}/plans` URL the client links when it
+    /// renders the 429. Omitted everywhere else, so every other
+    /// error body keeps exactly the RFC 7807 fields the contract
+    /// test locks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upgrade_url: Option<String>,
 }
 
 impl Problem {
@@ -112,6 +120,12 @@ impl Problem {
     /// Attach per-field failures (validation rejections only).
     pub fn with_field_errors(mut self, errors: Vec<FieldError>) -> Self {
         self.field_errors = Some(errors);
+        self
+    }
+
+    /// Attach the plan-matrix link (quota denials only, P1-054).
+    pub fn with_upgrade_url(mut self, url: impl Into<String>) -> Self {
+        self.upgrade_url = Some(url.into());
         self
     }
 }
@@ -496,6 +510,9 @@ impl AppError {
             request_id: request_id.map(str::to_string),
             // Per-field failures attach via `with_field_errors` (P0-101).
             field_errors: None,
+            // The plan-matrix link attaches via `with_upgrade_url`
+            // (P1-054, quota denials only).
+            upgrade_url: None,
         }
     }
 }
@@ -725,6 +742,27 @@ mod tests {
         assert_eq!(json["code"], "PF-5001");
         assert_eq!(json["detail"], "the database is temporarily unavailable");
         assert_eq!(json["request_id"], "01JREQUESTID");
+    }
+
+    /// The plan-matrix link (P1-054): absent by default, present
+    /// exactly when attached — and only the link is added, so a
+    /// denial body is the golden body plus `upgrade_url`.
+    #[test]
+    fn upgrade_url_present_only_when_attached() {
+        let plain = AppError::QuotaImagesExceeded.to_problem(Profile::Production, None, None);
+        assert!(plain.upgrade_url.is_none());
+        assert!(plain.to_json().get("upgrade_url").is_none());
+
+        let linked = AppError::QuotaImagesExceeded
+            .to_problem(Profile::Production, None, None)
+            .with_upgrade_url("http://localhost:8080/plans");
+        let json = linked.to_json();
+        assert_eq!(json["upgrade_url"], "http://localhost:8080/plans");
+        assert_eq!(json["code"], "PF-3001");
+        assert_eq!(
+            json["detail"],
+            "image quota exceeded; upgrade your plan for more"
+        );
     }
 
     /// Dev shows the caller detail; request_id is omitted when unknown.

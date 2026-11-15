@@ -60,6 +60,17 @@ pub const HEADER_IMAGES_REMAINING: &str = "x-quota-images-remaining";
 /// quota left, same rule as [`HEADER_IMAGES_REMAINING`].
 pub const HEADER_VIDEO_SECONDS_REMAINING: &str = "x-quota-video-seconds-remaining";
 
+/// The plan-matrix link (P1-054, FR-P-06): the console's
+/// plans page at `{PF_PUBLIC_BASE_URL}/plans`. The console
+/// serves it in Phase 4; until then the URL is the
+/// contract — the setting is the source, so the link never
+/// hardcodes a host and the owner can change it without a
+/// code change (ASSUMPTION-020). A trailing slash on the
+/// base is trimmed, so the link never doubles it.
+pub fn plans_url(public_base_url: &str) -> String {
+    format!("{}/plans", public_base_url.trim_end_matches('/'))
+}
+
 /// A passed pre-check: the snapshot the headers are stamped
 /// from, plus the concurrency numbers (for the log line, not
 /// a header — the api-spec names only the two quota
@@ -186,4 +197,22 @@ pub async fn snapshot_for_user(
     let resolved = effective_plan(&state.plans, &state.pool, user_id).await?;
     let snapshot = quota_snapshot_for_plan(&state.pool, user_id, &resolved.plan).await?;
     Ok(snapshot)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plans_url_appends_plans_to_the_public_base() {
+        assert_eq!(
+            plans_url("http://localhost:8080"),
+            "http://localhost:8080/plans"
+        );
+        assert_eq!(
+            plans_url("https://console.example.com/"),
+            "https://console.example.com/plans"
+        );
+        assert_eq!(plans_url("https://x.example///"), "https://x.example/plans");
+    }
 }
