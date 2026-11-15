@@ -171,3 +171,19 @@ pub async fn precheck_for_create(
 ) -> Result<QuotaOutcome, QuotaError> {
     precheck(&state.plans, &state.pool, user_id, upload_id).await
 }
+
+/// The caller's quota snapshot (P1-052).
+///
+/// The effective plan + today's durable snapshot — the same
+/// two sources the pre-check reads, so headers stamped from
+/// it agree with the gate and with `/v1/me` by construction.
+/// Used by the create routes that carry headers without
+/// gating (the no-body / no-`upload_id` create path, retry).
+pub async fn snapshot_for_user(
+    state: &AppState,
+    user_id: Uuid,
+) -> Result<QuotaSnapshot, QuotaError> {
+    let resolved = effective_plan(&state.plans, &state.pool, user_id).await?;
+    let snapshot = quota_snapshot_for_plan(&state.pool, user_id, &resolved.plan).await?;
+    Ok(snapshot)
+}

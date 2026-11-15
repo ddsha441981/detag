@@ -15,14 +15,23 @@
 //! `PF-3002` / `PF-3008`, problem+json with the upgrade
 //! hint, `X-Quota-*` headers on the denial); a request
 //! inside quota reaches the stub's 501 with the same
-//! headers. A request with no body, or no `upload_id`,
-//! cannot name a job to check — it reaches the stub
-//! untouched (both probe shapes: an empty body with no
-//! content-type AND an empty body with `application/json` —
-//! the matrix probe sends the latter), with no quota
-//! headers: there is nothing to check yet. A non-empty body
-//! that is not valid JSON is 422 `PF-2002` (the same
-//! problem the `Json` extractor used to produce).
+//! headers. A non-empty body that is not valid JSON is 422
+//! `PF-2002` (the same problem the `Json` extractor used
+//! to produce).
+//!
+//! P1-052: every job-creating response carries the
+//! `X-Quota-*` headers — a request with no body, or no
+//! `upload_id`, reaches the stub WITH the caller's headers
+//! (both probe shapes: an empty body with no content-type
+//! AND an empty body with `application/json` — the matrix
+//! probe sends the latter), and `POST /v1/jobs/{id}/retry`
+//! carries them too (the caller's snapshot; the handler
+//! reads no job row, so an unknown id still 501s — the
+//! 404 ownership proof lands with the real retry handler
+//! in Phase 2, ASSUMPTION-018). The numbers come from the
+//! same durable snapshot as the gate and as `/v1/me`, so
+//! all three agree by construction (the UI contract is
+//! `docs/06-DELIVERY/08-quota-ui-contract.md`).
 //!
 //! The body is read as raw bytes on purpose: axum's
 //! `Option<Json<T>>` treats an empty body as "no body"
@@ -91,6 +100,21 @@ fn stub_response(request_id: Option<&str>) -> Response {
         .into_response()
 }
 
+/// The stub's 501 with the caller's quota headers (P1-052):
+/// every job-creating response carries the remaining quota,
+/// gated or not. A snapshot failure is 500, like the gate's
+/// own failure arm — the headers are data, not decoration.
+async fn stub_with_headers(state: &AppState, user_id: Uuid, request_id: Option<&str>) -> Response {
+    match quota::snapshot_for_user(state, user_id).await {
+        Ok(snapshot) => with_quota_headers(stub_response(request_id), &snapshot),
+        Err(err) => {
+            tracing::error!(error = ?err, "quota snapshot failed");
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// `POST /v1/jobs` (P1-051): the quota pre-check, then the
 /// stub. Auth runs first (the extractor: no credential is
 /// 401, a key without `jobs:write` is 403 — the stub's
@@ -100,9 +124,11 @@ fn stub_response(request_id: Option<&str>) -> Response {
 /// the stub's 501 with the same headers. No body (empty, with
 /// or without a JSON content-type — see the module docs for
 /// why the bytes are read raw), or no `upload_id`, reaches
-/// the stub with no headers — there is no job to check. A
-/// non-empty body that does not parse as JSON is 422
-/// `PF-2002`, the same problem the `Json` extractor produced.
+/// the stub WITH the caller's quota headers (P1-052 — every
+/// create response carries them; there is no job to check,
+/// but the caller still sees what is left). A non-empty body
+/// that does not parse as JSON is 422 `PF-2002`, the same
+/// problem the `Json` extractor produced.
 async fn create_job(
     State(state): State<AppState>,
     Extension(id): Extension<RequestId>,
@@ -110,8 +136,17 @@ async fn create_job(
     body: Bytes,
 ) -> Response {
     let request_id = Some(id.0.as_str());
+    let Some(user) = auth.user else {
+        // The extractor guarantees a user for a verified context.
+        return ProblemResponse(AppError::Internal.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
     if body.is_empty() || body.iter().all(|b| b.is_ascii_whitespace()) {
-        return stub_response(request_id);
+        return stub_with_headers(&state, user.id, request_id).await;
     }
     let req: JobCreateRequest = match serde_json::from_slice(&body) {
         Ok(req) => req,
@@ -125,16 +160,7 @@ async fn create_job(
         }
     };
     let Some(upload_id) = req.upload_id else {
-        return stub_response(request_id);
-    };
-    let Some(user) = auth.user else {
-        // The extractor guarantees a user for a verified context.
-        return ProblemResponse(AppError::Internal.to_problem(
-            Profile::Production,
-            request_id,
-            None,
-        ))
-        .into_response();
+        return stub_with_headers(&state, user.id, request_id).await;
     };
     match quota::precheck_for_create(&state, user.id, upload_id).await {
         Ok(QuotaOutcome::Allowed(decision)) => {
@@ -157,6 +183,32 @@ async fn create_job(
     }
 }
 
+/// `POST /v1/jobs/{id}/retry` (P1-052): the stub, with the
+/// caller's quota headers. A retry creates a new run of the
+/// job, so it counts against quota (api-spec) — the caller
+/// sees what is left. The handler reads NO job row: the
+/// 404 ownership proof (P1-045) lands with the real retry
+/// handler in Phase 2, when the handler first reads the job
+/// (ASSUMPTION-018). Auth runs first (the extractor: no
+/// credential is 401, a key without `jobs:write` is 403).
+async fn retry_job(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    auth: AuthContext,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let Some(user) = auth.user else {
+        // The extractor guarantees a user for a verified context.
+        return ProblemResponse(AppError::Internal.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
+    stub_with_headers(&state, user.id, request_id).await
+}
+
 /// The jobs nest: create, list, get, cancel, retry, SSE events,
 /// result, report, attestation.
 pub fn router() -> Router<AppState> {
@@ -166,7 +218,7 @@ pub fn router() -> Router<AppState> {
             .route("/", post(create_job).get(stub_authed))
             .route("/{id}", get(stub_authed))
             .route("/{id}/cancel", post(stub_authed))
-            .route("/{id}/retry", post(stub_authed))
+            .route("/{id}/retry", post(retry_job))
             .route("/{id}/events", get(stub_authed))
             .route("/{id}/result", get(stub_authed))
             .route("/{id}/report", get(stub_authed))
