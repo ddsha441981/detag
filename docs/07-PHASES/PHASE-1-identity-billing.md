@@ -382,11 +382,12 @@
     - [x] write attempts 403
   - **Status:** DONE 2026-11-15 (32nd coordinator). New `apps/api/tests/support_readonly.rs` (4 tests): the matrix assert (support admitted exactly on the `.read` capabilities, admin on all, user/anonymous on none; every admin route maps to exactly one capability); support reads the two live views with real rows (users search returns the seeded users with role + status, jobs list returns the seeded job with kind + status and no key material); support is admitted on all 8 stub reads (501 `PF-5004`); all 9 writes are 403 `PF-1002` with no state change (denied suspend leaves the target active, denied restore leaves a suspended target suspended, denied impersonate writes no audit row). Docs: api-spec support note, test-strategy P1-044 section, security-testing P1-044 bullet. Targeted: support_readonly 4/4. Full `just verify` green: 783 passed, 0 failed (779 + 4 new support_readonly), attempt 1, ~46 min, no flakes (log `.scratch/verify-p1-044.log`); drift checks green (openapi / route-table / config-table / env / sqlx-prepare / snapshots).
 
-- [ ] **P1-045** — IDOR sweep v1
+- [x] **P1-045** — IDOR sweep v1
   - **Type:** test · **Area:** auth/rbac · **Est:** M · **Deps:** P1-044 · **Prio:** P1
   - **Spec:** For each owned resource (jobs, uploads, keys, sessions, webhooks): cross-user access returns 404 (not 200/403 leak) per test plan.
   - **AC:**
-    - [ ] sweep green
+    - [x] sweep green
+  - **Status:** DONE 2026-11-15 (32nd coordinator). New `apps/api/tests/idor_sweep.rs` (3 tests): live families proven end to end — keys (B revoking / rotating A's key is 404 `PF-2010`, the key still authenticates afterwards, A revoking it is 204, then it is 401) and sessions (B's list never contains A's session, B deleting A's session is 404, A's session still listed afterwards, A deleting it is 204); the 18 stub resource routes (jobs, uploads, webhook-endpoints, api-keys list) answer 501 `PF-5004` to an authenticated cross-user caller — no data, no 200, no 403 — with the 404 ownership proof landing with each handler ticket. Docs: test-strategy P1-045 section, security-testing P1-045 bullet. Targeted: idor_sweep 3/3. Full `just verify` green: 786 passed, 0 failed (783 + 3 new idor_sweep), attempt 2, ~44 min, no flakes (log `.scratch/verify-p1-045.log`; attempt 1 died at fmt-check, fixed with `cargo fmt`); drift checks green (openapi / route-table / config-table / env / sqlx-prepare / snapshots).
 
 - [ ] **P1-046** — Privileged action audit middleware
   - **Type:** feat · **Area:** auth/rbac · **Est:** S · **Deps:** P1-045 · **Prio:** P1
