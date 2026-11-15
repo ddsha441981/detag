@@ -205,6 +205,14 @@ async fn golden_429_variants() {
         "image quota exceeded; upgrade your plan for more",
     )
     .await;
+    assert_responder_golden(
+        AppError::QuotaConcurrencyExceeded,
+        429,
+        "PF-3008",
+        "quota_concurrency_exceeded",
+        "concurrency limit reached; upgrade your plan for more",
+    )
+    .await;
 }
 
 #[tokio::test]

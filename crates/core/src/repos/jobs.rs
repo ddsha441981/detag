@@ -350,6 +350,31 @@ pub async fn list_for_admin(
     }
 }
 
+/// How many of a user's jobs currently occupy a concurrency
+/// slot (P1-051): `queued` or `running`. `held` jobs do NOT
+/// count — `hold_queued_for_user` parks them, they hold no
+/// worker — and neither do finished / failed / cancelled jobs
+/// (their status is whatever the Phase 2/3 lifecycle wrote;
+/// the slot is freed when the job leaves `queued`/`running`).
+/// The count is a point-in-time read, not a reservation: the
+/// crash-safe slot acquire/release with TTL is P1-053's, and
+/// the atomic check-and-record lands with real job creation
+/// in Phase 2 (ASSUMPTION-017).
+pub async fn count_running_for_user(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+) -> Result<i64, RepoError> {
+    let row = sqlx::query!(
+        "SELECT COUNT(*) AS \"count!\" FROM jobs \
+         WHERE user_id = $1 AND status IN ('queued', 'running')",
+        user_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(row.count)
+}
+
 /// Set the status (and bump `updated_at`). `NotFound` when the id
 /// does not exist. No transition validation here — see the module
 /// docs.

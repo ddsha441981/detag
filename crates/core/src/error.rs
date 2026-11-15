@@ -204,6 +204,14 @@ pub enum AppError {
     /// Kit: video-seconds quota exhausted (pre-check). PF-3002, 429.
     #[error("video seconds quota exceeded")]
     QuotaVideoSecondsExceeded,
+    /// Kit: per-plan concurrency cap reached (pre-check, P1-051).
+    /// PF-3008, 429. The next free PF-3xxx slot (3003–3007 are
+    /// taken); the detail carries the FR-P-06 upgrade hint, like
+    /// PF-3001/3002 — PF-3005 (`queue_full`) is the system-wide
+    /// queue signal and must NOT stand in for a per-user plan
+    /// cap (its detail has no upgrade hint). ADR-0026.
+    #[error("concurrency limit reached")]
+    QuotaConcurrencyExceeded,
     /// Kit: plan does not entitle the requested feature. PF-3003, 403.
     #[error("feature not entitled")]
     FeatureNotEntitled,
@@ -295,6 +303,7 @@ impl AppError {
             Conflict => "PF-2011",
             QuotaImagesExceeded => "PF-3001",
             QuotaVideoSecondsExceeded => "PF-3002",
+            QuotaConcurrencyExceeded => "PF-3008",
             FeatureNotEntitled => "PF-3003",
             RetryAttemptsExceeded => "PF-3004",
             QueueFull => "PF-3005",
@@ -339,6 +348,7 @@ impl AppError {
             Conflict => 409,
             QuotaImagesExceeded => 429,
             QuotaVideoSecondsExceeded => 429,
+            QuotaConcurrencyExceeded => 429,
             FeatureNotEntitled => 403,
             RetryAttemptsExceeded => 409,
             QueueFull => 429,
@@ -383,6 +393,7 @@ impl AppError {
             Conflict => "conflict",
             QuotaImagesExceeded => "quota_images_exceeded",
             QuotaVideoSecondsExceeded => "quota_video_seconds_exceeded",
+            QuotaConcurrencyExceeded => "quota_concurrency_exceeded",
             FeatureNotEntitled => "feature_not_entitled",
             RetryAttemptsExceeded => "retry_attempts_exceeded",
             QueueFull => "queue_full",
@@ -431,6 +442,7 @@ impl AppError {
             Conflict => "the request conflicts with the current state",
             QuotaImagesExceeded => "image quota exceeded; upgrade your plan for more",
             QuotaVideoSecondsExceeded => "video-seconds quota exceeded; upgrade your plan for more",
+            QuotaConcurrencyExceeded => "concurrency limit reached; upgrade your plan for more",
             FeatureNotEntitled => "your plan does not include this feature; upgrade to use it",
             RetryAttemptsExceeded => "the retry limit for this job was reached",
             QueueFull => "the system is busy; retry shortly",
@@ -575,6 +587,7 @@ mod tests {
             Conflict,
             QuotaImagesExceeded,
             QuotaVideoSecondsExceeded,
+            QuotaConcurrencyExceeded,
             FeatureNotEntitled,
             RetryAttemptsExceeded,
             QueueFull,
@@ -600,7 +613,7 @@ mod tests {
     #[test]
     fn every_variant_maps_to_status_code_title() {
         let variants = all_variants();
-        assert_eq!(variants.len(), 37, "a variant was added without a test");
+        assert_eq!(variants.len(), 38, "a variant was added without a test");
         for err in &variants {
             let code = err.code();
             let status = err.status();
@@ -638,6 +651,7 @@ mod tests {
                 | AppError::Conflict => assert!((2000..3000).contains(&n)),
                 AppError::QuotaImagesExceeded
                 | AppError::QuotaVideoSecondsExceeded
+                | AppError::QuotaConcurrencyExceeded
                 | AppError::FeatureNotEntitled
                 | AppError::RetryAttemptsExceeded
                 | AppError::QueueFull
@@ -929,6 +943,13 @@ mod tests {
                 "video-seconds quota exceeded; upgrade your plan for more",
             ),
             (
+                QuotaConcurrencyExceeded,
+                "PF-3008",
+                429,
+                "quota_concurrency_exceeded",
+                "concurrency limit reached; upgrade your plan for more",
+            ),
+            (
                 FeatureNotEntitled,
                 "PF-3003",
                 403,
@@ -1049,7 +1070,7 @@ mod tests {
     #[test]
     fn variant_to_response_table() {
         let table = response_table();
-        assert_eq!(table.len(), 37, "a variant is missing from the table");
+        assert_eq!(table.len(), 38, "a variant is missing from the table");
         assert_eq!(
             table.len(),
             all_variants().len(),
@@ -1058,7 +1079,7 @@ mod tests {
         let mut codes: Vec<&str> = table.iter().map(|(_, c, _, _, _)| *c).collect();
         codes.sort_unstable();
         codes.dedup();
-        assert_eq!(codes.len(), 37, "two variants share a code");
+        assert_eq!(codes.len(), 38, "two variants share a code");
 
         for (err, code, status, title, detail) in &table {
             assert_eq!(err.code(), *code, "{code}");

@@ -9,8 +9,11 @@
 //!   `video_seconds`, 48 h TTL ([`TTL_USAGE_COUNTER`]).
 //!   Increments are one atomic Lua script (HINCRBY both
 //!   fields + EXPIRE), so concurrent job-creates can never
-//!   lose a count — the quota middleware (P1-051) reads
-//!   this hash for its pre-check.
+//!   lose a count — the quota middleware (P1-051) reads the
+//!   DURABLE snapshot for its pre-check, not this hash (the
+//!   snapshot is the source the `/v1/me` quota agrees with
+//!   by construction; see ASSUMPTION-017 — the hash is the
+//!   metering hot path, the DB row is the decision source).
 //! - **Postgres (the durable truth):** the
 //!   `usage_counters` row for (user, UTC day), upserted on
 //!   every record (the write-through leg). The DB row is
