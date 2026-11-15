@@ -222,8 +222,8 @@ stubs take no extractor yet, so their guard lands with
 their handler ticket (P1-043 puts the guard on every
 `/v1/admin/*` route) — but the row is pinned here first,
 so the intended capability is recorded before the guard
-lands. The full rendered matrix (admin guide) is P1-047's
-docs ticket.
+lands. The full rendered matrix is the admin guide
+(`docs/06-DELIVERY/07-admin-guide.md`, P1-047).
 
 ## Admin route guard (P1-043)
 

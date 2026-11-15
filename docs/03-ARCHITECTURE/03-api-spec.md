@@ -749,7 +749,8 @@ per write route, reads never audited); the three live writes
 services write inside the mutation's transaction and mark
 the response `AuditHandled`, so the middleware stands down
 and the row exists exactly once. The full rendered matrix
-lands in the admin guide with P1-047.
+is the admin guide (`docs/06-DELIVERY/07-admin-guide.md`,
+P1-047).
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/v1/admin/metrics/dashboard` | jobs today, success rate, p95, queue depth, MRR, DAU |
