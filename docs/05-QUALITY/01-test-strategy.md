@@ -365,6 +365,36 @@ fails, so the forged role never reaches a guard. The role
 is never trusted from the token at all: it is re-read from
 the user row on every request (P1-022).
 
+## Plans service (P1-049)
+
+The catalog is the seeded `plans` table read through a
+cache, and the effective plan is the newest live
+subscription's plan, else Free —
+`crates/core/src/plans.rs` (FR-P-01) +
+`apps/api/tests/plans.rs` (7 tests). `Entitlements`
+parses the seven jsonb keys in exactly one place, and the
+parse is fail-closed: a missing, mistyped, or negative
+numeric key reads as 0, an unknown lane reads as
+`standard`, a non-bool feature value is ignored — a plan
+that does not grant a quota grants nothing. The seed
+values are pinned per plan (Free 10/0/25 MB/6 h/1,
+Pro 500/3600/1 GB/24 h/3 + api_keys + webhooks,
+Business 5000/18000/4 GB/72 h/10 + priority + batch).
+The catalog caches for 5 minutes (`PLAN_CACHE_TTL`) and
+invalidates explicitly on admin edit; an edit made behind
+its back is visible once the TTL expires (proven by a
+short-TTL test). Resolution is proven live: no subscription
+→ Free (`FreeDefault`); `trialing`/`active` → that plan;
+`past_due`/`canceled` → Free; two live subscriptions →
+the newest wins (not the dearest). A catalog with no
+`free` row errors `MissingFreePlan` instead of inventing
+a plan — proven with an empty store, never by deleting
+the seeded row (the harness DB is shared). The profile
+now resolves through `effective_plan` (the quota snapshot
+parses through the same `Entitlements::from_value`), so
+the profile, the middleware (P1-051), and the snapshot
+can never disagree about what a plan grants.
+
 ## Property testing (P0-096)
 
 Property tests live in `crates/core/tests/prop/` (cursor codec,

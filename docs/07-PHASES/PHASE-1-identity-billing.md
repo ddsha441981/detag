@@ -414,11 +414,12 @@
 
 ## E1.6 — Plans & entitlements (area: billing/plans)
 
-- [ ] **P1-049** — Plans service
+- [x] **P1-049** — Plans service
   - **Type:** feat · **Area:** billing/plans · **Est:** M · **Deps:** — · **Prio:** P1
   - **Spec:** Catalog from db (seeded) + cache; entitlement struct {daily_images, daily_video_seconds, max_bytes, result_ttl_hours, concurrency, lane, features}; effective-plan resolution (subscription override).
   - **AC:**
-    - [ ] resolution tested
+    - [x] resolution tested
+  - **Status:** DONE 2026-11-15 (37th coordinator): new `crates/core/src/plans.rs` — `Entitlements` (all 7 keys, fail-closed parse: missing/mistyped/negative numerics read as 0, unknown lane reads as `standard`, non-bool feature values ignored) + `PlanCatalog` over `PlanStore`/`PlanCache` traits (the `flags.rs` shape: `SqlxPlanStore` + `InMemoryPlanCache`, 5-minute `PLAN_CACHE_TTL`, explicit `invalidate` for the admin edit path; Redis impl later per NFR-10) + `effective_plan` in `apps/api/src/services/entitlements.rs` (newest live `trialing`/`active` subscription overrides the Free default; `past_due`/`canceled` grant nothing; newest live wins, not dearest; missing Free plan errors `MissingFreePlan`). The catalog is wired into `AppState` (one shared instance, built in `from_settings`) and the profile now resolves through `effective_plan` (the quota snapshot parses through the same `Entitlements::from_value`). New `apps/api/tests/plans.rs` (7 tests): catalog lists the 3 seeded plans cheapest-first with FR-P-01 amounts + all 7 entitlement fields per plan; resolution — no subscription → Free (`FreeDefault`), `trialing` → Pro, `active` → Business, `past_due`/`canceled` → Free, newest live wins both directions, missing Free plan errors (proven with an empty store, never by deleting the seeded row). Targeted green: core plans 5/5, api plans 7/7, profile 16/16. Full `just verify` green: 809 passed, 0 failed (797 + 12 new), attempt 1, ~48 min, no flakes. Drift checks green (openapi / route-table / config-table / env / sqlx-prepare / snapshots). One fix while implementing: clippy `derivable_impls` on the manual `Default` for `Lane` (now derived with `#[default]`). Doc fix in the same commit: the stale `subscriptions::active_for_user` comment that claimed a `past_due` subscription "still grants the plan" — the SQL only selects `trialing`/`active`, and ADR-0025 pins that. Docs: test-strategy P1-049 section, data-model plans row pointer, ADR-0025 (catalog cache + resolution semantics). The 26th VM-reset update line was added to ASSUMPTION-010 in this commit.
 
 - [ ] **P1-050** — Quota counters
   - **Type:** feat · **Area:** billing/plans · **Est:** M · **Deps:** P1-049 · **Prio:** P1

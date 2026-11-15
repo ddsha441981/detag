@@ -16,6 +16,7 @@ pub mod metrics;
 pub mod migrate;
 pub mod pagination;
 pub mod password;
+pub mod plans;
 pub mod redis;
 pub mod repos;
 pub mod seed;
