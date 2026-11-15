@@ -197,6 +197,34 @@ user's own key is 403 on every live admin route ("no admin
 ever"). P1-042's full roles matrix reuses this registry
 shape.
 
+## Roles + permission matrix (P1-042)
+
+`apps/api/src/authz.rs` is the single source for who may do
+what on the admin surface: one `Capability` per admin
+operation (16 code constants, `admin.users.read` …),
+each naming the roles that may use it — reads admit admin +
+support, writes and impersonation admit admin only — plus
+the route→capability table for all 19 `/v1/admin/*`
+routes. The guards (`AdminContext`, `AdminReadContext`)
+look the route up in the table and enforce the row, so the
+matrix, not the extractor type, decides; an API key or an
+impersonation token is 403 on every row. The registry
+`apps/api/tests/authz_matrix.rs` pins the table three ways:
+a completeness test (every admin route has exactly one row,
+every row names a real route), a truth-table test (each
+row's capability resolves through `for_route` and admits
+exactly the promised roles), and a live walk (the 5 live
+routes × anonymous / user / support / admin / an admin
+user's key — 401 `PF-1001` with no credential, 403
+`PF-1002` for a wrong role or a key, 200 for an admitted
+role). The 14 stub rows are promises, not proofs — the
+stubs take no extractor yet, so their guard lands with
+their handler ticket (P1-043 puts the guard on every
+`/v1/admin/*` route) — but the row is pinned here first,
+so the intended capability is recorded before the guard
+lands. The full rendered matrix (admin guide) is P1-047's
+docs ticket.
+
 ## Property testing (P0-096)
 
 Property tests live in `crates/core/tests/prop/` (cursor codec,

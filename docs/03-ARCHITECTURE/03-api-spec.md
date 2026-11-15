@@ -725,6 +725,14 @@ test (`migration_purge_cascade_triggers.rs`).
 Delivery: `PF-Signature: sha256=<hmac(secret, body+timestamp)>`, `PF-Timestamp` header, replay window 5 min, retries 1/5/60 min, then dead.
 
 ### Admin (role: admin; support role gets read-only subset)
+
+The capability table is the single source:
+`apps/api/src/authz.rs` (`Capability`, one code constant
+per admin operation — reads admit admin + support, writes
+and impersonation admit admin only) — the guards consult
+it and `apps/api/tests/authz_matrix.rs` walks it live
+(P1-042, FR-A-07). The full rendered matrix lands in the
+admin guide with P1-047.
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/v1/admin/metrics/dashboard` | jobs today, success rate, p95, queue depth, MRR, DAU |
