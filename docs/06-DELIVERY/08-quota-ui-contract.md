@@ -67,17 +67,19 @@ the snapshot — both already floor at 0.
 
 An over-quota create is 429 `problem+json`:
 
-| Condition | Code | Detail (ends with the upgrade hint) |
-| --- | --- | --- |
-| No images left | `PF-3001` | `image quota exceeded; upgrade your plan for more` |
-| Not enough video-seconds | `PF-3002` | `video-seconds quota exceeded; upgrade your plan for more` |
-| No concurrency slot | `PF-3008` | `concurrency limit reached; upgrade your plan for more` |
+| Condition | Code | Detail (ends with the upgrade hint) | `upgrade_url` |
+| --- | --- | --- | --- |
+| No images left | `PF-3001` | `image quota exceeded; upgrade your plan for more` | `{PF_PUBLIC_BASE_URL}/plans` |
+| Not enough video-seconds | `PF-3002` | `video-seconds quota exceeded; upgrade your plan for more` | `{PF_PUBLIC_BASE_URL}/plans` |
+| No concurrency slot | `PF-3008` | `concurrency limit reached; upgrade your plan for more` | `{PF_PUBLIC_BASE_URL}/plans` |
 
 Render rule: on 429, show the detail verbatim and link the
-plan matrix — never silently degrade, never queue the job
-(FR-P-06). A missing or foreign `upload_id` is 404
-`PF-2010`, not a quota denial. A non-empty body that is not
-valid JSON is 422 `PF-2002`.
+plan matrix at the `upgrade_url` from the body — never
+silently degrade, never queue the job (FR-P-06; the full
+policy is `docs/06-DELIVERY/09-overage-policy.md`). A
+missing or foreign `upload_id` is 404 `PF-2010`, not a
+quota denial. A non-empty body that is not valid JSON is
+422 `PF-2002`.
 
 ## Current plan limits (seeded)
 

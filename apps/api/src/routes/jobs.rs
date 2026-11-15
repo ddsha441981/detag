@@ -19,6 +19,14 @@
 //! `PF-2002` (the same problem the `Json` extractor used
 //! to produce).
 //!
+//! P1-054: every quota denial also carries the plan-matrix
+//! link (`upgrade_url` = `{PF_PUBLIC_BASE_URL}/plans`) in
+//! the problem body, so the client links the plan matrix
+//! without hardcoding a host — and the denial creates no
+//! job row, records no usage, acquires no slot, and
+//! enqueues nothing (the overage policy is
+//! `docs/06-DELIVERY/09-overage-policy.md`).
+//!
 //! P1-052: every job-creating response carries the
 //! `X-Quota-*` headers — a request with no body, or no
 //! `upload_id`, reaches the stub WITH the caller's headers
@@ -167,7 +175,12 @@ async fn create_job(
             with_quota_headers(stub_response(request_id), &decision.snapshot)
         }
         Ok(QuotaOutcome::Denied(err, snapshot)) => {
-            let problem = err.to_problem(Profile::Production, request_id, None);
+            // P1-054: the denial links the plan matrix, so the
+            // client can render the upgrade path without
+            // hardcoding a host; no other error carries the link.
+            let problem = err
+                .to_problem(Profile::Production, request_id, None)
+                .with_upgrade_url(quota::plans_url(&state.settings.public_base_url));
             let res = ProblemResponse(problem).into_response();
             with_quota_headers(res, &snapshot)
         }
