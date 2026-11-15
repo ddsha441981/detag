@@ -13,6 +13,7 @@
 //! | --- | --- | --- |
 //! | `flags` | feature-flag cache (P0-022, E0.8) | `TTL_FLAG_CACHE` (30 s) |
 //! | `usage` | daily usage-counter mirrors (Phase 1) | `TTL_USAGE_COUNTER` (48 h) |
+//! | `slots` | per-user concurrency-slot leases (P1-053) | `TTL_SLOT_LEASE` (1 h) |
 //! | `ratelimit` | rate-limit buckets (P0-048) | set by the limiter per window — no const here |
 //! | `cache` | get_or_set cache entries (P0-049) | set per call — no const here |
 //! | `pubsub` | job event channels (P0-050) | none — channels are ephemeral |
@@ -46,6 +47,16 @@ pub const TTL_USAGE_COUNTER: Duration = Duration::from_secs(48 * 3600);
 /// shorter plan TTL caps its own entries; this is the ceiling.
 pub const TTL_RESULT_MAX: Duration = Duration::from_secs(72 * 3600);
 
+/// Concurrency-slot lease TTL: a slot lease lives 1 h, the
+/// same horizon as the `worker_heartbeats` staleness prune
+/// (data-model.md — a worker unheard from for 1 h is pruned
+/// as dead), so a slot never outlives its dead worker by
+/// more than the horizon the system already uses to declare
+/// a worker dead. The lease is renewed by the worker's
+/// heartbeat while the job runs (P1-053); it is a lease,
+/// not a job timeout.
+pub const TTL_SLOT_LEASE: Duration = Duration::from_secs(3600);
+
 /// One Redis namespace (the `{ns}` in `pf:{ns}:{key}`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Namespace {
@@ -65,6 +76,8 @@ pub enum Namespace {
     Jobs,
     /// Rate-limit abuse counters (P1-037).
     Abuse,
+    /// Per-user concurrency-slot leases (P1-053).
+    Slots,
 }
 
 impl Namespace {
@@ -79,6 +92,7 @@ impl Namespace {
             Namespace::Idempotency => "idempotency",
             Namespace::Jobs => "jobs",
             Namespace::Abuse => "abuse",
+            Namespace::Slots => "slots",
         }
     }
 }
@@ -154,6 +168,14 @@ pub fn job_key(job_id: &Uuid) -> String {
     key(Namespace::Jobs, &job_id.to_string())
 }
 
+/// Concurrency-slot lease set for `user_id` (P1-053):
+/// the sorted set holding the user's live slot leases
+/// (`pf:slots:{user}`, member = job id, score =
+/// lease-expiry epoch-ms).
+pub fn slots_key(user_id: &Uuid) -> String {
+    key(Namespace::Slots, &user_id.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,6 +212,10 @@ mod tests {
         assert_eq!(
             job_key(&uuid()),
             "pf:jobs:0198c8d2-0000-7000-8000-000000000001"
+        );
+        assert_eq!(
+            slots_key(&uuid()),
+            "pf:slots:0198c8d2-0000-7000-8000-000000000001"
         );
         assert_eq!(
             api_key_rate_limit_abuse_key(&uuid()),
