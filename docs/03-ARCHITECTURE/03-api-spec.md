@@ -731,8 +731,11 @@ The capability table is the single source:
 per admin operation — reads admit admin + support, writes
 and impersonation admit admin only) — the guards consult
 it and `apps/api/tests/authz_matrix.rs` walks it live
-(P1-042, FR-A-07). The full rendered matrix lands in the
-admin guide with P1-047.
+(P1-042, FR-A-07). Since P1-043 the guard is on every
+admin route, live or stub: the stubs take `admin_stub` /
+`admin_read_stub` (guard first, 501 after), so an
+unauthenticated or wrong-role caller never sees a 501. The
+full rendered matrix lands in the admin guide with P1-047.
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/v1/admin/metrics/dashboard` | jobs today, success rate, p95, queue depth, MRR, DAU |

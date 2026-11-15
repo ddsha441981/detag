@@ -14,7 +14,8 @@
 //!   in the extractor's scope table — fail closed); no
 //!   credential is 401. This covers the live authed routes
 //!   keys must never call (profile, sessions, key management,
-//!   `logout-all`, the live admin routes).
+//!   `logout-all`, all 19 admin routes since P1-043 put the
+//!   matrix guard on the stubs too).
 //! - `Unprotected` — NO credential is checked at all: the
 //!   plain 501 stub answers anonymous and key alike. These
 //!   are gaps, recorded honestly, not 403s: the route's
@@ -38,11 +39,11 @@
 //! `Allowed` or `Forbidden`) in the same commit.
 //!
 //! "No admin ever, no billing" (the ticket's phrasing):
-//! every `/v1/admin/*` row is `Forbidden` (live) or
-//! `Unprotected` (stub gap — never `Allowed`), and every
-//! billing row is `Unprotected` except the webhook-endpoints
-//! nest, which is key-managed by design. An admin user's OWN
-//! key is 403 on the live admin routes too
+//! every `/v1/admin/*` row is `Forbidden` — live or guarded
+//! stub since P1-043 (never `Allowed`), and every billing row
+//! is `Unprotected` except the webhook-endpoints nest, which
+//! is key-managed by design. An admin user's OWN key is 403
+//! on the live admin routes too
 //! (`admin_users_key_cannot_reach_admin_routes`) — the guard
 //! rejects a key-carrying context outright, so a future
 //! mis-rowed scope table cannot smuggle an admin key in.
@@ -145,25 +146,25 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow { method: "DELETE", path: "/v1/webhook-endpoints/{id}", outcome: KeyOutcome::Allowed("webhooks:manage"), note: "stub_authed; the user's own webhook endpoints are key-managed" },
     MatrixRow { method: "GET", path: "/v1/webhook-endpoints/{id}/deliveries", outcome: KeyOutcome::Allowed("webhooks:manage"), note: "stub_authed; the user's own webhook endpoints are key-managed" },
     // admin (20) — no admin ever for keys
-    MatrixRow { method: "GET", path: "/v1/admin/metrics/dashboard", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the admin guard (no admin ever)" },
+    MatrixRow { method: "GET", path: "/v1/admin/metrics/dashboard", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
     MatrixRow { method: "GET", path: "/v1/admin/users", outcome: KeyOutcome::Forbidden, note: "live handler behind AdminReadContext; the extractor rejects keys first" },
     MatrixRow { method: "POST", path: "/v1/admin/users/{id}/suspend", outcome: KeyOutcome::Forbidden, note: "live handler behind AdminContext; the guard rejects a key outright" },
     MatrixRow { method: "POST", path: "/v1/admin/users/{id}/restore", outcome: KeyOutcome::Forbidden, note: "live handler behind AdminContext; the guard rejects a key outright" },
-    MatrixRow { method: "POST", path: "/v1/admin/users/{id}/quota-grant", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the admin guard (no admin ever)" },
+    MatrixRow { method: "POST", path: "/v1/admin/users/{id}/quota-grant", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
     MatrixRow { method: "POST", path: "/v1/admin/users/{id}/impersonate", outcome: KeyOutcome::Forbidden, note: "live handler behind AdminContext; the guard rejects a key outright" },
     MatrixRow { method: "GET", path: "/v1/admin/jobs", outcome: KeyOutcome::Forbidden, note: "live handler behind AdminReadContext; the extractor rejects keys first" },
-    MatrixRow { method: "POST", path: "/v1/admin/jobs/{id}/reprocess", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the admin guard (no admin ever)" },
-    MatrixRow { method: "POST", path: "/v1/admin/jobs/{id}/cancel", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the admin guard (no admin ever)" },
-    MatrixRow { method: "GET", path: "/v1/admin/dlq", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the admin guard (no admin ever)" },
-    MatrixRow { method: "GET", path: "/v1/admin/flags", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the admin guard (no admin ever)" },
-    MatrixRow { method: "PUT", path: "/v1/admin/flags", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the admin guard (no admin ever)" },
-    MatrixRow { method: "GET", path: "/v1/admin/plans", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the admin guard (no admin ever)" },
-    MatrixRow { method: "PUT", path: "/v1/admin/plans", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the admin guard (no admin ever)" },
-    MatrixRow { method: "GET", path: "/v1/admin/audit", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the admin guard (no admin ever)" },
-    MatrixRow { method: "GET", path: "/v1/admin/abuse-reports", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the admin guard (no admin ever)" },
-    MatrixRow { method: "POST", path: "/v1/admin/abuse-reports/{id}/resolve", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the admin guard (no admin ever)" },
-    MatrixRow { method: "GET", path: "/v1/admin/attestations", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the admin guard (no admin ever)" },
-    MatrixRow { method: "GET", path: "/v1/admin/system", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the admin guard (no admin ever)" },
+    MatrixRow { method: "POST", path: "/v1/admin/jobs/{id}/reprocess", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
+    MatrixRow { method: "POST", path: "/v1/admin/jobs/{id}/cancel", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
+    MatrixRow { method: "GET", path: "/v1/admin/dlq", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
+    MatrixRow { method: "GET", path: "/v1/admin/flags", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
+    MatrixRow { method: "PUT", path: "/v1/admin/flags", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
+    MatrixRow { method: "GET", path: "/v1/admin/plans", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
+    MatrixRow { method: "PUT", path: "/v1/admin/plans", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
+    MatrixRow { method: "GET", path: "/v1/admin/audit", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
+    MatrixRow { method: "GET", path: "/v1/admin/abuse-reports", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
+    MatrixRow { method: "POST", path: "/v1/admin/abuse-reports/{id}/resolve", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
+    MatrixRow { method: "GET", path: "/v1/admin/attestations", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
+    MatrixRow { method: "GET", path: "/v1/admin/system", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
     MatrixRow { method: "POST", path: "/v1/abuse", outcome: KeyOutcome::Unprotected, note: "public by design — abuse intake takes no credential" },
 ];
 

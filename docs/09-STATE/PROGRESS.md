@@ -5,7 +5,7 @@
 ## Where we are
 
 - **Current phase:** 1 — Identity & Billing
-- **Current ticket:** P1-043 — Admin route guard
+- **Current ticket:** P1-044 — Support read-only
 - **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007). P0-083 size gate likewise deferred to CI (DOCKER-001, no docker daemon here); Dockerfile.api + gate implemented, AC unticked until CI runs green. P0-088 AC ("smoke enforces health") and P0-090 AC ("smoke green in CI") likewise unticked until the smoke job goes green in CI — `just smoke` + the CI job are implemented, but the workflow files can't reach GitHub yet (CI-WORKFLOWS-001). Remote CI runs the STALE workflow — local checks added since ~09:20 IST never ran remotely.
 - **Last run:** 2026-11-12 (in progress — see NIGHT-REPORTS/)
 
@@ -14,7 +14,7 @@
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
 | 0 | Foundation & Platform Baseline | 105 / 108 | P0-034/046/083 implemented but unverified (DOCKER-001) — live ACs + exit gates for `just dev`/`just smoke`/CI deferred to docker-capable CI |
-| 1 | Identity & Billing | 42 / 111 | — |
+| 1 | Identity & Billing | 43 / 111 | — |
 | 2 | Removal Engine (images) | 0 / 102 | — |
 | 3 | Pipeline & Video | 0 / 105 | — |
 | 4 | Console & Admin | 0 / 102 | — |
@@ -25,7 +25,7 @@
 
 | Signal | Value |
 | --- | --- |
-| `just verify` | green (fmt + clippy -D warnings + tests; smoke excluded per ADR-0017 — `just smoke` exists now, still excluded: no docker daemon here) — 776 passed, 0 failed (P1-042; attempt 2, ~32 min, no flakes; attempt 1 died at fmt-check on an over-long assert line from a doc-consistency fix, fixed with `cargo fmt`) — `just openapi-check` + `just route-table-check` + `just config-table-check` + `just env-check` + `just sqlx-prepare-check` + `just snapshots-check` green; `just compose-prod-check` red only because the `docker` binary is gone (DOCKER-001) — P1-042 touches no compose files. CI #27 + Commits #27 (run #27, on aca304b) are BOTH GREEN — third consecutive fully-green run; CI #28 + Commits #28 (run #28, on 3348ce3) in progress. |
+| `just verify` | green (fmt + clippy -D warnings + tests; smoke excluded per ADR-0017 — `just smoke` exists now, still excluded: no docker daemon here) — 779 passed, 0 failed (P1-043; attempt 1, ~48 min, no flakes) — `just openapi-check` + `just route-table-check` + `just config-table-check` + `just env-check` + `just sqlx-prepare-check` + `just snapshots-check` green; `just compose-prod-check` red only because the `docker` binary is gone (DOCKER-001) — P1-043 touches no compose files. The 23rd VM reset hit just after the P1-043 verify finished (~09:41 IST) — services restored per ASSUMPTION-010 (replay-based reinstall, `pf` role/db recreated, all 17 migrations re-applied); the verify itself was unaffected. CI #27 + Commits #27 (run #27, on aca304b) are BOTH GREEN — third consecutive fully-green run; CI #28 + Commits #28 (run #28, on 3348ce3) in progress. |
 | Coverage (core/engine/api) | 96.8% / 99.1% / 92.6% (worker 83.8%) — all above NFR-50 floors (85/80/75/70); report-only until Phase 2 (`just coverage-gate` exists, OFF) — re-measured 2026-11-13 during P1-001 (`just coverage` green) |
 | Golden suite | — |
 | Bench snapshot (image 4K p95 / video factor) | full-job 4K mean 545 ms (scaffold chain — see Bench history; p95 not tracked yet, criterion mean/median in `crates/engine/benches/baselines/`) / video factor n/a (input-prep only; real factor needs the Phase 2 video pipeline) |
@@ -34,6 +34,7 @@
 
 ## Notes
 
+- P1-043 done 2026-11-15 (31st coordinator implemented, 32nd coordinator adopted the running verify, finished + committed as one commit): Admin route guard — `admin_stub` / `admin_read_stub` in `apps/api/src/routes/admin.rs` put the matrix guard on all 14 admin stubs; new `apps/api/tests/admin_guard.rs` (3 tests: 19-route walk, audit row proof, denied/stub audit-nothing); route-table probe + API-key matrix updated for the guard (14 rows `Unprotected` → `Forbidden`, counts 13/28/15/9); three doc comments fixed for the baked-in `<redacted>` pipeline trap. Targeted green: admin_guard 3/3, api_key_matrix 4/4, authz_matrix 3/3, route_table 3/3. Full `just verify` green: 779 passed, 0 failed (776 + 3 new), attempt 1, ~48 min, no flakes; drift checks green. The 23rd VM reset hit just after the verify finished (~09:41 IST) — restored per ASSUMPTION-010 (replay-based reinstall, `pf` role/db recreated, all 17 migrations re-applied).
 - P1-042 done 2026-11-15 (31st coordinator, adopting the 30th's uncommitted tree — verified, finished, committed as one commit): Roles + permission matrix — new `apps/api/src/authz.rs` (16 `Capability` code constants, role table, route→capability table for all 19 `/v1/admin/*` routes, `require_capability`) + new `apps/api/tests/authz_matrix.rs` (3 tests: completeness, truth-table, live walk of the 5 live routes × anonymous/user/support/admin/admin-key); the `AdminContext`/`AdminReadContext` guards are now matrix-driven via `guard_by_matrix`, fail closed on unmapped routes. One doc fix while adopting: the module doc said "20 admin routes" but `ROUTE_TABLE` holds 19 (the public `POST /v1/abuse` intake is not an admin route). Docs: api-spec, test-strategy, security-testing. `just verify` green: 776 passed, 0 failed (769 + 7 new: 4 authz unit + 3 matrix), attempt 2, ~32 min, no flakes; attempt 1 died at fmt-check (over-long assert line from the doc fix — `cargo fmt` applied). The 22nd VM reset hit mid-matrix-test (~07:42 IST, before the verify) — restored per ASSUMPTION-010 (no replay running; `apt-get update` + install ~10 min through the cogentco mirror, one connection failure on noble-security InRelease retried; `pf` role/db recreated, all 17 migrations re-applied); targeted matrix test re-run green 3/3 after the restore. Drift checks green (openapi/route-table/config-table/env/sqlx-prepare/snapshots).
 - P1-041 done 2026-11-15 (30th coordinator, adopting the 29th's uncommitted tree — verified, finished, committed as one commit): API-key docs page — new `docs/06-DELIVERY/06-api-keys-guide.md` (getting-started guide per api-spec: curl + TypeScript + Python examples, Python compiles, TS typechecks under --strict; security notes on storage, rotation, revocation). Docs-only, no code. `just verify` green: 769 passed, 0 failed, attempt 2, ~38 min — attempt 1 was killed by the 21st VM reset (~05:45 IST, mid-sessions tests, 42 binaries green, 0 failed); services restored per ASSUMPTION-010 (the os-intent replay did the reinstall this time, ~15 min in `apt-get update` + installs; `pf` role/db recreated, all 17 migrations re-applied) and the verify re-run from scratch; see the ASSUMPTION-010 update line for the 21st reset (replay-based restore).
 - P1-040 done 2026-11-15 (29th coordinator): Key ACL matrix rows — new `apps/api/tests/api_key_matrix.rs` (4 tests): one row per `/v1` route (65 rows: 13 `Allowed` / 14 `Forbidden` / 29 `Unprotected` / 9 `Ignored`), each walked live with a full-scope key plus the anonymous control. The 13 gated routes answer 501 to a key carrying the row's scope and 403 to a key lacking it; the 14 forbidden rows are 403 to any key, including an admin user's own key ("no admin ever"); the 9 auth routes ignore the key (identical responses); the 29 `Unprotected` rows answer 501 to everyone — recorded as gaps except the ones public by design. The completeness test fails on a route without a row. Docs: test-strategy ACL-matrix section + security-testing P1-040 bullet. `just verify` green: 769 passed, 0 failed (765 + 4 new), attempt 1, ~35 min, no flakes.
@@ -57,9 +58,9 @@
 
 ## Next-up queue (top 5)
 
-1. P1-043 — Admin route guard
-2. P1-044 — Support read-only
-3. P1-045 — IDOR sweep v1
+1. P1-044 — Support read-only
+2. P1-045 — IDOR sweep v1
+3. P1-046 — Privileged action audit middleware
 4. CI #27 / Commits #27 results (both SUCCESS on aca304b — third consecutive fully-green run); CI #28 / Commits #28 (on 3348ce3) in progress
 
 ## Bench history (append-only)

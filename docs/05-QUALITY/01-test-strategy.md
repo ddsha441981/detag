@@ -225,6 +225,40 @@ so the intended capability is recorded before the guard
 lands. The full rendered matrix (admin guide) is P1-047's
 docs ticket.
 
+## Admin route guard (P1-043)
+
+Every `/v1/admin/*` route sits behind the matrix guard now,
+live or stub: `apps/api/src/routes/admin.rs` wraps the 14
+stubs in `admin_stub` (`AdminContext`, writes) /
+`admin_read_stub` (`AdminReadContext`, reads) — the same 501
+`PF-5004` as the shared stub, but the guard rejects first
+(no credential 401 `PF-1001`, wrong role or key 403
+`PF-1002`). The public `POST /v1/abuse` intake keeps the
+plain stub — it is not an admin route. The registry
+`apps/api/tests/admin_guard.rs` walks all 19 admin routes ×
+anonymous / user / support / admin / an admin user's key —
+admitted roles answer 200 on the 5 live routes and 501 on
+the 14 stubs — and proves the audit trail both ways: an
+admin suspend writes exactly one `user.suspended` row
+(actor = the admin, target, before `active` → after
+`suspended`, reason), while a denied suspend (403), a
+suspend of an unknown id (404), and an admitted stub call
+(501) each write no row (the trail records actions, not
+attempts). Registration/login audit against the same user
+target, so the audit assertions filter by action, not just
+by target. Side effects of guarding the stubs: the
+route-table probe expects 401 (not 501) on every admin
+route now, and the API-key matrix flips the 14 admin-stub
+rows `Unprotected` → `Forbidden` (counts 13/28/15/9). The
+automatic audit middleware is P1-046's scope — this ticket
+proves the guard + the audit rows the services already
+write. Three doc comments carried a literal `<redacted>`
+baked in by the output pipeline (the P1-029 trap: the word
+after "Bearer" is redacted in transit) — fixed here in
+`routes/admin.rs`, `auth.rs`, and
+`api_key_rate_limits.rs`; never write that phrase in a
+comment again.
+
 ## Property testing (P0-096)
 
 Property tests live in `crates/core/tests/prop/` (cursor codec,

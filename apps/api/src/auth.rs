@@ -309,7 +309,7 @@ pub struct AuthContext {
     /// Whether the credential was verified. Always `false` in
     /// Phase 0 — see the module docs.
     pub verified: bool,
-    /// The verified user, when a Bearer <redacted> JWT verified and
+    /// The verified user, when the caller's JWT verified and
     /// its `sub` loaded (P1-005). `None` for every unverified
     /// context — handlers that need the user take the context
     /// and read this (it is `Some` exactly when `verified`).

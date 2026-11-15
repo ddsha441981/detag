@@ -12,13 +12,20 @@
 //! /v1/admin/users`, real since P1-009, `POST
 //! /v1/admin/users/{id}/impersonate`, real since P1-010, and
 //! `GET /v1/admin/jobs`, real since P1-038 (in this file).
+//! Every route — live or stub — sits behind the matrix guard
+//! (P1-043): the stubs take `admin_stub` / `admin_read_stub`
+//! below, so an unauthenticated or wrong-role caller is
+//! rejected before the 501, exactly like on the live routes.
+//! The public abuse intake keeps the plain `stub` — it is not
+//! an admin route.
 //!
-//! Both live handlers take [`AdminContext`]: the extractor
-//! verifies the Bearer <redacted> and requires the role to be admin
-//! before the handler body runs, so a non-admin (or an
-//! unauthenticated caller) never reaches the service — 401
-//! `PF-1001` without a credential, 403 `PF-1002` for a
-//! verified non-admin. The handlers are thin: the admin
+//! The live handlers take [`AdminContext`] (writes) or
+//! [`AdminReadContext`] (reads): the extractor verifies the
+//! credential and enforces the route's matrix row (P1-042,
+//! FR-A-07) before the handler body runs, so a non-admitted
+//! caller never reaches the service — 401 `PF-1001` without
+//! a credential, 403 `PF-1002` for a verified wrong role, an
+//! API key, or an impersonator. The handlers are thin: the admin
 //! service owns the flow; this maps its errors to the
 //! problem+json envelope. They return `Response` directly
 //! (not `Result<_, ProblemResponse>` — the P1-001
@@ -357,6 +364,35 @@ pub async fn impersonate(
     }
 }
 
+/// The guarded 501 stubs (P1-043): the same 501 `PF-5004` as
+/// the shared [`stub`](super::stub), but behind the matrix
+/// guard — so a route whose handler has not landed yet still
+/// enforces authorization at the boundary (no credential is
+/// 401 `PF-1001`, a wrong role or a key is 403 `PF-1002`,
+/// before the stub ever runs). The two wrappers differ only
+/// in which guard type the call site reads as: write stubs
+/// take `admin_stub` (`AdminContext`), read stubs take
+/// `admin_read_stub` (`AdminReadContext`) — the matrix, not
+/// the type, decides who gets in (P1-042), so a read stub
+/// admits admin + support and a write stub admits admin only.
+/// The handler ticket replaces the wrapper with its real
+/// handler, keeping the same guard type. A stub writes no
+/// audit row: it changes no state, and the audit trail
+/// records actions, not attempts — denials are proven to
+/// audit nothing by `apps/api/tests/admin_guard.rs`.
+async fn admin_stub(Extension(id): Extension<RequestId>, _admin: AdminContext) -> ProblemResponse {
+    let problem = AppError::NotImplemented.to_problem(Profile::Production, Some(&id.0), None);
+    ProblemResponse(problem)
+}
+
+async fn admin_read_stub(
+    Extension(id): Extension<RequestId>,
+    _admin: AdminReadContext,
+) -> ProblemResponse {
+    let problem = AppError::NotImplemented.to_problem(Profile::Production, Some(&id.0), None);
+    ProblemResponse(problem)
+}
+
 /// The admin nest: dashboard, users (search / suspend / restore /
 /// quota-grant / impersonate), jobs (browse / reprocess / cancel),
 /// flags, plans, audit, abuse reports, attestations, system —
@@ -366,23 +402,23 @@ pub fn router() -> Router<AppState> {
         .nest(
             "/v1/admin",
             Router::new()
-                .route("/metrics/dashboard", get(stub))
+                .route("/metrics/dashboard", get(admin_read_stub))
                 .route("/users", get(search_users_handler))
                 .route("/users/{id}/suspend", post(suspend))
                 .route("/users/{id}/restore", post(restore))
-                .route("/users/{id}/quota-grant", post(stub))
+                .route("/users/{id}/quota-grant", post(admin_stub))
                 .route("/users/{id}/impersonate", post(impersonate))
                 .route("/jobs", get(list_jobs_handler))
-                .route("/jobs/{id}/reprocess", post(stub))
-                .route("/jobs/{id}/cancel", post(stub))
-                .route("/dlq", get(stub))
-                .route("/flags", get(stub).put(stub))
-                .route("/plans", get(stub).put(stub))
-                .route("/audit", get(stub))
-                .route("/abuse-reports", get(stub))
-                .route("/abuse-reports/{id}/resolve", post(stub))
-                .route("/attestations", get(stub))
-                .route("/system", get(stub)),
+                .route("/jobs/{id}/reprocess", post(admin_stub))
+                .route("/jobs/{id}/cancel", post(admin_stub))
+                .route("/dlq", get(admin_read_stub))
+                .route("/flags", get(admin_read_stub).put(admin_stub))
+                .route("/plans", get(admin_read_stub).put(admin_stub))
+                .route("/audit", get(admin_read_stub))
+                .route("/abuse-reports", get(admin_read_stub))
+                .route("/abuse-reports/{id}/resolve", post(admin_stub))
+                .route("/attestations", get(admin_read_stub))
+                .route("/system", get(admin_read_stub)),
         )
         .nest("/v1/abuse", Router::new().route("/", post(stub)))
 }
