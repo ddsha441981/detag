@@ -337,6 +337,34 @@ request, not a silent gap). Wiring note: axum 0.8's
 uses `from_fn_with_state`, so `admin::router` and
 `api_router` take the state as a parameter.
 
+## Role escalation tests (P1-048)
+
+Every way up the ladder is closed, and the closed door
+leaves no trace in the audit trail —
+`apps/api/tests/role_escalation.rs` (FR-A-07 / T13,
+NFR-31). A plain user tries all 19 admin routes (403
+`PF-1002` everywhere), support tries all 9 writes (403),
+and an admin user's own full-scope key tries all 19 (403
+— "no admin ever"); each denied write asserts no audit row
+for its action with the caller as actor (scoped by actor,
+not absolute count — the harness DB persists across runs,
+the P1-046 lesson), and the live-write targets are proven
+untouched (a denied suspend leaves the target `active`, a
+denied restore leaves a suspended target `suspended`, a
+denied impersonate mints no token row). The spec's "all 403
++ audited" is read under the rule P1-043/P1-046 settled
+("the trail records actions, not attempts"): the audit
+behaviour asserted is that a denial writes nothing — a
+denial that wrote a row would contradict the admin guide.
+The fourth test forges the token itself: a plain user's
+token with its `role` claim rewritten to `admin` (payload
+re-encoded with a hand-rolled base64url pair, original
+signature kept) is 401 `PF-1010` on a read and on a write,
+and the same for a role forged to `support` — the signature
+fails, so the forged role never reaches a guard. The role
+is never trusted from the token at all: it is re-read from
+the user row on every request (P1-022).
+
 ## Property testing (P0-096)
 
 Property tests live in `crates/core/tests/prop/` (cursor codec,
