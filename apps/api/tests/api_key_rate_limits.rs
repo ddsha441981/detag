@@ -141,7 +141,7 @@ async fn key_for(app: &TestApp, scopes: &[&str]) -> (Uuid, Uuid, String) {
     (user_id, key_id, secret)
 }
 
-/// `GET /v1/jobs` with a Bearer <redacted> key — the probe: 501
+/// `GET /v1/jobs` with the key as the Bearer credential — the probe: 501
 /// means auth + scope + rate limit all passed (the stub).
 async fn key_jobs_list(app: &TestApp, key: &str) -> common::TestResponse {
     app.request(

@@ -29,8 +29,9 @@
 //!    admin suspend/restore, P1-009 `GET /v1/admin/users`, and
 //!    P1-010 admin impersonate answer 401 PF-1001 for the probe
 //!    (no credential — the auth extractor rejects before the
-//!    handler runs). P1-014 `POST /v1/auth/refresh` and P1-017
-//!    `POST /v1/auth/logout` also answer 401 PF-1001 (no
+//!    handler runs), as do all 14 remaining admin stubs since
+//!    P1-043 put the matrix guard on them. P1-014 `POST
+//!    /v1/auth/refresh` and P1-017 `POST /v1/auth/logout` also answer 401 PF-1001 (no
 //!    cookie — the handler reads the refresh token from the
 //!    cookie, not the body), and P1-017 `POST
 //!    /v1/auth/logout-all` + P1-019 `GET /v1/me/sessions` +
@@ -222,7 +223,8 @@ async fn every_table_entry_resolves_to_the_stub() {
         // the webhook-endpoints nest (the authenticated stub),
         // and P1-035 POST /v1/api-keys/{id}/rotate, and
         // P1-036 DELETE /v1/api-keys/{id}, and P1-038 GET
-        // /v1/admin/jobs: real
+        // /v1/admin/jobs, and P1-043 every remaining
+        // /v1/admin/* stub (the guarded stub): real
         // handlers behind an auth extractor — the probe
         // sends no credential, so the extractor rejects with
         // 401 PF-1001 (not 501) and echoes the probe id (the
@@ -238,6 +240,7 @@ async fn every_table_entry_resolves_to_the_stub() {
                     || *path == "/v1/api-keys/{id}/rotate"))
             || (*method == "GET" && *path == "/v1/admin/users")
             || (*method == "GET" && *path == "/v1/admin/jobs")
+            || path.starts_with("/v1/admin/")
             || (*method == "GET" && *path == "/v1/me/sessions")
             || (*method == "DELETE" && *path == "/v1/me/sessions/{id}")
             || (*method == "DELETE" && *path == "/v1/api-keys/{id}")
