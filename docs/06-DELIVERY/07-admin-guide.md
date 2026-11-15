@@ -1,0 +1,194 @@
+# Admin guide — roles, the permission matrix, and audit (P1-047)
+
+For the people who operate Detag: what each admin role may do,
+which routes exist, and how to change the matrix safely. Every
+claim here is per the single source of truth,
+`apps/api/src/authz.rs` (`Capability` + `for_route`), and proven
+by the suites in `apps/api/tests/authz_matrix.rs`,
+`admin_guard.rs`, `support_readonly.rs`, `api_key_matrix.rs`,
+and `privileged_audit.rs` — if this page and the code ever
+disagree, the code wins and this page is the bug.
+
+## Roles
+
+Three roles exist on the `users` table: `user`, `support`,
+`admin` (FR-A-07). There is no self-serve way to become an
+admin or support — the role is set by the owner out of band
+(a direct UPDATE; the tests do the same). A plain user holds
+no admin capability at all, and neither does an anonymous
+caller.
+
+- **admin** — everything: all reads and all writes, including
+  impersonation.
+- **support** — read-only: admitted on every `.read`
+  capability, denied on every write and on impersonation.
+- **user** — no admin route at all.
+
+Two rules ride on top of the role table, for every row:
+
+- An **API key never reaches an admin route** — even a key
+  minted by an admin user ("no admin ever", P1-040). Keys are
+  for the `/v1` API surface; the admin surface takes user
+  tokens only.
+- An **impersonation token never reaches an admin route** —
+  the token acts as its target user (P1-010), so it carries
+  no admin rights even when the impersonator is an admin.
+
+## Denial shape
+
+- No credential (or a bad/expired token): 401 `PF-1001`.
+- A verified caller the matrix does not admit (wrong role, an
+  API key, an impersonator): 403 `PF-1002` — the same code as
+  every other authorization denial, so a client cannot tell a
+  wrong role from a key or an impersonator.
+- A write to an unknown target id: 404 `PF-2010` (no
+  enumeration — a foreign id reads exactly like an unknown
+  one).
+- A malformed body on a write: 422 `PF-2002`.
+
+## The matrix
+
+One row per admin route (19 routes). **Capability** is the
+stable code string the guards consult; **Admitted** is who
+the matrix lets in. **Status** is whether the handler is
+live or still a 501 stub — a stub route is still guarded
+(P1-043): the guard rejects first, the 501 answers after,
+so an unadmitted caller never sees a 501. **Audit** is the
+action the P1-046 middleware writes for a successful write;
+reads are never audited — the trail records actions, not
+views — and neither are denials, 404s, or 501 stubs.
+
+| Method | Path | Capability | Admitted | Status | Audit |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/v1/admin/metrics/dashboard` | `admin.dashboard.read` | admin, support | stub | — |
+| GET | `/v1/admin/users` | `admin.users.read` | admin, support | live | — |
+| POST | `/v1/admin/users/{id}/suspend` | `admin.users.write` | admin | live | `user.suspended` |
+| POST | `/v1/admin/users/{id}/restore` | `admin.users.write` | admin | live | `user.restored` |
+| POST | `/v1/admin/users/{id}/quota-grant` | `admin.users.write` | admin | stub | `admin.users.quota_granted` |
+| POST | `/v1/admin/users/{id}/impersonate` | `admin.users.impersonate` | admin | live | `user.impersonated` |
+| GET | `/v1/admin/jobs` | `admin.jobs.read` | admin, support | live | — |
+| POST | `/v1/admin/jobs/{id}/reprocess` | `admin.jobs.write` | admin | stub | `admin.jobs.reprocessed` |
+| POST | `/v1/admin/jobs/{id}/cancel` | `admin.jobs.write` | admin | stub | `admin.jobs.cancelled` |
+| GET | `/v1/admin/dlq` | `admin.dlq.read` | admin, support | stub | — |
+| GET | `/v1/admin/flags` | `admin.flags.read` | admin, support | stub | — |
+| PUT | `/v1/admin/flags` | `admin.flags.write` | admin | stub | `admin.flags.updated` |
+| GET | `/v1/admin/plans` | `admin.plans.read` | admin, support | stub | — |
+| PUT | `/v1/admin/plans` | `admin.plans.write` | admin | stub | `admin.plans.updated` |
+| GET | `/v1/admin/audit` | `admin.audit.read` | admin, support | stub | — |
+| GET | `/v1/admin/abuse-reports` | `admin.abuse.read` | admin, support | stub | — |
+| POST | `/v1/admin/abuse-reports/{id}/resolve` | `admin.abuse.write` | admin | stub | `admin.abuse_reports.resolved` |
+| GET | `/v1/admin/attestations` | `admin.attestations.read` | admin, support | stub | — |
+| GET | `/v1/admin/system` | `admin.system.read` | admin, support | stub | — |
+
+Notes on the live routes:
+
+- **Suspend / restore** (P1-008): suspend takes
+  `{"reason": "..."}` (1–500 characters after trimming, no
+  control characters), revokes every live session, holds
+  every queued job, and audits `user.suspended` with the
+  reason and `{sessions_revoked, jobs_held}` in `after`.
+  Suspending an already-suspended account is a 200 no-op
+  (no second audit). Restore returns the account to
+  `active`, releases held jobs to `queued`, leaves sessions
+  revoked (the user logs in again), and audits
+  `user.restored`. A suspend cancels a pending deletion.
+- **Impersonate** (P1-010): mints a 15-minute scoped token
+  that acts as the target user (`expires_in: 900`,
+  `impersonator_id` in the claims, no refresh, no session
+  row). The console MUST show both ids for the whole
+  session. Audited once as `user.impersonated`.
+- **Users search** (P1-009): `GET /v1/admin/users?query=`
+  (email / display-name / id prefix), cursor pagination,
+  returns plan + status + today's usage per user. Support
+  sees the same rows — no key material is ever in them.
+- **Jobs list** (P1-038): `GET /v1/admin/jobs` newest
+  first, cursor pagination, `?user_id=` / `?key_id=`
+  filters. Each row shows the creating key's display prefix
+  (`key_prefix`); a web-created job shows no prefix at all
+  — never the secret, never its hash.
+- The public abuse intake (`POST /v1/abuse`) is **not** an
+  admin route: it takes no credential and never reaches the
+  matrix or the audit middleware.
+
+## The audit trail
+
+A successful admin write writes exactly one audit row —
+actor (the admin), action (the table above), target type +
+id, and before/after where the service has them. The three
+live writes write their row inside the same transaction as
+the mutation (P1-008's atomicity) and mark the response
+`AuditHandled`; every other write is audited by the P1-046
+middleware from the route metadata, so a handler can never
+forget its row. An audit insert that fails answers 500: a
+privileged action without its audit row is a failed request,
+not a silent gap — re-read state rather than blindly
+retrying (the admin writes are idempotent, so a retry after
+such a 500 is safe).
+
+What is NOT audited: reads, denials (403), unknown targets
+(404), and admitted stub calls (501). The trail records
+actions, not attempts or views.
+
+## Change procedure — matrix + tests together
+
+The matrix is the single source; the tests are the registry
+that pins it. A change to one without the other is
+incomplete and the suite will fail you. For any admin-route
+change, do all of these in the same commit:
+
+1. **Capability** (`apps/api/src/authz.rs`): if the change
+   is a new operation, add a `Capability` variant with its
+   stable code string — never a bare string elsewhere. The
+   code string is what the docs, the audit trail, and the
+   test registry name.
+2. **Route row**: add the route to `Capability::for_route`
+   (method + template, `{id}` stays a template). If the
+   route is a write, add its action to
+   `audit_action_for` and its target type to
+   `audit_target_type_for` in the same change — a write
+   without an audit row fails the
+   `audit_actions_cover_every_admin_write_and_no_read` unit
+   test.
+3. **Guard**: wire the route to `AdminContext` (writes) /
+   `AdminReadContext` (reads) — or `admin_stub` /
+   `admin_read_stub` while its handler has not landed.
+   Never wire an admin guard to a non-admin route:
+   `for_route` returns `None` there and the guards fail
+   closed.
+4. **Tests**: the registry pins the change three ways and
+   each must be updated with it —
+   `apps/api/tests/authz_matrix.rs` (completeness: a route
+   without a row fails; truth-table: every row resolves
+   through `for_route` and admits exactly the promised
+   roles; live walk: the live routes × anonymous / user /
+   support / admin / an admin user's key),
+   `apps/api/tests/admin_guard.rs` (the 19-route walk, the
+   audit proof, the denied/stub audit-nothing proof), and
+   `apps/api/tests/api_key_matrix.rs` if the counts move
+   (its rows are per `/v1` route, not per admin route — a
+   new admin route flips one row `Unprotected` →
+   `Forbidden`). A new admin write also belongs in
+   `apps/api/tests/privileged_audit.rs` (exactly one row,
+   actor + target + before/after).
+5. **Docs**: update the table above and the Admin section
+   of the API spec (`docs/03-ARCHITECTURE/03-api-spec.md`).
+   If the change adds a capability, say so in the matrix
+   table's notes; if it changes who is admitted, say so in
+   the Roles section.
+6. **Verify**: targeted binaries first (`privileged_audit`,
+   `admin_guard`, `authz_matrix`, `api_key_matrix`,
+   `route_table`, the `detag-api` lib tests), then the full
+   `just verify` plus the drift checks (`just
+   openapi-check`, `just route-table-check`, `just
+   config-table-check`, `just env-check`, `just
+   sqlx-prepare-check`, `just snapshots-check`) — all green
+   before committing. One conventional commit per ticket;
+   the linter (`just lint-commits`) accepts the ticket id in
+   the subject's ticket position.
+
+What never changes without an owner decision: admitting a
+new role to a write capability, letting API keys reach the
+admin surface, or auditing reads. Those are policy, not
+plumbing — record them in
+`docs/09-STATE/DECISIONS.md` tagged `owner-input-needed`
+first.

@@ -27,13 +27,15 @@
 //! The matrix covers all 19 admin routes in the route table,
 //! live or stub. The 5 live routes are enforced by the guards
 //! today and walked live by the test registry
-//! (`apps/api/tests/authz_matrix.rs`). The 15 stub routes
-//! take no extractor yet — their rows name the intended
-//! capability, and the guard lands with their handler ticket
-//! (P1-043 puts the guard on every `/v1/admin/*` route).
-//! A stub row is therefore a promise, not a proof: the
-//! registry's completeness test pins that the row exists, the
-//! live walk skips it until its guard lands.
+//! (`apps/api/tests/authz_matrix.rs`). The 14 stub routes
+//! take the guard too since P1-043 (`admin_stub` /
+//! `admin_read_stub` — guard first, 501 after), so their rows
+//! are enforced promises: the registry's completeness test
+//! pins that the row exists, the live walk asserts the guard
+//! (401 / 403 / 501) on every stub, and the handler ticket
+//! replaces the stub with the real handler keeping the same
+//! guard type. The full rendered matrix is the admin guide
+//! (`docs/06-DELIVERY/07-admin-guide.md`, P1-047).
 //!
 //! # Denial shape
 //!

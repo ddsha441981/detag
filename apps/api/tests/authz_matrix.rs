@@ -21,11 +21,12 @@
 //!   403 `PF-1002` for a wrong role or a key ("no admin
 //!   ever"), 200 for an admitted role.
 //!
-//! The 14 stub rows are promises, not proofs: the stubs take
-//! no extractor yet, so they answer 501 to everyone — the
-//! live walk skips them, and their guard lands with their
-//! handler ticket (P1-043 puts the guard on every
-//! `/v1/admin/*` route). Their rows are pinned here so the
+//! The 14 stub rows are enforced promises since P1-043
+//! (`admin_stub` / `admin_read_stub` — guard first, 501
+//! after): the live walk in `admin_guard.rs` asserts the
+//! guard (401 / 403 / 501) on every stub, and the handler
+//! ticket replaces the stub with the real handler keeping
+//! the same guard type. Their rows are pinned here so the
 //! intended capability is recorded before the guard lands.
 
 mod common;
