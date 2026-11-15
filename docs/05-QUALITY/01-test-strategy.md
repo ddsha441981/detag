@@ -259,6 +259,27 @@ after "Bearer" is redacted in transit) — fixed here in
 `api_key_rate_limits.rs`; never write that phrase in a
 comment again.
 
+## Support read-only (P1-044)
+
+The support contract pinned from the support role's point
+of view (`apps/api/tests/support_readonly.rs`, FR-A-07):
+the matrix assert admits support exactly on the `.read`
+capabilities (admin on all, plain user and anonymous on
+none — every admin route in the route table maps to exactly
+one capability); support reads the two live views with real
+rows (the users search returns the seeded users with role
+and status, the jobs list returns the seeded job with kind
+and status and no key material — a web-created job shows no
+prefix); support is admitted on all 8 stub reads (501
+`PF-5004` — the guard passed, the handler has not landed);
+and all 9 writes are 403 `PF-1002` with no state change (a
+denied suspend leaves the target active, a denied restore
+leaves a suspended target suspended, a denied impersonate
+mints no token — each proven by the target's row and the
+absence of its audit row). The harness DB persists across
+runs, so the list assertions filter by the test's own prefix
+/ `user_id`, never an exact unfiltered count.
+
 ## Property testing (P0-096)
 
 Property tests live in `crates/core/tests/prop/` (cursor codec,
