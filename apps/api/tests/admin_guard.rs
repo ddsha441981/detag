@@ -7,15 +7,19 @@
 //! matrix guard, so an unauthenticated or wrong-role caller is
 //! rejected before the 501, exactly like on a live route. Two
 //! more routes went live since (P1-056: `GET` / `PUT
-//! /v1/admin/plans`), so the walk now covers 7 live routes and
-//! 12 stubs. The three tests:
+//! /v1/admin/plans`; P1-061: `POST
+//! /v1/admin/billing/catalog-sync`), so the walk now covers 8
+//! live routes and 12 stubs. The three tests:
 //!
-//! - `admin_guard_on_every_route` — the walk: all 19 admin
+//! - `admin_guard_on_every_route` — the walk: all 20 admin
 //!   routes × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key). Anonymous is 401
 //!   `PF-1001`, a wrong role or a key is 403 `PF-1002`, an
-//!   admitted role is 200 on the 7 live routes and 501
-//!   `PF-5004` on the 12 stubs. A route that answers 501 to an
+//!   admitted role is 200 on the 8 live routes and 501
+//!   `PF-5004` on the 12 stubs — except the catalog sync,
+//!   whose admitted admin gets 503 `PF-5005` (billing is
+//!   unconfigured in the test environment: no Stripe key).
+//!   A route that answers 501 to an
 //!   anonymous caller has lost its guard — this fails.
 //! - `admin_actions_audit_actor_target_before_after` — the
 //!   audit: an admin suspend through the guarded route writes
@@ -334,6 +338,12 @@ const GUARD_ROWS: &[GuardRow] = &[
         read: false,
     },
     GuardRow {
+        method: "POST",
+        path: "/v1/admin/billing/catalog-sync",
+        live: true,
+        read: false,
+    },
+    GuardRow {
         method: "GET",
         path: "/v1/admin/audit",
         live: false,
@@ -383,7 +393,7 @@ async fn admin_guard_on_every_route() {
             row.path
         );
     }
-    assert_eq!(GUARD_ROWS.len(), 19, "one row per admin route");
+    assert_eq!(GUARD_ROWS.len(), 20, "one row per admin route");
 
     let app = guard_app().await;
     let (user_token, support_token, admin_token, admin_key, _admin_id) = callers(&app).await;
@@ -477,7 +487,10 @@ async fn admin_guard_on_every_route() {
             );
             assert_eq!(problem_code(&res), "PF-1002", "{} {}", row.method, row.path);
         }
-        // Admin: 200 on live routes, 501 on stubs.
+        // Admin: 200 on live routes, 501 on stubs — except
+        // the catalog sync: its handler is live but billing
+        // is unconfigured here (no Stripe key), so the
+        // admitted admin gets 503 PF-5005 (P1-061).
         let res = probe(
             &app,
             row.method,
@@ -487,7 +500,9 @@ async fn admin_guard_on_every_route() {
             body.clone(),
         )
         .await;
-        let want = if row.live {
+        let want = if row.path == "/v1/admin/billing/catalog-sync" {
+            StatusCode::SERVICE_UNAVAILABLE
+        } else if row.live {
             StatusCode::OK
         } else {
             StatusCode::NOT_IMPLEMENTED
@@ -500,6 +515,9 @@ async fn admin_guard_on_every_route() {
             row.path,
             res.text()
         );
+        if row.path == "/v1/admin/billing/catalog-sync" {
+            assert_eq!(problem_code(&res), "PF-5005", "{} {}", row.method, row.path);
+        }
         if !row.live {
             assert_eq!(problem_code(&res), "PF-5004", "{} {}", row.method, row.path);
         }

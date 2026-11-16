@@ -10,8 +10,10 @@
 //! (P0-082 enqueues it); `pipeline`, `cleanup`, `email` and
 //! `reconciliation` get their real handlers in later phases
 //! (pipeline in Phase 2, the rest with the features that own
-//! them). A stub handler only logs and acks — it never claims
-//! work happened.
+//! them). `catalog_sync` is the same shape (P1-061): the sync
+//! engine + the manual admin trigger are real, the nightly
+//! schedule that enqueues it is P1-082's. A stub handler only
+//! logs and acks — it never claims work happened.
 //!
 //! An unknown kind is quarantined, never executed: the job is
 //! acknowledged (no retry storm — retrying a kind this build
@@ -47,6 +49,11 @@ pub enum JobKind {
     Email,
     /// Billing/storage reconciliation job.
     Reconciliation,
+    /// Stripe products/prices catalog sync (P1-061): the nightly
+    /// job (schedule: P1-082) + the manual admin trigger run the
+    /// same sync engine; the handler here is a stub until the
+    /// worker gains a provider + pool to run it with.
+    CatalogSync,
     /// A kind this build does not know — quarantined, never run.
     /// Carries the raw string for the log line.
     Unknown(String),
@@ -61,6 +68,7 @@ impl JobKind {
             JobKind::Cleanup => "cleanup",
             JobKind::Email => "email",
             JobKind::Reconciliation => "reconciliation",
+            JobKind::CatalogSync => "catalog_sync",
             JobKind::Unknown(raw) => raw,
         }
     }
@@ -74,6 +82,7 @@ impl JobKind {
             "cleanup" => JobKind::Cleanup,
             "email" => JobKind::Email,
             "reconciliation" => JobKind::Reconciliation,
+            "catalog_sync" => JobKind::CatalogSync,
             other => JobKind::Unknown(other.to_string()),
         }
     }
@@ -137,6 +146,10 @@ impl JobRegistry {
             }
             JobKind::Reconciliation => {
                 handle_reconciliation(envelope, ctx).await?;
+                Ok(DispatchOutcome::Handled { kind })
+            }
+            JobKind::CatalogSync => {
+                handle_catalog_sync(envelope, ctx).await?;
                 Ok(DispatchOutcome::Handled { kind })
             }
             JobKind::Unknown(raw) => {
@@ -233,6 +246,21 @@ async fn handle_reconciliation(envelope: &JobEnvelope, ctx: &WorkerContext) -> R
     Ok(())
 }
 
+/// P1-061 stub: the catalog sync engine (`detag-billing::sync`)
+/// and the manual admin trigger are real, but the worker has no
+/// provider + pool in its context to run the sync with — and no
+/// nightly scheduler exists yet (P1-082). Until both land, an
+/// enqueued `catalog_sync` job logs and acks instead of
+/// claiming a sync ran.
+async fn handle_catalog_sync(envelope: &JobEnvelope, ctx: &WorkerContext) -> Result<(), Error> {
+    tracing::info!(
+        job_id = %envelope.job_id,
+        queue = ctx.queue,
+        "catalog_sync handled (stub — real handler lands with P1-082's nightly schedule)"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,6 +296,7 @@ mod tests {
             ("cleanup", JobKind::Cleanup),
             ("email", JobKind::Email),
             ("reconciliation", JobKind::Reconciliation),
+            ("catalog_sync", JobKind::CatalogSync),
         ] {
             assert_eq!(JobKind::parse(raw), kind, "parse {raw}");
             assert_eq!(kind.as_str(), raw, "as_str {raw:?}");
@@ -291,7 +320,14 @@ mod tests {
     #[tokio::test]
     async fn dispatch_handles_every_known_kind() {
         let ctx = context();
-        for kind in ["ping", "pipeline", "cleanup", "email", "reconciliation"] {
+        for kind in [
+            "ping",
+            "pipeline",
+            "cleanup",
+            "email",
+            "reconciliation",
+            "catalog_sync",
+        ] {
             let outcome = JobRegistry::new()
                 .dispatch(&envelope(kind), &ctx)
                 .await

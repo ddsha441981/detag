@@ -297,6 +297,14 @@ pub enum AppError {
     /// not implemented yet (Phase 0 stub). PF-5004, 501.
     #[error("not implemented")]
     NotImplemented,
+    /// Kit (P1-061): the billing provider is not configured
+    /// (no Stripe secret key in settings) — the billing
+    /// endpoint cannot run. PF-5005, 503. A misconfigured
+    /// key (wrong prefix, live key without the owner flag)
+    /// maps here too: the provider refuses to exist, so from
+    /// the caller's view billing is not configured.
+    #[error("billing provider not configured")]
+    BillingNotConfigured,
 }
 
 impl AppError {
@@ -343,6 +351,7 @@ impl AppError {
             CacheUnavailable => "PF-5003",
             InvalidStateTransition => "PF-5002",
             NotImplemented => "PF-5004",
+            BillingNotConfigured => "PF-5005",
         }
     }
 
@@ -389,6 +398,7 @@ impl AppError {
             CacheUnavailable => 503,
             InvalidStateTransition => 409,
             NotImplemented => 501,
+            BillingNotConfigured => 503,
         }
     }
 
@@ -435,6 +445,7 @@ impl AppError {
             CacheUnavailable => "cache_unavailable",
             InvalidStateTransition => "invalid_state_transition",
             NotImplemented => "not_implemented",
+            BillingNotConfigured => "billing_not_configured",
         }
     }
 
@@ -485,6 +496,7 @@ impl AppError {
             CacheUnavailable => "the cache is temporarily unavailable",
             InvalidStateTransition => "this transition is not allowed",
             NotImplemented => "this endpoint is not implemented yet",
+            BillingNotConfigured => "billing is not configured",
         }
     }
 
@@ -700,7 +712,8 @@ mod tests {
                 | AppError::DatabaseUnavailable
                 | AppError::CacheUnavailable
                 | AppError::InvalidStateTransition
-                | AppError::NotImplemented => {
+                | AppError::NotImplemented
+                | AppError::BillingNotConfigured => {
                     assert!((5000..6000).contains(&n))
                 }
             }

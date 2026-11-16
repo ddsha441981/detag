@@ -1596,6 +1596,7 @@ dependencies = [
  "axum",
  "chrono",
  "deadpool-redis",
+ "detag-billing",
  "detag-core",
  "detag-engine",
  "detag-mailer",
@@ -1634,6 +1635,7 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror 2.0.21",
  "tokio",
+ "utoipa",
  "uuid 1.29.2",
 ]
 
