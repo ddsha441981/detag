@@ -94,7 +94,7 @@ async fn login_token(app: &TestApp, email: &str) -> String {
 /// P1-003 lesson — the shared "unknown" bucket is one bucket
 /// for the whole binary).
 fn unique_xff() -> String {
-    format!("203.0.113.{}", Uuid::now_v7().as_u128() % 250 + 1)
+    format!("203.0.113.{}", Uuid::now_v7())
 }
 
 fn get_me(token: Option<&str>) -> Request<axum::body::Body> {

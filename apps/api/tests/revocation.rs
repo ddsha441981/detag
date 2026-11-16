@@ -49,7 +49,7 @@ fn unique_email(prefix: &str) -> String {
 /// P1-003 lesson — the shared "unknown" bucket is one bucket
 /// for the whole binary).
 fn unique_xff() -> String {
-    format!("203.0.113.{}", Uuid::now_v7().as_u128() % 250 + 1)
+    format!("203.0.113.{}", Uuid::now_v7())
 }
 
 /// Register a user, return its id.
