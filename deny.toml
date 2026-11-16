@@ -4,6 +4,12 @@
 # - Advisories: RUSTSEC vulnerability advisories are errors (cargo-deny
 #   0.20 has no severity knob for them — they always fail `check` unless
 #   listed in `ignore` with a reason). Yanked crates are denied.
+#   Unsound advisories likewise always error in 0.20 — the `unsound`
+#   key was REMOVED upstream (EmbarkStudios/cargo-deny#611) and its
+#   presence is now a config error, so there is no line for it here;
+#   removing it does not weaken anything (it errors for every crate
+#   now, where the old line scoped it to workspace crates only).
+#   Unmaintained advisories error for every crate in the graph.
 # - Licenses: only the permissive set in `allow` is accepted. cargo-deny
 #   denies any license not in `allow` by default, so server-side copyleft
 #   (AGPL) is denied without needing an explicit list. A crate
@@ -20,8 +26,9 @@ yanked = "deny"
 # default scope). If one fires on a transitive crate we cannot fix, add
 # its id to `ignore` below with a reason — do not weaken this.
 unmaintained = "all"
-# Unsound advisories error for workspace crates only (upstream default).
-unsound = "workspace"
+# (No `unsound` line: removed upstream in cargo-deny#611 — unsound
+# advisories always error in 0.20, which is stricter than the old
+# `unsound = "workspace"` line. See the header comment.)
 # Ignored advisories (each needs a reason). Every entry below is a
 # transitive crate with NO upgrade path at the latest ecosystem
 # version on 13 Nov 2026 — verified by updating the parent to latest
@@ -66,6 +73,33 @@ ignore = [
     "RUSTSEC-2026-0099",
     "RUSTSEC-2026-0104",
     "RUSTSEC-2026-0382",
+    # RUSTSEC-2026-0174 — http-types 2.12.0 notice (Authorization /
+    # WwwAuthenticate values can violate ASCII invariants; the crate
+    # is unmaintained, no fix coming). Via async-stripe 0.41.0
+    # (P1-060) — the adapter never builds Authorization headers
+    # through http-types itself. Verified 2026-11-16: no upgrade path
+    # at the latest ecosystem version. Remove when async-stripe drops
+    # http-types.
+    "RUSTSEC-2026-0174",
+    # RUSTSEC-2024-0384 — instant 0.1.13 unmaintained (author points
+    # to web-time; no upgrade path). Via fastrand -> futures-lite ->
+    # http-types -> async-stripe 0.41.0 (P1-060). Unmaintained only,
+    # no vulnerability. Verified 2026-11-16. Remove when
+    # async-stripe's http-types chain stops depending on instant.
+    "RUSTSEC-2024-0384",
+    # RUSTSEC-2026-0381 — webpki-roots 0.25.4 bundles the distrusted
+    # emSign ECC Root CA - G3 (its intermediate private keys are now
+    # well known; a MITM presenting an emSign-intermediate chain
+    # could be trusted). Patched only in >= 1.0.10, but hyper-rustls
+    # 0.24.2 (via async-stripe 0.41.0's webpki runtime feature,
+    # P1-060 — and the AWS smithy client) requires webpki-roots
+    # ^0.25, and no patched 0.25.x exists: no upgrade path in this
+    # graph. Verified 2026-11-16. Bounded: the store is only used by
+    # the Stripe client (api.stripe.com) and the S3 client (operator
+    # endpoint), both of which present non-emSign chains. Remove when
+    # hyper-rustls 0.24 leaves the tree (async-stripe / AWS SDK move
+    # to a webpki-roots 1.x client).
+    "RUSTSEC-2026-0381",
 ]
 
 [licenses]
