@@ -436,7 +436,10 @@ async fn admin_matrix_live() {
     let app = matrix_app().await;
     let (_user_id, user_token) = make_role(&app, &unique_email("user"), "user").await;
     let (_support_id, support_token) = make_role(&app, &unique_email("support"), "support").await;
-    let (_admin_id, admin_token) = make_role(&app, &unique_email("admin"), "admin").await;
+    let (admin_id, admin_token) = make_role(&app, &unique_email("admin"), "admin").await;
+    // P1-055: key creation is plan-gated — the admin user
+    // needs a Pro grant to mint the probe key.
+    app.grant_plan(admin_id, "pro").await;
     let admin_key = create_key(&app, &admin_token).await;
     // One sacrificial target per write row: suspend mutates
     // it, impersonate audits against it.

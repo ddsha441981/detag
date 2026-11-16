@@ -123,11 +123,14 @@ async fn login_token(app: &TestApp, email: &str) -> String {
     res.json()["access_token"].as_str().unwrap().to_string()
 }
 
-/// Register + log in; return (user id, access token).
+/// Register + log in; return (user id, access token). The
+/// user is granted Pro (P1-055): key creation is plan-gated,
+/// and this suite is about keys.
 async fn authed_user(app: &TestApp) -> (Uuid, String) {
     let email = unique_email();
     let id = register_user(app, &email).await;
     let token = login_token(app, &email).await;
+    app.grant_plan(id, "pro").await;
     (id, token)
 }
 

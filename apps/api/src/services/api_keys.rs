@@ -14,6 +14,13 @@
 //!   each one of `jobs:write` / `jobs:read` /
 //!   `webhooks:manage`, no duplicates) — 422 `PF-2002` with
 //!   `field_errors`, via `ValidatedJson` in the handler.
+//! - The caller's effective plan must grant the `api_keys`
+//!   feature (P1-055, FR-P-01: Free grants nothing, Pro and
+//!   Business grant it) — 403 `PF-3003` with the FR-P-06
+//!   upgrade hint, via [`require_feature`]. The gate runs
+//!   after validation, so a malformed request is still a
+//!   422 even for a Free user; a denied create mints no row
+//!   and writes no audit row.
 //! - Max 10 LIVE keys per user (revoked keys do not count).
 //!   The 11th create is 409 `PF-2011` (Conflict — the
 //!   request is valid, the user's state refuses it; there is
@@ -28,13 +35,13 @@
 //!   or its hash) are one transaction.
 //!
 //! Deliberately NOT here (see the ASSUMPTION entry in
-//! `docs/09-STATE/ISSUES.md`): plan entitlement — FR-P-01
-//! lists API keys as a Pro/Business feature, but no ticket
-//! owns the gate yet, so creation does not check the plan;
-//! and email verification — the spec does not require a
-//! verified user to mint a key, and the key is unusable for
-//! jobs until verified anyway (job-create calls the
-//! `require_verified` guard).
+//! `docs/09-STATE/ISSUES.md`): email verification — the spec
+//! does not require a verified user to mint a key, and the
+//! key is unusable for jobs until verified anyway (job-create
+//! calls the `require_verified` guard). The plan gate that
+//! used to sit in this paragraph landed with P1-055 (see the
+//! rules above); ASSUMPTION-015 clause (1) is closed by it,
+//! clauses (2)/(3) still stand.
 //!
 //! Rotation (P1-035, FR-A-06) lives here too:
 //! [`rotate_api_key`] mints a replacement row (same name +
@@ -67,7 +74,10 @@
 //! session convention).
 
 use crate::{
-    services::revocation::{deny_api_key, is_api_key_revoked},
+    services::{
+        entitlements::require_feature,
+        revocation::{deny_api_key, is_api_key_revoked},
+    },
     AppState,
 };
 use chrono::{DateTime, TimeDelta, Utc};
@@ -255,6 +265,10 @@ pub enum ApiKeyError {
     CapReached,
     #[error("api key creation failed")]
     Internal,
+    /// The caller's plan does not grant the `api_keys`
+    /// feature (P1-055, FR-P-01) — 403 `PF-3003`.
+    #[error("plan does not include api keys")]
+    NotEntitled,
 }
 
 /// The transaction's inner error: the cap is a business
@@ -279,6 +293,22 @@ pub async fn create_api_key(
     req: &CreateApiKeyRequest,
 ) -> Result<CreateApiKeyResponse, ApiKeyError> {
     req.validate().map_err(ApiKeyError::Validation)?;
+    // P1-055: the plan gate — Free cannot mint keys. Runs
+    // after validation (a malformed request stays a 422) and
+    // before the cap (a denied create spends no cap slot and
+    // writes no row). The `require_feature` failure is a
+    // plan error, not a service error: `DatabaseUnavailable`
+    // and `Internal` are programmer/operator failures, so
+    // they map to `Internal` here — the handler has no 503
+    // arm for key creation, and a down plan store must not
+    // mint a key it cannot gate.
+    match require_feature(&state.plans, &state.pool, user.id, "api_keys").await {
+        Ok(_) => {}
+        Err(detag_core::error::AppError::FeatureNotEntitled) => {
+            return Err(ApiKeyError::NotEntitled);
+        }
+        Err(_) => return Err(ApiKeyError::Internal),
+    }
     let secret = api_keys::generate_secret();
     let prefix = api_keys::display_prefix(&secret);
     let secret_hash = api_keys::hash_secret(&secret);

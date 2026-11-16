@@ -398,6 +398,32 @@ impl TestApp {
     pub async fn seed_user_unique(&self) -> User {
         self.seed_user(&unique_email(), TEST_PASSWORD_HASH).await
     }
+
+    /// Grant the user a live subscription to `plan_code`
+    /// (P1-055): inserts a `stripe` / `active` subscription
+    /// row directly — there is no billing flow yet to create
+    /// one through the API. The plan resolves through
+    /// `effective_plan`, so a test that needs a Pro or
+    /// Business user grants it here instead of minting keys
+    /// as a Free user (key creation is plan-gated since
+    /// P1-055). One live subscription per call; callers that
+    /// grant twice must expect `effective_plan`'s newest-wins
+    /// rule (P1-049) to pick the later row.
+    pub async fn grant_plan(&self, user_id: Uuid, plan_code: &str) {
+        let plan = detag_core::repos::plans::by_code(&self.pool, plan_code)
+            .await
+            .expect("harness: grant_plan loads plan")
+            .unwrap_or_else(|| panic!("harness: plan {plan_code} is seeded"));
+        sqlx::query(
+            "INSERT INTO subscriptions (user_id, plan_id, provider, status, created_at) \
+             VALUES ($1, $2, 'stripe', 'active', now())",
+        )
+        .bind(user_id)
+        .bind(plan.id)
+        .execute(&self.pool)
+        .await
+        .expect("harness: grant_plan inserts");
+    }
 }
 
 /// `spawn_app()` — the spec's name for [`TestApp::spawn`].

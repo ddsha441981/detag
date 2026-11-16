@@ -366,10 +366,13 @@ async fn last_used_at(app: &TestApp, key_id: Uuid) -> Option<chrono::DateTime<ch
 }
 
 /// Register + log in + mint a key; return (user id, key id, secret).
+/// The user is granted Pro (P1-055): key creation is
+/// plan-gated, and this suite is about keys.
 async fn key_for(app: &TestApp, scopes: &[&str]) -> (Uuid, Uuid, String) {
     let email = unique_email("key-user");
     let user_id = register_user(app, &email).await;
     let token = login_token(app, &email).await;
+    app.grant_plan(user_id, "pro").await;
     let (key_id, secret) = mint_key(app, &token, scopes).await;
     (user_id, key_id, secret)
 }

@@ -454,6 +454,9 @@ async fn api_key_to_admin_all_403_and_audit_nothing() {
     // audit row for any write with the key's owner as actor.
     let app = escalation_app().await;
     let (admin_id, admin_token) = make_role(&app, &unique_email("admin"), "admin").await;
+    // P1-055: key creation is plan-gated — the admin user
+    // needs a Pro grant to mint the probe key.
+    app.grant_plan(admin_id, "pro").await;
     let admin_key = create_key(&app, &admin_token).await;
     let (suspend_target, _) = make_role(&app, &unique_email("target-s"), "user").await;
 

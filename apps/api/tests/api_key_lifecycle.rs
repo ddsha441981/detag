@@ -118,10 +118,14 @@ async fn login_token(app: &TestApp, email: &str) -> String {
 }
 
 /// Register + log in; return (user id, email, access token).
+/// The user is granted Pro (P1-055): key creation is
+/// plan-gated, and this suite is about keys — a Free user
+/// could not mint one.
 async fn authed_user(app: &TestApp) -> (Uuid, String, String) {
     let email = unique_email();
     let id = register_user(app, &email).await;
     let token = login_token(app, &email).await;
+    app.grant_plan(id, "pro").await;
     (id, email, token)
 }
 

@@ -16,6 +16,13 @@
 //! read shows up on the next read. That is fine for a
 //! snapshot (the middleware re-checks at job-create time).
 //!
+//! P1-055: the feature gate lives here too
+//! ([`require_feature`]) — the gated services (API-key
+//! creation, webhook-endpoint creation) resolve the same
+//! effective plan and deny with PF-3003 when it does not
+//! grant the feature, so the gate and the snapshot can never
+//! disagree about what a plan grants.
+//!
 //! P1-049: the plan rows come through the cached catalog
 //! (`detag_core::plans::PlanCatalog`) and the entitlements
 //! through its parsed struct (`detag_core::plans::
@@ -24,6 +31,7 @@
 //! snapshot can never disagree about what a plan grants.
 
 use detag_core::db::DbPool;
+use detag_core::error::AppError;
 use detag_core::plans::{Entitlements, PlanCache, PlanCatalog, PlanStore};
 use detag_core::repos::{plans, subscriptions, usage_counters, RepoError};
 
@@ -136,6 +144,34 @@ pub async fn effective_plan<S: PlanStore, C: PlanCache>(
         entitlements,
         source,
     })
+}
+
+/// The feature gate (P1-055, FR-P-01): the caller's
+/// effective plan must grant `feature` (`api_keys`,
+/// `webhooks`, `batch`, `priority_lane` — see
+/// [`Entitlements::grants`]), or the call is denied with
+/// `AppError::FeatureNotEntitled` (PF-3003, 403, whose
+/// detail carries the FR-P-06 upgrade hint). A plan-read
+/// failure is a 503 (`DatabaseUnavailable`); a missing Free
+/// plan is a 500 (`Internal` — the seed is broken, not the
+/// caller's plan). Returns the resolved plan on success so
+/// the caller can reuse it without a second read.
+pub async fn require_feature<S: PlanStore, C: PlanCache>(
+    catalog: &PlanCatalog<S, C>,
+    pool: &DbPool,
+    user_id: uuid::Uuid,
+    feature: &str,
+) -> Result<ResolvedPlan, AppError> {
+    let resolved = effective_plan(catalog, pool, user_id)
+        .await
+        .map_err(|err| match err {
+            EntitlementError::Db(_) => AppError::DatabaseUnavailable,
+            EntitlementError::MissingFreePlan => AppError::Internal,
+        })?;
+    if !resolved.entitlements.grants(feature) {
+        return Err(AppError::FeatureNotEntitled);
+    }
+    Ok(resolved)
 }
 
 /// The plan snapshot for a plan the caller already loaded

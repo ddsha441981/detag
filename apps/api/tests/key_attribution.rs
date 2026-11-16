@@ -199,6 +199,8 @@ async fn admin_jobs_list_shows_key_prefix() {
     let email = unique_email("attr-user");
     let user_id = register_user(&app, &email).await;
     let token = login_token(&app, &email).await;
+    // P1-055: key creation is plan-gated — grant Pro first.
+    app.grant_plan(user_id, "pro").await;
     let (key_id, prefix) = mint_key(&app, &token, &["jobs:write"]).await;
     let key_job = seed_job(&app, user_id, "image", Some(key_id)).await;
     let web_job = seed_job(&app, user_id, "image", None).await;
@@ -243,6 +245,8 @@ async fn admin_jobs_list_filters_by_key() {
     let email = unique_email("attr-filter");
     let user_id = register_user(&app, &email).await;
     let token = login_token(&app, &email).await;
+    // P1-055: key creation is plan-gated — grant Pro first.
+    app.grant_plan(user_id, "pro").await;
     let (key_a, _) = mint_key(&app, &token, &["jobs:write"]).await;
     let (key_b, _) = mint_key(&app, &token, &["jobs:write"]).await;
     let job_a = seed_job(&app, user_id, "image", Some(key_a)).await;
@@ -362,6 +366,8 @@ async fn usage_breakdown_attributes_per_key() {
     let email = unique_email("attr-usage");
     let user_id = register_user(&app, &email).await;
     let token = login_token(&app, &email).await;
+    // P1-055: key creation is plan-gated — grant Pro first.
+    app.grant_plan(user_id, "pro").await;
     let (key_a, prefix_a) = mint_key(&app, &token, &["jobs:write"]).await;
     let (key_b, prefix_b) = mint_key(&app, &token, &["jobs:write"]).await;
     seed_job(&app, user_id, "image", Some(key_a)).await;

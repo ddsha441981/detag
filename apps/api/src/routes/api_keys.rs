@@ -34,7 +34,10 @@ use uuid::Uuid;
 /// bytes, sha256 stored, full secret shown once in this
 /// response. Max 10 live keys per user — the 11th is 409
 /// `PF-2011` (Conflict: the request is valid, the user's
-/// state refuses it).
+/// state refuses it). P1-055 (FR-P-01): the caller's plan
+/// must grant the `api_keys` feature — a Free user is 403
+/// `PF-3003`, after validation (a malformed request stays
+/// 422) and before the cap.
 #[utoipa::path(
     post,
     path = "/v1/api-keys",
@@ -42,6 +45,7 @@ use uuid::Uuid;
     responses(
         (status = 201, description = "Key created; the full secret is shown here once and never again", body = CreateApiKeyResponse),
         (status = 401, description = "No credential, or an invalid/expired access token (PF-1001/1010/1011)", body = Problem),
+        (status = 403, description = "Plan does not include API keys (PF-3003)", body = Problem),
         (status = 409, description = "User already has 10 live keys (PF-2011)", body = Problem),
         (status = 422, description = "Invalid name or scopes (PF-2002)", body = Problem)
     ),
@@ -72,6 +76,12 @@ pub async fn create_api_key(
             ProblemResponse(AppError::Conflict.to_problem(Profile::Production, request_id, None))
                 .into_response()
         }
+        Err(ApiKeyError::NotEntitled) => ProblemResponse(AppError::FeatureNotEntitled.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response(),
         Err(ApiKeyError::Internal) => {
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
                 .into_response()
