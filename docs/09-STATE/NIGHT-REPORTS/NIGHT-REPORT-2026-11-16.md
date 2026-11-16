@@ -452,3 +452,122 @@ time: Phase 1 55/111, CI green 6 runs straight (#38–#43).
 
 ### Risks
 - None new. The `upgrade_url` `/plans` console page still does not exist until Phase 4 (ASSUMPTION-020).
+
+## 53rd coordinator (continued) — P1-059 BillingProvider trait (IN PROGRESS, run ends on cron timeout)
+
+### Tickets done this run
+- **P1-058 — Pricing config docs**: DONE + COMMITTED + MERGED (see above) — commit `d5d62b3` on `phase-1`, merged into `main` as `c015b5d`. Full `just verify` green 870 passed, 0 failed. Phase 1 now 58/111. No push — driver syncs.
+
+### Tickets partially done
+- **P1-059 — BillingProvider trait** (feat, billing/stripe, Est M, deps —, FR-P-05): implemented on branch `phase-1`, uncommitted. New `crates/billing/src/error.rs` (`BillingError`, 7 typed variants, no payloads/secrets in messages) + full `crates/billing/src/provider.rs` (trait `create_checkout` / `create_portal` / `fetch_subscription` / `list_invoices` / `create_customer` / `fetch_customer` + sync `verify_webhook_signature` / `map_webhook` → `Option<DomainEvent>`; domain types `SubscriptionStatus` (exactly the 4 DB CHECK values, fail-closed), `SubscriptionState`, `CheckoutSession`, `PortalSession`, `Customer`, `Invoice`, `BillingEvent`, `DomainEvent`; `Arc<T>` forwarding impl + `DynBillingProvider` alias) + `crates/billing/src/lib.rs` re-exports; `stripe.rs` / `razorpay.rs` module docs updated (adapters land in P1-060 / flagged later); `async-trait` 0.1.92 promoted from transitive to direct workspace dep (Cargo.toml + Cargo.lock) — the trait is `dyn`-compatible so `AppState` can hold `Arc<dyn BillingProvider>` (ADR-0028; the `PlanStore` native-`async`-fn + generics pattern was rejected — it would infect `AppState` and every handler with a type parameter). Docs: ADR-0028 in DECISIONS.md, P1-059 section in test-strategy. Targeted green: `cargo fmt` + `cargo clippy -p detag-billing --all-targets -D warnings` clean, `cargo test -p detag-billing` 8/8 (incl. the FR-P-05 swap proof — identical caller code against a Stripe double and a Razorpay double — plus status round-trip, webhook known/ignored/malformed, signature gate). Two fixes while implementing: missing `#[async_trait]` on the `Arc<T>` blanket impl (E0195 lifetime mismatch), and a clippy `doc_lazy_continuation` on a bullet continuation. Phase-file checkbox + PROGRESS.md update NOT done yet — they go in with the commit after the verify is green.
+- **Full `just verify` attempt 1 launched from scratch** at ~16:55 IST (pid 24289, detached via setsid/nohup): log `~/workspace/goals/detag-watermark-removal-saas/hidden_files/p1-059-verify.log`, already compiling at last check. It will outlive this run (cron timeout ~17:36 IST) — the next coordinator adopts it: check the log tail + live process first; if it has `VERIFY_EXIT=0`, run the drift checks, tick the P1-059 checkbox + status, update PROGRESS.md (Phase 1 59/111, current ticket P1-060), commit ONE commit `feat(billing): P1-059 BillingProvider trait (FR-P-05)` on `phase-1`, merge into `main` locally (no push — driver syncs). If the log ends mid-binary with no live process and no `VERIFY_EXIT`, re-run from scratch (attempt 2).
+
+### Run-end state (53rd coordinator)
+- Branch `phase-1`, HEAD = d5d62b3 (P1-058). `main` = c015b5d (P1-058 merged). Working tree: P1-059 uncommitted (9 modified files incl. Cargo.toml + Cargo.lock, 1 new file `crates/billing/src/error.rs`). **NOT committed, NOT merged.**
+- Services: postgres accepting, redis PONG at run start and at verify launch — no restore needed (no new reset since the 37th).
+- No S1 blockers. No owner decision needed.
+
+### Next-run plan (first 5)
+1. Check P1-059 verify attempt 1's fate first (log `~/workspace/goals/detag-watermark-removal-saas/hidden_files/p1-059-verify.log` tail + live process): if `VERIFY_EXIT=0`, drift checks → tick checkbox → PROGRESS.md (59/111, current P1-060) → commit `feat(billing): P1-059 BillingProvider trait (FR-P-05)` → merge to main, no push. If dead mid-run, re-run from scratch (attempt 2).
+2. P1-060 — Stripe adapter (deps P1-059): async-stripe checkout/portal/subscription fetch, test-mode enforced (live keys rejected without owner flag).
+3. P1-061 — Products/prices sync job (deps P1-060).
+4. CI #37 results (FLAKY-006 fix confirmation — via the user's logs zip); CI #45 on efddaaf was still running as of ~15:41 IST.
+5. CI #45 result when it lands (same source).
+
+### Risks
+- None new. The `upgrade_url` `/plans` console page still does not exist until Phase 4 (ASSUMPTION-020).
+
+## 54th coordinator — P1-059 BillingProvider trait (IN PROGRESS)
+
+### Adopted state
+- Adopted the 53rd's running full `just verify` attempt 1 (pid 24289, log `~/workspace/goals/detag-watermark-removal-saas/hidden_files/p1-059-verify.log`); cross-checked the P1-059 implementation independently before trusting it: trait surface matches the spec exactly; `SubscriptionStatus` round-trips exactly the 4 DB CHECK values, verified against `migrations/20261112065140_billing.up.sql:52`; `BillingError` 7 typed variants, messages static templates + ids only, no payloads/secrets; ADR-0028 + test-strategy P1-059 section present and accurate.
+- **Defect found + fixed while adopting:** ADR-0028 had been inserted between ADR-0027's Decision paragraph and its Consequences paragraph, orphaning ADR-0027's Consequences line after ADR-0028. Moved it back — DECISIONS.md structure verified correct.
+- Services at adoption (~16:57 IST): postgres accepting, redis PONG; uptime 1:40 (no new reset since the 37th).
+
+### 38th VM reset (~17:19 IST, mid-verify)
+- The runtime restarted and both of my verify monitors were interrupted; on recovery: VM uptime 0 min — a full reset. Verify attempt 1 died mid-binary (log ends in `api_key_rate_limits`, 13 test-result lines, no `VERIFY_EXIT`; no live `just verify` process) — untrustworthy, will re-run from scratch as attempt 2 after the restore, per the adoption rule.
+- `just`/`cargo`/`rustc` survived (home dir intact); postgres/redis binaries + data dirs wiped (`/etc/redis`, `/var/lib/postgresql` gone; `pg_isready`/`redis-cli` not found). The P1-059 uncommitted tree survived intact (same 10 modified files + new `error.rs`).
+- Restore in progress per ASSUMPTION-010: `sudo apt-get update` + install `redis-server postgresql-16` (apt cache was empty, 0 debs — full network install; `sudo -n` works). Then: setsid redis, `pg_ctlcluster 16 main start`, recreate `pf` role/db, apply all 17 migrations.
+- **Restore DONE ~17:10 IST:** `apt-get update` fetched 71.1 MB in 17 min 8 s (69.1 kB/s — slow proxy; one `Translation-en` file failed, UPDATE_EXIT=0, ignored); install `redis-server 7.0.15` + `postgresql-16` clean (INSTALL_EXIT=0; services not auto-started, policy-rc.d). `setsid redis-server` → PONG; `pg_ctlcluster 16 main start` → accepting; `pf` role (password `pf`) + `pf` db recreated; `just migrate` applied all 17 migrations (`count(*) = 17` in `_sqlx_migrations`).
+- **Full `just verify` attempt 2 re-launched from scratch** ~17:08 IST (pid 6429, `just verify` 6433, detached via setsid/nohup): log `~/workspace/goals/detag-watermark-removal-saas/hidden_files/p1-059-verify2.log`. Attempt 1's log (`p1-059-verify.log`, 13 binaries green, killed by the 38th reset) must NOT be trusted. Attempt 2 will outlive this run (cron timeout) — the next coordinator adopts it the same way.
+
+### Run-end state (54th coordinator) — run ended on cron timeout ~17:35 IST
+- Branch `phase-1`, HEAD = d5d62b3 (P1-058). `main` = c015b5d (P1-058 merged). Working tree: P1-059 uncommitted (10 modified files incl. Cargo.toml + Cargo.lock + DECISIONS.md + ISSUES.md + night report, 1 new file `crates/billing/src/error.rs`). **NOT committed, NOT merged, NOT pushed.**
+- **Verify attempt 2 STILL RUNNING at run end** (~17:35 IST, in `logout` tests, 32 test-result lines, 0 failed so far): log `~/workspace/goals/detag-watermark-removal-saas/hidden_files/p1-059-verify2.log`, no `VERIFY_EXIT` yet. Do NOT restart it — adopt it the same way (log tail + live process first).
+- Services restored and verified at ~17:10 IST (postgres accepting, redis PONG, `pf` role/db, all 17 migrations). No S1 blockers. No owner decision needed.
+
+### Next-run plan (first 5)
+1. Check verify attempt 2's fate first (log `p1-059-verify2.log` tail + live process): if `VERIFY_EXIT=0`, run the drift checks, tick the P1-059 checkbox + status, update PROGRESS.md (Phase 1 59/111, current ticket P1-060), commit ONE commit `feat(billing): P1-059 BillingProvider trait (FR-P-05)` on `phase-1`, merge into `main` locally (no push — driver syncs). If the log ends mid-binary with no live process and no `VERIFY_EXIT`, re-run from scratch (attempt 3).
+2. P1-060 — Stripe adapter (deps P1-059): async-stripe checkout/portal/subscription fetch, test-mode enforced. NOTE: async-stripe is NOT in Cargo.toml/Cargo.lock or the local registry cache — it needs a crates.io download.
+3. P1-061 — Products/prices sync job (deps P1-060).
+4. CI #37 results (FLAKY-006 fix confirmation — via the user's logs zip); CI #45 on efddaaf was still running as of ~15:41 IST.
+5. CI #45 result when it lands (same source).
+
+### Risks
+- None new. The `upgrade_url` `/plans` console page still does not exist until Phase 4 (ASSUMPTION-020).
+
+### Tickets done this run
+- None yet — P1-059 commit waits on the re-run verify (attempt 2).
+
+## 55th coordinator — P1-059 BillingProvider trait (IN PROGRESS)
+
+### Adopted state
+- Adopted the 54th's uncommitted P1-059 tree (11 modified files incl. Cargo.toml + Cargo.lock + DECISIONS.md + ISSUES.md + night report, 1 new file `crates/billing/src/error.rs`) on branch `phase-1`, HEAD = d5d62b3 (P1-058). `main` = c015b5d (P1-058 merged). Local main == remote main — in sync, nothing to push.
+- **Verify attempt 2 is DEAD — not trusted.** Log `~/workspace/goals/detag-watermark-removal-saas/hidden_files/p1-059-verify2.log` ends mid-binary (`password_reset.rs`, `reset_clears_the_lockout_counter` running), no `VERIFY_EXIT`, no live `just`/`cargo` process. No new VM reset since the 38th (uptime 51 min at adoption) — attempt 2 died with its owner's cron timeout, not a reset. Services are UP (postgres accepting, redis PONG, `pf` role/db + all 17 migrations verified present by the 54th's restore ~17:10 IST). Per the adoption rule, re-ran full `just verify` from scratch as attempt 3.
+- S1 check: 0 open S1 — CI-FAIL-017/018/019/020 all "fixed — waits on CI". Nothing to fix before the ticket.
+- Cross-checked the P1-059 implementation independently before trusting it: trait surface matches the spec exactly (`create_checkout` / `create_portal` / `fetch_subscription` / `list_invoices` / `create_customer` / `fetch_customer` + sync `verify_webhook_signature` / `map_webhook` → `Option<DomainEvent>`); `SubscriptionStatus` round-trips exactly the 4 DB CHECK values, verified against `migrations/20261112065140_billing.up.sql:52`; `BillingError` 7 typed variants, messages static templates + ids only, no payloads/secrets; `async-trait` 0.1.92 promoted to direct workspace dep (Cargo.toml + Cargo.lock); ADR-0028 + test-strategy P1-059 section present and accurate; DECISIONS.md structure verified correct (ADR-0027's Consequences paragraph is in place after the 54th's fix — ADR-0028 no longer orphans it); ISSUES.md diff is only the 38th-reset ASSUMPTION-010 update line.
+- Targeted green before the full verify: `cargo fmt --check` clean, `cargo clippy -p detag-billing --all-targets -- -D warnings` clean, `cargo test -p detag-billing` 8/8.
+
+### Full `just verify` attempt 3
+- Launched from scratch ~17:42 IST (pid 11344, `just verify` 11345, detached via setsid/nohup): log `~/workspace/goals/detag-watermark-removal-saas/hidden_files/p1-059-verify3.log`. Verified alive minutes later, already in tests. Attempt 3 will outlive this run (cron timeout) — the next coordinator adopts it the same way. Attempts 1 (killed by the 38th VM reset) and 2 (died with the 54th's cron timeout) must NOT be trusted.
+
+### Run-end state (55th coordinator) — run ends on cron timeout
+- Branch `phase-1`, HEAD = d5d62b3 (P1-058). `main` = c015b5d (P1-058 merged). Working tree: P1-059 uncommitted (same 11 modified files + new `crates/billing/src/error.rs`). **NOT committed, NOT merged, NOT pushed.**
+- **Verify attempt 3 STILL RUNNING at run end** (in early test binaries, 0 failures so far): log `~/workspace/goals/detag-watermark-removal-saas/hidden_files/p1-059-verify3.log`, no `VERIFY_EXIT` yet. Do NOT restart it — adopt it the same way (log tail + live process first).
+- Services up at adoption and at verify launch — no restore needed (no new reset since the 38th). No S1 blockers. No owner decision needed.
+
+### Next-run plan (first 5)
+1. Check verify attempt 3's fate first (log `p1-059-verify3.log` tail + live process): if `VERIFY_EXIT=0`, run the drift checks (`just openapi-check`, `just route-table-check`, `just config-table-check`, `just env-check`, `just sqlx-prepare-check`, `just snapshots-check`, gitleaks), tick the P1-059 checkbox + status, update PROGRESS.md (Phase 1 59/111, current ticket P1-060, P1-059 note, health-snapshot verify line), commit ONE commit `feat(billing): P1-059 BillingProvider trait (FR-P-05)` on `phase-1`, merge into `main` locally (no push — driver syncs). If the log ends mid-binary with no live process and no `VERIFY_EXIT`, re-run from scratch (attempt 4).
+2. P1-060 — Stripe adapter (deps P1-059): async-stripe checkout/portal/subscription fetch, test-mode enforced (live keys rejected without owner flag). NOTE: async-stripe is NOT in Cargo.toml/Cargo.lock or the local registry cache — it needs a crates.io download.
+3. P1-061 — Products/prices sync job (deps P1-060).
+4. CI #37 results (FLAKY-006 fix confirmation — via the user's logs zip); CI #45 on efddaaf was still running as of ~15:41 IST.
+5. CI #45 result when it lands (same source).
+
+### Risks
+- None new. The `upgrade_url` `/plans` console page still does not exist until Phase 4 (ASSUMPTION-020).
+
+### Tickets done this run
+- None yet — P1-059 commit waits on the re-run verify (attempt 3).
+
+## 56th coordinator — P1-059 BillingProvider trait (IN PROGRESS)
+
+### Adopted state
+- Adopted the 55th's uncommitted P1-059 tree (11 modified files incl. Cargo.toml + Cargo.lock + DECISIONS.md + ISSUES.md + night report, 1 new file `crates/billing/src/error.rs`) on branch `phase-1`, HEAD = d5d62b3 (P1-058). `main` = c015b5d (P1-058 merged). Local main == remote main — in sync, nothing to push (driver owns sync, never the coordinator).
+- **Verify attempt 3 finished GREEN but is NOT trusted for the commit.** Log `~/workspace/goals/detag-watermark-removal-saas/hidden_files/p1-059-verify3.log` ends `VERIFY_EXIT=0` ("verify OK: fmt + clippy + tests green"), 116 test-result lines, finished 12:58 UTC (18:28 IST). BUT the tree changed mid-verify: log birth 12:11:08 UTC, night-report mtime 12:11:43 UTC — the 55th's section was written 35 s AFTER attempt 3 started. Per the driver's brief and the P1-056 lesson (committed tree must equal verified tree), attempt 3 is not proof for the current tree. All code files were last touched 10:51–10:54 UTC and every uncommitted file predates attempt 3's finish, so the change was docs-only — but the rule is the rule, and the driver explicitly directed a from-scratch re-run.
+- S1 check: 0 open S1 — CI-FAIL-017/018/019/020 all "fixed — waits on CI". Nothing to fix before the ticket. S2 DISK-QUOTA-001 (`target/` 144G, disk 93G free — no clean needed for this run) and S3 TESTKIT-MINIO-001 non-blocking, not fixed inside a ticket.
+
+### 39th VM reset (~18:48 IST, before this run started)
+- The runtime restarted between the 55th's run end and this run's start (uptime 45 min at discovery ~19:33 IST). Attempt 3 had already finished green at 18:28 IST, so nothing was lost mid-run. No os-intent replay was running. Binaries + data dirs SURVIVED (`/usr/bin/psql`, `/usr/bin/redis-server`, `/etc/redis`, `/var/lib/postgresql/16` present) — no reinstall needed.
+- Restore per ASSUMPTION-010: `pg_ctlcluster 16 main start` → accepting; `setsid redis-server ... --daemonize yes` → PONG; `pf` role/db were gone (fresh cluster) — recreated via `sudo -u postgres psql`, password `pf` (`.env` grep-first check confirmed `PF_DATABASE_URL=postgres://pf:pf@localhost:5432/pf`); `just migrate` applied all 17 migrations. ASSUMPTION-010 updated in ISSUES.md with this reset. The P1-059 tree survived intact, uncommitted.
+
+### Full `just verify` attempt 4
+- Launched from scratch ~19:36 IST (bash wrapper pid 13333, `just verify` pid 13335, detached via setsid/nohup): log `~/workspace/goals/detag-watermark-removal-saas/hidden_files/p1-059-verify4.log`. Verified alive minutes later, already in tests (fmt + clippy passed, 4 test-result lines, 0 failed so far). Attempt 4 will outlive this run (cron timeout) — the next coordinator adopts it the same way. Attempts 1 (killed by the 38th reset), 2 (died with the 54th's cron timeout) and 3 (green but tree-changed-mid-verify) must NOT be trusted.
+- TIMELINE NOTE for the 57th: this night-report section + the ISSUES.md 39th-reset line were written ~19:37–19:38 IST, i.e. in the first minutes AFTER attempt 4 launched — docs-only edits (verify = fmt + clippy + tests, never reads .md), and no code file has been touched since 10:54 UTC. If you apply the strict P1-056 reading, the tree still changed mid-verify and you must re-run; if you apply the P1-058 precedent (docs-only bookkeeping after a green verify does not invalidate it — P1-058 was committed exactly that way), attempt 4's VERIFY_EXIT=0 + the drift checks suffice. Either way, DO NOT commit on attempt 3.
+
+### Run-end state (56th coordinator) — run ends on cron timeout
+- Branch `phase-1`, HEAD = d5d62b3 (P1-058). `main` = c015b5d (P1-058 merged). Working tree: P1-059 uncommitted (same 11 modified files + new `crates/billing/src/error.rs`, plus this night-report section and the ISSUES.md 39th-reset line). **NOT committed, NOT merged, NOT pushed.**
+- **Verify attempt 4 STILL RUNNING at run end** (in early test binaries, 0 failures so far): log `~/workspace/goals/detag-watermark-removal-saas/hidden_files/p1-059-verify4.log`, wrapper pid 13333, `just verify` pid 13335, no `VERIFY_EXIT` yet. Do NOT restart it — adopt it the same way (log tail + live process first).
+- Services restored and verified ~19:34 IST (postgres accepting, redis PONG, `pf` role/db, all 17 migrations). No S1 blockers. No owner decision needed.
+
+### Next-run plan (first 5)
+1. Check verify attempt 4's fate first (log `p1-059-verify4.log` tail + live process): if `VERIFY_EXIT=0`, run the drift checks (`just openapi-check`, `just route-table-check`, `just config-table-check`, `just env-check`, `just sqlx-prepare-check`, `just snapshots-check`, gitleaks), tick the P1-059 checkbox + status, update PROGRESS.md (Phase 1 59/111, current ticket P1-060, P1-059 note, health-snapshot verify line), commit ONE commit `feat(billing): P1-059 BillingProvider trait (FR-P-05)` on `phase-1`, merge into `main` locally (no push — driver syncs). If the log ends mid-binary with no live process and no `VERIFY_EXIT`, re-run from scratch (attempt 5). See the TIMELINE NOTE above before deciding whether attempt 4 counts.
+2. P1-060 — Stripe adapter (deps P1-059): async-stripe checkout/portal/subscription fetch, test-mode enforced (live keys rejected without owner flag). NOTE: async-stripe is NOT in Cargo.toml/Cargo.lock or the local registry cache — it needs a crates.io download.
+3. P1-061 — Products/prices sync job (deps P1-060).
+4. CI #37 results (FLAKY-006 fix confirmation — via the user's logs zip); CI #45 on efddaaf was still running as of ~15:41 IST.
+5. CI #45 result when it lands (same source).
+
+### Risks
+- None new. The `upgrade_url` `/plans` console page still does not exist until Phase 4 (ASSUMPTION-020).
+
+### Tickets done this run
+- None yet — P1-059 commit waits on the re-run verify (attempt 4).

@@ -489,11 +489,12 @@
 
 ## E1.7 — Stripe billing (area: billing/stripe)
 
-- [ ] **P1-059** — BillingProvider trait
+- [x] **P1-059** — BillingProvider trait
   - **Type:** feat · **Area:** billing/stripe · **Est:** M · **Deps:** — · **Prio:** P1
   - **Spec:** Trait: create_checkout, create_portal, fetch_subscription, map_webhook(event) to DomainEvent, customer ops; typed error; rationale documented (FR-P-05).
   - **AC:**
-    - [ ] trait + docs committed
+    - [x] trait + docs committed
+  - **Status:** DONE 2026-11-16 (53rd coordinator implemented, 57th finished + committed as one commit) — full `just verify` green: 877 passed, 0 failed (870 + 7 new FakeProvider tests), attempt 4, ~46 min, no flakes; drift checks green; gitleaks clean. New `crates/billing/src/provider.rs` (trait + domain types + FakeProvider double) + `crates/billing/src/error.rs` (typed `BillingError`); ADR-0028.
 
 - [ ] **P1-060** — Stripe adapter
   - **Type:** feat · **Area:** billing/stripe · **Est:** M · **Deps:** P1-059 · **Prio:** P1
