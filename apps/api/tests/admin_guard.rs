@@ -227,6 +227,10 @@ async fn callers(app: &TestApp) -> (String, String, String, String, Uuid) {
     let (_user_id, user_token) = make_role(app, &unique_email("user"), "user").await;
     let (_support_id, support_token) = make_role(app, &unique_email("support"), "support").await;
     let (admin_id, admin_token) = make_role(app, &unique_email("admin"), "admin").await;
+    // P1-055: key creation is plan-gated — the admin user
+    // needs a Pro grant before it can mint the probe key
+    // (keys are a Pro/Business feature, FR-P-01).
+    app.grant_plan(admin_id, "pro").await;
     let admin_key = create_key(app, &admin_token).await;
     (user_token, support_token, admin_token, admin_key, admin_id)
 }

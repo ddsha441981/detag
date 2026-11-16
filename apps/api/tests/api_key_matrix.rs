@@ -267,6 +267,9 @@ async fn make_admin(app: &TestApp, email: &str) -> (Uuid, String) {
         .execute(&app.pool)
         .await
         .expect("promote to admin");
+    // P1-055: key creation is plan-gated — the admin needs a
+    // Pro grant to mint a key (keys are a Pro feature).
+    app.grant_plan(id, "pro").await;
     let token = login_token(app, email).await;
     (id, token)
 }
@@ -384,8 +387,11 @@ async fn api_key_matrix() {
     // cannot hide behind the status.
     let app = matrix_app().await;
     let email = unique_email("matrix");
-    let _user_id = register_user(&app, &email).await;
+    let user_id = register_user(&app, &email).await;
     let token = login_token(&app, &email).await;
+    // P1-055: key creation is plan-gated — the matrix user
+    // needs a Pro grant to mint the probe key.
+    app.grant_plan(user_id, "pro").await;
     let (_key_id, secret) = create_key(
         &app,
         &token,
@@ -461,8 +467,11 @@ async fn scope_mismatch_is_forbidden_on_every_gated_route() {
     // covers all its rows.
     let app = matrix_app().await;
     let email = unique_email("matrix-mismatch");
-    let _user_id = register_user(&app, &email).await;
+    let user_id = register_user(&app, &email).await;
     let token = login_token(&app, &email).await;
+    // P1-055: key creation is plan-gated — the mismatch user
+    // needs a Pro grant to mint the probe keys.
+    app.grant_plan(user_id, "pro").await;
     let (_read_id, read_secret) = create_key(&app, &token, "reader", &["jobs:read"]).await;
     let (_write_id, write_secret) = create_key(&app, &token, "writer", &["jobs:write"]).await;
 

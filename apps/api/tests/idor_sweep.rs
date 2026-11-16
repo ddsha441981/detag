@@ -126,6 +126,15 @@ async fn make_user(app: &TestApp, email: &str) -> (Uuid, String) {
     (id, token)
 }
 
+/// Grant Pro to user A only (P1-055): key creation is
+/// plan-gated, so A needs the grant to mint the probe key.
+/// B stays Free — B never mints, B only probes A's key.
+async fn make_key_owner(app: &TestApp, email: &str) -> (Uuid, String) {
+    let (id, token) = make_user(app, email).await;
+    app.grant_plan(id, "pro").await;
+    (id, token)
+}
+
 /// Mint a full-scope key for the JWT holder; return (id,
 /// secret). The id is what the cross-user caller must not
 /// be able to touch; the secret is what proves the key is
@@ -239,7 +248,7 @@ async fn cross_user_keys_are_not_found() {
     // it is 204 — it existed all along, and B's attempts did
     // not touch it. After the revoke the key is 401.
     let app = sweep_app().await;
-    let (_a_id, a_token) = make_user(&app, &unique_email("a")).await;
+    let (_a_id, a_token) = make_key_owner(&app, &unique_email("a")).await;
     let (_b_id, b_token) = make_user(&app, &unique_email("b")).await;
     let (key_id, secret) = create_key(&app, &a_token).await;
 
@@ -356,7 +365,12 @@ async fn stub_resources_leak_nothing() {
     // that nothing leaks.
     let app = sweep_app().await;
     let (a_id, a_token) = make_user(&app, &unique_email("a")).await;
-    let (_b_id, b_token) = make_user(&app, &unique_email("b")).await;
+    let (b_id, b_token) = make_user(&app, &unique_email("b")).await;
+    // P1-055: `POST /v1/webhook-endpoints` is plan-gated —
+    // B needs a Pro grant to reach the 501 stub on that row
+    // (a Free caller is 403 `PF-3003` there, proven in
+    // feature_flags.rs); the other rows are unaffected.
+    app.grant_plan(b_id, "pro").await;
     let job_id = seed_job(&app, a_id).await;
 
     // (method, path, target) — "job" = the seeded job id,

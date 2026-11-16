@@ -387,9 +387,15 @@ async fn stub_headers_agree_with_profile_snapshot() {
 #[tokio::test]
 async fn key_caller_create_carries_headers() {
     let app = quota_app().await;
-    let (_id, token) = authed_user(&app, "hdr-key").await;
+    let (id, token) = authed_user(&app, "hdr-key").await;
+    // P1-055: key creation is plan-gated — the user needs a
+    // Pro grant to mint the key, so the headers now read the
+    // Pro limits (500 images / 3600 video-seconds) instead of
+    // the Free ones (10 / 0). The test still proves the point:
+    // a key caller's create carries the headers.
+    app.grant_plan(id, "pro").await;
     let secret = create_key(&app, &token, &["jobs:write"]).await;
     let res = post_job_no_body_with_key(&app, &secret).await;
     assert_eq!(res.status, StatusCode::NOT_IMPLEMENTED, "{}", res.text());
-    assert_eq!(quota_headers(&res), ("10".to_string(), "0".to_string()));
+    assert_eq!(quota_headers(&res), ("500".to_string(), "3600".to_string()));
 }

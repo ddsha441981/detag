@@ -83,6 +83,8 @@ pub struct Entitlements {
     /// Which lane the plan's jobs run in.
     pub lane: Lane,
     /// Named feature flags (`api_keys`, `webhooks`, `batch`).
+    /// `priority_lane` is NOT a map entry — it reads the
+    /// `lane` field (see [`Entitlements::grants`]).
     pub features: HashMap<String, bool>,
 }
 
@@ -143,6 +145,21 @@ impl Entitlements {
     /// `features` map). Unknown features are not granted.
     pub fn has_feature(&self, name: &str) -> bool {
         self.features.get(name).copied().unwrap_or(false)
+    }
+
+    /// Whether the named gated feature is granted (P1-055,
+    /// FR-P-01). The four gated names are `api_keys`,
+    /// `webhooks`, `batch` — read from the `features` map —
+    /// and `priority_lane`, which is NOT a map entry: it reads
+    /// the plan's `lane` (`priority` grants it, `standard`
+    /// does not). A `priority_lane: true` map entry can never
+    /// grant the lane — the lane is the only source — and an
+    /// unknown name is never granted.
+    pub fn grants(&self, name: &str) -> bool {
+        if name == "priority_lane" {
+            return self.lane == Lane::Priority;
+        }
+        self.has_feature(name)
     }
 }
 
@@ -386,6 +403,43 @@ mod tests {
         assert_eq!(business.concurrency, 10);
         assert_eq!(business.lane, Lane::Priority);
         assert!(business.has_feature("batch"));
+    }
+
+    #[test]
+    fn grants_covers_all_four_gated_features() {
+        // P1-055: the four gated names, per the seeded plans
+        // (FR-P-01) — Free grants nothing, Pro the key +
+        // webhook features, Business all four.
+        let free = Entitlements::from_value(&seed_entitlements("free"));
+        for name in ["api_keys", "webhooks", "batch", "priority_lane"] {
+            assert!(!free.grants(name), "free must not grant {name}");
+        }
+
+        let pro = Entitlements::from_value(&seed_entitlements("pro"));
+        assert!(pro.grants("api_keys"));
+        assert!(pro.grants("webhooks"));
+        assert!(!pro.grants("batch"));
+        assert!(!pro.grants("priority_lane"));
+
+        let business = Entitlements::from_value(&seed_entitlements("business"));
+        for name in ["api_keys", "webhooks", "batch", "priority_lane"] {
+            assert!(business.grants(name), "business must grant {name}");
+        }
+
+        // Unknown names are never granted, even on Business.
+        assert!(!business.grants("teleport"));
+
+        // `priority_lane` reads the lane, never the map: a
+        // standard-lane plan with the map entry set still does
+        // not grant it, and a priority-lane plan grants it
+        // with no map entry at all.
+        let lying = Entitlements::from_value(&json!({
+            "lane": "standard",
+            "features": {"priority_lane": true}
+        }));
+        assert!(!lying.grants("priority_lane"));
+        let honest = Entitlements::from_value(&json!({"lane": "priority"}));
+        assert!(honest.grants("priority_lane"));
     }
 
     #[test]
