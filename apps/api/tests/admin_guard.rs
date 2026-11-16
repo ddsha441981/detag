@@ -5,15 +5,17 @@
 //! live routes were already guarded): `admin_stub` /
 //! `admin_read_stub` in `apps/api/src/routes/admin.rs` take the
 //! matrix guard, so an unauthenticated or wrong-role caller is
-//! rejected before the 501, exactly like on a live route. The
-//! three tests:
+//! rejected before the 501, exactly like on a live route. Two
+//! more routes went live since (P1-056: `GET` / `PUT
+//! /v1/admin/plans`), so the walk now covers 7 live routes and
+//! 12 stubs. The three tests:
 //!
 //! - `admin_guard_on_every_route` — the walk: all 19 admin
 //!   routes × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key). Anonymous is 401
 //!   `PF-1001`, a wrong role or a key is 403 `PF-1002`, an
-//!   admitted role is 200 on the 5 live routes and 501
-//!   `PF-5004` on the 14 stubs. A route that answers 501 to an
+//!   admitted role is 200 on the 7 live routes and 501
+//!   `PF-5004` on the 12 stubs. A route that answers 501 to an
 //!   anonymous caller has lost its guard — this fails.
 //! - `admin_actions_audit_actor_target_before_after` — the
 //!   audit: an admin suspend through the guarded route writes
@@ -322,13 +324,13 @@ const GUARD_ROWS: &[GuardRow] = &[
     GuardRow {
         method: "GET",
         path: "/v1/admin/plans",
-        live: false,
+        live: true,
         read: true,
     },
     GuardRow {
         method: "PUT",
         path: "/v1/admin/plans",
-        live: false,
+        live: true,
         read: false,
     },
     GuardRow {
@@ -404,6 +406,10 @@ async fn admin_guard_on_every_route() {
                 Some(impersonate_target),
                 Some(json!({ "reason": "guard probe" })),
             ),
+            // The plans PUT needs a valid body for the
+            // admitted caller to reach 200: the empty edit
+            // is a no-op 200 on the shared harness DB (P1-056).
+            "/v1/admin/plans" if row.method == "PUT" => (None, Some(json!({ "plans": [] }))),
             _ => (None, None),
         };
         // Anonymous: 401 PF-1001 — on every route, live or

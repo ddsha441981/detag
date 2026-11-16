@@ -1,6 +1,9 @@
 //! Plans repository (P0-041, E0.4). Plans are seeded by migration
 //! 003 (FR-P-01) and read here; admin edits go through the admin
-//! API (Phase 4), not this repo. `query_as!` macros are
+//! API (P1-056), not this repo directly — the service in
+//! `apps/api/src/services/admin_plans.rs` owns the edit flow
+//! (validation + removal guards) and calls these writers inside
+//! one transaction. `query_as!` macros are
 //! compile-time checked against the live schema; offline data is
 //! checked in under `.sqlx/` (see `just sqlx-prepare`).
 
@@ -53,4 +56,53 @@ pub async fn all(
     .fetch_all(pool)
     .await
     .map_err(RepoError::from_sqlx)
+}
+
+/// Update a plan by code (P1-056, FR-P-01): the caller passes
+/// the merged row — the service reads the current row first
+/// and overlays only the fields the admin sent, so the repo
+/// writes the full row. `None` when the code does not exist
+/// (no row is written). `updated_at` is bumped by the write.
+pub async fn update_by_code(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    code: &str,
+    amount: i32,
+    currency: &str,
+    stripe_price_id: Option<&str>,
+    entitlements: &serde_json::Value,
+) -> Result<Option<Plan>, RepoError> {
+    sqlx::query_as!(
+        Plan,
+        "UPDATE plans SET amount = $2, currency = $3, stripe_price_id = $4,
+                entitlements = $5, updated_at = now()
+         WHERE code = $1
+         RETURNING id, code, stripe_price_id, currency, amount, entitlements,
+                   created_at, updated_at",
+        code,
+        amount,
+        currency,
+        stripe_price_id,
+        entitlements,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
+/// Delete a plan by code (P1-056, FR-P-01). `true` when a row
+/// was deleted, `false` when the code did not exist. The
+/// caller guards the delete first: `subscriptions.plan_id`
+/// is `ON DELETE RESTRICT`, so a plan with any subscription
+/// row fails here with a foreign-key error — the service
+/// counts subscriptions before calling this and answers 409
+/// instead.
+pub async fn delete_by_code(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    code: &str,
+) -> Result<bool, RepoError> {
+    let done = sqlx::query!("DELETE FROM plans WHERE code = $1", code)
+        .execute(pool)
+        .await
+        .map_err(RepoError::from_sqlx)?;
+    Ok(done.rows_affected() > 0)
 }

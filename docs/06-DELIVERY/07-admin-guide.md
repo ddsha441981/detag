@@ -72,8 +72,8 @@ views — and neither are denials, 404s, or 501 stubs.
 | GET | `/v1/admin/dlq` | `admin.dlq.read` | admin, support | stub | — |
 | GET | `/v1/admin/flags` | `admin.flags.read` | admin, support | stub | — |
 | PUT | `/v1/admin/flags` | `admin.flags.write` | admin | stub | `admin.flags.updated` |
-| GET | `/v1/admin/plans` | `admin.plans.read` | admin, support | stub | — |
-| PUT | `/v1/admin/plans` | `admin.plans.write` | admin | stub | `admin.plans.updated` |
+| GET | `/v1/admin/plans` | `admin.plans.read` | admin, support | live | — |
+| PUT | `/v1/admin/plans` | `admin.plans.write` | admin | live | `admin.plans.updated` |
 | GET | `/v1/admin/audit` | `admin.audit.read` | admin, support | stub | — |
 | GET | `/v1/admin/abuse-reports` | `admin.abuse.read` | admin, support | stub | — |
 | POST | `/v1/admin/abuse-reports/{id}/resolve` | `admin.abuse.write` | admin | stub | `admin.abuse_reports.resolved` |
@@ -106,6 +106,19 @@ Notes on the live routes:
   filters. Each row shows the creating key's display prefix
   (`key_prefix`); a web-created job shows no prefix at all
   — never the secret, never its hash.
+- **Plans editor** (P1-056): `GET /v1/admin/plans` lists
+  the catalog cheapest first (code, price in paise,
+  currency, Stripe price id, the seven parsed entitlement
+  keys); support reads it, only admin edits it. `PUT` is a
+  batch edit — per-plan updates plus a `remove` list — and
+  applies in one transaction: a plan in neither list is
+  untouched, so an edit never deletes by omission. The
+  entitlements object must be complete (all seven keys);
+  Free stays ₹0 and takes no Stripe price. A plan cannot be
+  removed while any subscription references it (409
+  `PF-2012`), and Free can never be removed. The edit
+  invalidates the plan cache at once, and audits once as
+  `admin.plans.updated` with the changed codes in `after`.
 - The public abuse intake (`POST /v1/abuse`) is **not** an
   admin route: it takes no credential and never reaches the
   matrix or the audit middleware.

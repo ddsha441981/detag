@@ -234,3 +234,124 @@ verify itself.
   is still running at run end, the next coordinator must check the log
   tail + `ps` first: a log ending mid-binary with no live process means
   re-run from scratch.
+
+---
+
+## P1-056 — 50th coordinator (Mon 2026-11-16, ~09:32–11:00 IST)
+
+Adopted the 49th coordinator's uncommitted P1-056 tree on `phase-1`
+(implementation complete, attempt-1 verify green 864 but drift
+checks interrupted by the cron timeout). S1 check first: 0 open S1
+(re-verified by reading every CI-FAIL entry — all fixed/closed;
+only S2 DISK-QUOTA-001, S3 TESTKIT-MINIO-001, S4 flakies, PERF-001,
+CI-WORKFLOWS-001 and open ASSUMPTION entries remain).
+
+Adoption evidence question: the 49th's log
+(`.scratch/verify-p1-056.log`, VERIFY_EXIT=0, 864 passed) was
+complete, but 7 tree files carried a post-verify mtime cluster
+(04:00:33 UTC, 09:30:33 IST — lib.rs, route_table.rs, admin_guard,
+admin_plans, api_key_matrix, authz_matrix, support_readonly) that
+the log could not prove byte-identical, so the 50th re-ran the full
+`just verify` from scratch instead of adopting the evidence.
+Attempt 2 green: **864 passed, 0 failed**, ~60 min, no flakes
+(858 + 6 new admin_plans integration), log at
+`~/workspace/goals/detag-watermark-removal-saas/hidden_files/verify-p1-056.log`.
+Drift checks green (openapi / route-table / config-table / env /
+sqlx-prepare / snapshots); `just compose-prod-check` red only on
+the missing `docker` binary (DOCKER-001) — P1-056 touches no
+compose files. Gitleaks whole-tree scan: 13 findings, ALL in
+gitignored build artifacts (compiled `.rmeta` files under
+`target/` + `.scratch/test-target/`, `.pyc` under
+`scripts/__pycache__/`) — none in the diff, none tracked; the
+commit-hook gitleaks scan on the staged commit found no leaks.
+Linter clean (`lint_commits.py --single HEAD`).
+
+Committed as one commit `feat(billing): P1-056 Admin plan editor
+(FR-P-01)` on `phase-1` (see `git log` for the hash; 27 files,
++1880/−59), merged to `main` by fast-forward (main was at 6a452a1,
+no divergence, so no merge commit — plain `git merge phase-1`). No push/fetch/rebase
+(driver's job). Phase file ticked, PROGRESS.md updated (Phase 1
+56/111, current ticket P1-057), ASSUMPTION-010 updated with the
+34th-reset line, ASSUMPTION-022 already in the tree from the 49th.
+
+The **34th VM reset (~10:47 IST)** hit mid-gitleaks: uptime 0 min
+at discovery, postgres/redis binaries + data dirs wiped, `just` +
+cargo survived. The os-intent replay (pid 797) restored the
+binaries itself — waited it out, did NOT install in parallel.
+Restored per ASSUMPTION-010 (`pg_ctlcluster 16 main start` +
+setsid redis, PONG; `pf` role/db recreated via `sudo -u postgres
+psql`, password `pf`, grep-first extraction verified `pw=[pf]`;
+`just migrate`, all 17 migrations applied). The uncommitted
+P1-056 tree survived intact. The gitleaks scan was re-run after
+the restore.
+
+Driver note (from MEMORY.md, user decision 2026-11-16 ~10:41 IST,
+"Chalane de, kaam jaari rakho"): the original 2-day unattended
+window expired 14 Nov, but the user explicitly chose to keep the
+detag-build-driver running — coordinators continue
+ticket-by-ticket, pushes continue via the driver. Do NOT stop the
+driver on the expired window; only stop if he says so. At decision
+time: Phase 1 55/111, CI green 6 runs straight (#38–#43).
+
+## Resume for the 51st coordinator
+
+1. **Next ticket: P1-057 — Entitlement suite** (Type: test, Area:
+   billing/plans, Est: M, Deps: P1-056; spec: "Free vs Pro
+   behaviors: limits trip, UTC reset, concurrency slots, TTL
+   differences; reconciliation catches drift." AC: suite green).
+   Head-start: most legs already exist as unit/live suites —
+   limits trip in quota_middleware/quota_headers/feature_flags,
+   UTC reset in usage_live, concurrency slots in slots_live,
+   reconcile drift repair in usage_live (`reconcile_day`) — so
+   this ticket is a consolidation suite proving Free-vs-Pro
+   END-TO-END through the HTTP layer (seeded-plan limits per
+   tier, day-boundary reset, slot counts per tier, plan-cache
+   TTL vs slot-lease TTL, reconcile catching injected drift).
+   Design questions to resolve in an ASSUMPTION entry: which
+   seeded limits define "Free trips / Pro passes" (read them
+   from the catalog, never hardcode), what "TTL differences"
+   means concretely (5-min plan-cache TTL vs 1 h slot lease is
+   the natural reading), and whether "reconciliation" here is
+   the P1-050 `reconcile_day` mechanism (the nightly JOB is
+   P1-082's — do not build the job here). Then continue down
+   Phase 1 in order (P1-058 pricing config docs, ...).
+2. Standing rules: full `just verify` per ticket (slow is
+   acceptable); branch-based work on `phase-1`, merge into
+   `main` locally; NEVER push/fetch/rebase/set a remote;
+   compliance is law; owner decisions to DECISIONS.md tagged
+   owner-input-needed with safe defaults. The driver keeps
+   running past the expired 2-day window per the user's
+   2026-11-16 decision above.
+3. S1 check: 0 open S1 (re-verified by the 50th by reading every
+   CI-FAIL entry + the PROGRESS.md health snapshot).
+4. The verify log for P1-056 is at
+   `~/workspace/goals/detag-watermark-removal-saas/hidden_files/verify-p1-056.log`
+   (864 passed, 0 failed, VERIFY_EXIT=0, attempt 2).
+5. The 04:00:33 UTC mtime cluster on 7 files (see above) was
+   never explained — if it recurs, check `git diff` content
+   before trusting a prior verify log; the safe default is a
+   from-scratch re-run, as the 50th did.
+
+## Run-end state (50th coordinator)
+
+- Branch `main`, HEAD = the P1-056 commit (see `git log`;
+  fast-forwarded from 6a452a1). `phase-1` HEAD = the same commit.
+  Working tree clean.
+- Services UP: postgres accepting connections, redis PONG
+  (restored after the 34th reset; `pf` role/db recreated, all 17
+  migrations applied).
+- No S1 blockers. No owner decision needed. No verify running;
+  nothing uncommitted. P1-057 NOT started (run ended at the
+  ~2 h coordinator window after the P1-056 commit + merge).
+
+## Risks
+
+- The `upgrade_url` contract points at a console page (`/plans`) that
+  does not exist until Phase 4 — documented in ASSUMPTION-020, but the
+  URL is untestable live until then.
+- A coordinator session being cancelled kills a `setsid nohup` verify
+  launched from it (attempt 1 died this way, 41 binaries in) — the
+  verify does NOT reliably outlive its launching session. If a verify
+  is still running at run end, the next coordinator must check the log
+  tail + `ps` first: a log ending mid-binary with no live process means
+  re-run from scratch.

@@ -210,6 +210,14 @@ pub enum AppError {
     /// idempotency-key payload mismatch). PF-2011, 409.
     #[error("conflict")]
     Conflict,
+    /// Kit: a plan with subscriptions cannot be removed (P1-056).
+    /// PF-2012, 409 — the next free PF-2xxx slot. Covers live
+    /// (`trialing`/`active`) subscriptions and historical ones
+    /// alike: `plan_id` is `ON DELETE RESTRICT`, so even a plan
+    /// whose subscriptions are all `past_due` / `canceled`
+    /// cannot be deleted at the DB level.
+    #[error("plan has subscriptions")]
+    PlanHasSubscriptions,
 
     // -- PF-3xxx quota / billing (+ rate limiting) ------------------------
     /// Kit: image quota exhausted (pre-check). PF-3001, 429.
@@ -315,6 +323,7 @@ impl AppError {
             ResultExpired => "PF-2009",
             NotFound => "PF-2010",
             Conflict => "PF-2011",
+            PlanHasSubscriptions => "PF-2012",
             QuotaImagesExceeded => "PF-3001",
             QuotaVideoSecondsExceeded => "PF-3002",
             QuotaConcurrencyExceeded => "PF-3008",
@@ -360,6 +369,7 @@ impl AppError {
             ResultExpired => 410,
             NotFound => 404,
             Conflict => 409,
+            PlanHasSubscriptions => 409,
             QuotaImagesExceeded => 429,
             QuotaVideoSecondsExceeded => 429,
             QuotaConcurrencyExceeded => 429,
@@ -405,6 +415,7 @@ impl AppError {
             ResultExpired => "result_expired",
             NotFound => "not_found",
             Conflict => "conflict",
+            PlanHasSubscriptions => "plan_has_subscriptions",
             QuotaImagesExceeded => "quota_images_exceeded",
             QuotaVideoSecondsExceeded => "quota_video_seconds_exceeded",
             QuotaConcurrencyExceeded => "quota_concurrency_exceeded",
@@ -454,6 +465,7 @@ impl AppError {
             ResultExpired => "the result has expired",
             NotFound => "the requested resource was not found",
             Conflict => "the request conflicts with the current state",
+            PlanHasSubscriptions => "plan has subscriptions and cannot be removed",
             QuotaImagesExceeded => "image quota exceeded; upgrade your plan for more",
             QuotaVideoSecondsExceeded => "video-seconds quota exceeded; upgrade your plan for more",
             QuotaConcurrencyExceeded => "concurrency limit reached; upgrade your plan for more",
@@ -602,6 +614,7 @@ mod tests {
             ResultExpired,
             NotFound,
             Conflict,
+            PlanHasSubscriptions,
             QuotaImagesExceeded,
             QuotaVideoSecondsExceeded,
             QuotaConcurrencyExceeded,
@@ -630,7 +643,7 @@ mod tests {
     #[test]
     fn every_variant_maps_to_status_code_title() {
         let variants = all_variants();
-        assert_eq!(variants.len(), 38, "a variant was added without a test");
+        assert_eq!(variants.len(), 39, "a variant was added without a test");
         for err in &variants {
             let code = err.code();
             let status = err.status();
@@ -665,7 +678,8 @@ mod tests {
                 | AppError::InvalidHints
                 | AppError::ResultExpired
                 | AppError::NotFound
-                | AppError::Conflict => assert!((2000..3000).contains(&n)),
+                | AppError::Conflict
+                | AppError::PlanHasSubscriptions => assert!((2000..3000).contains(&n)),
                 AppError::QuotaImagesExceeded
                 | AppError::QuotaVideoSecondsExceeded
                 | AppError::QuotaConcurrencyExceeded
@@ -967,6 +981,13 @@ mod tests {
                 "the request conflicts with the current state",
             ),
             (
+                PlanHasSubscriptions,
+                "PF-2012",
+                409,
+                "plan_has_subscriptions",
+                "plan has subscriptions and cannot be removed",
+            ),
+            (
                 QuotaImagesExceeded,
                 "PF-3001",
                 429,
@@ -1108,7 +1129,7 @@ mod tests {
     #[test]
     fn variant_to_response_table() {
         let table = response_table();
-        assert_eq!(table.len(), 38, "a variant is missing from the table");
+        assert_eq!(table.len(), 39, "a variant is missing from the table");
         assert_eq!(
             table.len(),
             all_variants().len(),
@@ -1117,7 +1138,7 @@ mod tests {
         let mut codes: Vec<&str> = table.iter().map(|(_, c, _, _, _)| *c).collect();
         codes.sort_unstable();
         codes.dedup();
-        assert_eq!(codes.len(), 38, "two variants share a code");
+        assert_eq!(codes.len(), 39, "two variants share a code");
 
         for (err, code, status, title, detail) in &table {
             assert_eq!(err.code(), *code, "{code}");

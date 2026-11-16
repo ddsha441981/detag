@@ -7,11 +7,12 @@
 //! from the support role's point of view, and proves the two
 //! things a status-only walk cannot:
 //!
-//! - `support_reads_live_views` — support reads the two
+//! - `support_reads_live_views` — support reads the three
 //!   live views and sees real rows: the users search returns
 //!   the seeded users (email, role, status), the jobs list
 //!   returns the seeded job (kind, status, no key material
-//!   — a web-created job shows no prefix).
+//!   — a web-created job shows no prefix), and the plans
+//!   list returns the three seeded plans (P1-056).
 //! - `support_writes_forbidden_and_change_nothing` — every
 //!   write route answers 403 `PF-1002` to support, and the
 //!   denial changes nothing: a suspend attempt leaves the
@@ -299,13 +300,12 @@ const WRITE_ROWS: &[WriteRow] = &[
     },
 ];
 
-/// The 8 stub read routes (the 2 live reads are covered by
+/// The 7 stub read routes (the 3 live reads are covered by
 /// `support_reads_live_views`).
 const STUB_READ_ROWS: &[(&str, &str)] = &[
     ("GET", "/v1/admin/metrics/dashboard"),
     ("GET", "/v1/admin/dlq"),
     ("GET", "/v1/admin/flags"),
-    ("GET", "/v1/admin/plans"),
     ("GET", "/v1/admin/audit"),
     ("GET", "/v1/admin/abuse-reports"),
     ("GET", "/v1/admin/attestations"),
@@ -365,11 +365,13 @@ fn support_matrix_is_read_only() {
 
 #[tokio::test]
 async fn support_reads_live_views() {
-    // Support reads the two live views and sees real rows
+    // Support reads the three live views and sees real rows
     // — not just a 200: the users search returns the seeded
     // users with their role and status, the jobs list
     // returns the seeded job with its kind and status and
-    // no key material (a web-created job shows no prefix).
+    // no key material (a web-created job shows no prefix),
+    // and the plans list returns the three seeded plans
+    // (P1-056).
     let app = support_app().await;
     let (_support_id, support_token) = make_role(&app, &unique_email("support"), "support").await;
     let prefix = Uuid::now_v7().to_string();
@@ -420,6 +422,20 @@ async fn support_reads_live_views() {
     assert_eq!(job["kind"], "image", "{job}");
     assert_eq!(job["status"], "queued", "{job}");
     assert!(job["key_prefix"].is_null(), "{job}");
+
+    // The plans view (P1-056): the three seeded plans,
+    // cheapest first — support reads the catalog, never
+    // edits it (the write is 403, proven above).
+    let res = get_as(&app, "/v1/admin/plans", &support_token).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let plans = res.json()["plans"].as_array().unwrap().clone();
+    assert_eq!(plans.len(), 3, "three seeded plans: {plans:?}");
+    let codes: Vec<&str> = plans
+        .iter()
+        .map(|plan| plan["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, vec!["free", "pro", "business"]);
+    assert_eq!(plans[1]["amount"], 49900);
 }
 
 #[tokio::test]
@@ -516,7 +532,7 @@ async fn support_writes_forbidden_and_change_nothing() {
 
 #[tokio::test]
 async fn support_reads_stub_views() {
-    // Support is admitted on the 8 stub read routes too:
+    // Support is admitted on the 7 stub read routes too:
     // 501 `PF-5004` — the guard passed, the handler has not
     // landed yet. A 403 here would mean the role table lost
     // support on a read; a 200 would mean a stub answered.

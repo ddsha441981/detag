@@ -105,7 +105,7 @@ pub struct AppState {
     pub rate_limit: rate_limit::RateLimitPolicy,
     /// The plan catalog (P1-049): the seeded plans from the
     /// DB, cached 5 min in-process (`PLAN_CACHE_TTL`); admin
-    /// edits invalidate it (P1-057). Built once here so every
+    /// edits invalidate it (P1-056). Built once here so every
     /// request shares the cache — a catalog built per request
     /// would never hit it.
     pub plans: std::sync::Arc<

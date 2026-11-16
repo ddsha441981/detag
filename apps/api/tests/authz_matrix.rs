@@ -14,14 +14,14 @@
 //!   `Capability::for_route`, and the role table behind it
 //!   admits exactly admin + support on read rows and admin
 //!   only on write/impersonate rows.
-//! - `admin_matrix_live` — the live walk: the 5 live routes
+//! - `admin_matrix_live` — the live walk: the 7 live routes
 //!   × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key), asserting the status
 //!   the matrix predicts — 401 `PF-1001` with no credential,
 //!   403 `PF-1002` for a wrong role or a key ("no admin
 //!   ever"), 200 for an admitted role.
 //!
-//! The 14 stub rows are enforced promises since P1-043
+//! The 12 stub rows are enforced promises since P1-043
 //! (`admin_stub` / `admin_read_stub` — guard first, 501
 //! after): the live walk in `admin_guard.rs` asserts the
 //! guard (401 / 403 / 501) on every stub, and the handler
@@ -145,13 +145,13 @@ const MATRIX: &[MatrixRow] = &[
         method: "GET",
         path: "/v1/admin/plans",
         capability: Capability::AdminPlansRead,
-        live: false,
+        live: true,
     },
     MatrixRow {
         method: "PUT",
         path: "/v1/admin/plans",
         capability: Capability::AdminPlansWrite,
-        live: false,
+        live: true,
     },
     MatrixRow {
         method: "GET",
@@ -427,7 +427,7 @@ fn problem_code(res: &common::TestResponse) -> String {
 
 #[tokio::test]
 async fn admin_matrix_live() {
-    // The live walk: the 5 live rows × 5 caller kinds.
+    // The live walk: the 7 live rows × 5 caller kinds.
     // Order per row is anonymous → user → support → admin
     // → key, so the mutating admin call (suspend,
     // impersonate) runs last and cannot affect the earlier
@@ -461,6 +461,10 @@ async fn admin_matrix_live() {
                 Some(impersonate_target),
                 Some(json!({ "reason": "authz matrix probe" })),
             ),
+            // The plans PUT needs a valid body for the
+            // admitted caller to reach 200: the empty edit
+            // is a no-op 200 on the shared harness DB (P1-056).
+            "/v1/admin/plans" if row.method == "PUT" => (None, Some(json!({ "plans": [] }))),
             _ => (None, None),
         };
         // Anonymous: 401 PF-1001.

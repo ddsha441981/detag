@@ -3,7 +3,7 @@
 //! The `plans` table is the catalog: seeded by migration 003
 //! (Free / Pro / Business, amounts in paise, entitlements
 //! jsonb) and owner-changeable per FR-P-01 — admin edits go
-//! through the admin API (P1-057), never through this module.
+//! through the admin API (P1-056), never through this module.
 //! This module is the single place that interprets the
 //! entitlements jsonb and the single place that serves the
 //! catalog:
@@ -57,7 +57,7 @@ pub const PLAN_CACHE_TTL: Duration = Duration::from_secs(300);
 /// Which lane a plan's jobs run in. Unknown values read as
 /// `standard` (fail closed — the priority lane is the
 /// higher-privilege one).
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Lane {
     #[default]
@@ -68,7 +68,7 @@ pub enum Lane {
 /// The seven entitlements of a plan, parsed from the
 /// `plans.entitlements` jsonb. All numbers are `i64`:
 /// `max_bytes` for Business is 4 GiB, past `i32::MAX`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct Entitlements {
     /// Images per UTC day (0 = no images — fail closed).
     pub daily_images: i64,
@@ -199,7 +199,7 @@ impl<T: PlanStore> PlanStore for std::sync::Arc<T> {
 
 /// The cache interface: one TTL entry holding the whole
 /// catalog + invalidation. The Redis implementation plugs
-/// in behind this trait (P1-057's admin edit path).
+/// in behind this trait (P1-056's admin edit path).
 pub trait PlanCache: Send + Sync {
     /// The cached catalog, if present and not expired.
     fn get(&self) -> Option<Vec<Plan>>;

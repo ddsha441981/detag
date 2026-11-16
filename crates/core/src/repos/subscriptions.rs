@@ -68,3 +68,42 @@ pub async fn plan_for_subscription(
     .await
     .map_err(RepoError::from_sqlx)
 }
+
+/// Live subscriptions on a plan (P1-056, FR-P-01): rows whose
+/// status is `trialing` or `active` — the statuses that grant
+/// the plan (P1-049). The admin editor refuses to remove a
+/// plan while this is non-zero (409 `PF-2011`).
+pub async fn count_live_for_plan(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    plan_id: Uuid,
+) -> Result<i64, RepoError> {
+    let row = sqlx::query!(
+        "SELECT COUNT(*) AS \"count!\" FROM subscriptions \
+         WHERE plan_id = $1 AND status IN ('trialing', 'active')",
+        plan_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(row.count)
+}
+
+/// All subscriptions on a plan, live or historical (P1-056,
+/// FR-P-01). The editor checks this too: `plan_id` is `ON
+/// DELETE RESTRICT`, so even a plan whose subscriptions are
+/// all `past_due` / `canceled` cannot be deleted at the DB
+/// level — the service answers 409 for those as well, rather
+/// than surfacing a foreign-key 500.
+pub async fn count_all_for_plan(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    plan_id: Uuid,
+) -> Result<i64, RepoError> {
+    let row = sqlx::query!(
+        "SELECT COUNT(*) AS \"count!\" FROM subscriptions WHERE plan_id = $1",
+        plan_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(row.count)
+}

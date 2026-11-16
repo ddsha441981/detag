@@ -10,8 +10,10 @@
 //! tickets land — except `POST /v1/admin/users/{id}/suspend`
 //! and `/restore`, real since P1-008 (in this file), `GET
 //! /v1/admin/users`, real since P1-009, `POST
-//! /v1/admin/users/{id}/impersonate`, real since P1-010, and
-//! `GET /v1/admin/jobs`, real since P1-038 (in this file).
+//! /v1/admin/users/{id}/impersonate`, real since P1-010,
+//! `GET /v1/admin/jobs`, real since P1-038 (in this file),
+//! and `GET` / `PUT /v1/admin/plans`, real since P1-056
+//! (in this file).
 //! Every route — live or stub — sits behind the matrix guard
 //! (P1-043): the stubs take `admin_stub` / `admin_read_stub`
 //! below, so an unauthenticated or wrong-role caller is
@@ -36,13 +38,16 @@ use super::{
     stub,
 };
 use crate::{
-    audit_middleware::{audit_admin_writes, AuditHandled},
+    audit_middleware::{audit_admin_writes, AuditDetail, AuditHandled},
     auth::{AdminContext, AdminReadContext},
     problem::ProblemResponse,
     services::{
         admin::{
             impersonate_user, list_jobs, restore_user, search_users, suspend_user, AdminError,
             AdminJobsPage, ImpersonateResponse, ReasonRequest, UserSearchPage,
+        },
+        admin_plans::{
+            list_plans, update_plans, PlanEditorError, PlanView, PlansResponse, UpdatePlansRequest,
         },
         register::UserResponse,
     },
@@ -387,6 +392,128 @@ pub async fn impersonate(
     }
 }
 
+/// GET /v1/admin/plans (P1-056): the plan catalog for the
+/// editor — all plans, cheapest first, with the parsed
+/// entitlements (the same seven keys the profile and the
+/// quota middleware read). Admin + support (the read-only
+/// role) may call it; a verified plain user gets 403
+/// `PF-1002` from the extractor, no credential gets 401
+/// `PF-1001`.
+#[utoipa::path(
+    get,
+    path = "/v1/admin/plans",
+    responses(
+        (status = 200, description = "The plan catalog, cheapest first", body = PlansResponse),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified plain user)", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn list_plans_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    _admin: AdminReadContext,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    match list_plans(&state).await {
+        Ok(plans) => Json(PlansResponse {
+            plans: plans.iter().map(PlanView::from).collect(),
+        })
+        .into_response(),
+        Err(_) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
+/// PUT /v1/admin/plans (P1-056): batch-edit the catalog —
+/// per-plan updates (`plans`, keyed by `code`) plus the
+/// codes to delete (`remove`). Admin only; support gets 403
+/// `PF-1002` from the extractor, no credential gets 401
+/// `PF-1001`. A malformed or invalid edit is 422 `PF-2002`
+/// (with `field_errors`); an unknown plan code is 404
+/// `PF-2010`; removing a plan with subscriptions is 409
+/// `PF-2012`. The whole PUT applies in one transaction, so
+/// a blocked removal rolls the updates back too. On success
+/// the catalog cache is invalidated before the response is
+/// built, so the returned catalog is the fresh one; the
+/// write is audited by the P1-046 middleware
+/// (`admin.plans.updated`) with the changed codes attached
+/// as the audit `after` — the handler does NOT mark
+/// `AuditHandled`.
+#[utoipa::path(
+    put,
+    path = "/v1/admin/plans",
+    request_body = UpdatePlansRequest,
+    responses(
+        (status = 200, description = "The updated catalog, cheapest first", body = PlansResponse),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified non-admin, incl. support)", body = Problem),
+        (status = 404, description = "No such plan code", body = Problem),
+        (status = 409, description = "Plan has subscriptions and cannot be removed", body = Problem),
+        (status = 422, description = "Invalid edit (entitlements, price, currency, Stripe price id, or the free-plan rules)", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn update_plans_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    _admin: AdminContext,
+    ValidatedJson(req): ValidatedJson<UpdatePlansRequest>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    match update_plans(&state, &req).await {
+        Ok(summary) => {
+            // The edit committed — drop the cached catalog
+            // so the next read (profile, quota pre-check,
+            // feature gate) sees it at once.
+            state.plans.invalidate();
+            let plans = match list_plans(&state).await {
+                Ok(plans) => plans,
+                Err(_) => {
+                    return ProblemResponse(AppError::Internal.to_problem(
+                        Profile::Production,
+                        request_id,
+                        None,
+                    ))
+                    .into_response();
+                }
+            };
+            let mut response = Json(PlansResponse {
+                plans: plans.iter().map(PlanView::from).collect(),
+            })
+            .into_response();
+            response.extensions_mut().insert(AuditDetail {
+                before: None,
+                after: Some(serde_json::json!({
+                    "updated": summary.updated,
+                    "removed": summary.removed,
+                })),
+                reason: None,
+            });
+            response
+        }
+        Err(PlanEditorError::Validation(errors)) => {
+            ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
+        }
+        Err(PlanEditorError::NotFound) => {
+            ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(PlanEditorError::HasSubscriptions) => ProblemResponse(
+            AppError::PlanHasSubscriptions.to_problem(Profile::Production, request_id, None),
+        )
+        .into_response(),
+        Err(PlanEditorError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// The guarded 501 stubs (P1-043): the same 501 `PF-5004` as
 /// the shared [`stub`](super::stub), but behind the matrix
 /// guard — so a route whose handler has not landed yet still
@@ -447,7 +574,7 @@ pub fn router(state: AppState) -> Router<AppState> {
                 .route("/jobs/{id}/cancel", post(admin_stub))
                 .route("/dlq", get(admin_read_stub))
                 .route("/flags", get(admin_read_stub).put(admin_stub))
-                .route("/plans", get(admin_read_stub).put(admin_stub))
+                .route("/plans", get(list_plans_handler).put(update_plans_handler))
                 .route("/audit", get(admin_read_stub))
                 .route("/abuse-reports", get(admin_read_stub))
                 .route("/abuse-reports/{id}/resolve", post(admin_stub))
