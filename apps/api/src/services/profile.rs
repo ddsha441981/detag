@@ -194,12 +194,17 @@ pub async fn get_profile(state: &AppState, user: &User) -> Result<ProfileRespons
             ProfileError::Internal
         })?;
     let plan = resolved.plan;
-    let quota = entitlements::quota_snapshot_for_plan(&state.pool, user.id, &plan)
-        .await
-        .map_err(|err| {
-            tracing::error!(error = ?err, "profile: quota read failed");
-            ProfileError::Internal
-        })?;
+    let quota = entitlements::quota_snapshot_for_plan(
+        &state.pool,
+        user.id,
+        &plan,
+        state.clock.now().date_naive(),
+    )
+    .await
+    .map_err(|err| {
+        tracing::error!(error = ?err, "profile: quota read failed");
+        ProfileError::Internal
+    })?;
     Ok(profile_response(user, &plan, &quota))
 }
 
@@ -369,12 +374,17 @@ pub async fn patch_profile(
             ProfileError::Internal
         })?;
     let plan = resolved.plan;
-    let quota = entitlements::quota_snapshot_for_plan(&state.pool, updated.id, &plan)
-        .await
-        .map_err(|err| {
-            tracing::error!(error = ?err, "profile: quota read failed");
-            ProfileError::Internal
-        })?;
+    let quota = entitlements::quota_snapshot_for_plan(
+        &state.pool,
+        updated.id,
+        &plan,
+        state.clock.now().date_naive(),
+    )
+    .await
+    .map_err(|err| {
+        tracing::error!(error = ?err, "profile: quota read failed");
+        ProfileError::Internal
+    })?;
     Ok(profile_response(&updated, &plan, &quota))
 }
 

@@ -355,3 +355,50 @@ time: Phase 1 55/111, CI green 6 runs straight (#38–#43).
   is still running at run end, the next coordinator must check the log
   tail + `ps` first: a log ending mid-binary with no live process means
   re-run from scratch.
+
+## 51st coordinator — P1-057 Entitlement suite (IN PROGRESS, run ended by cron timeout ~13:31 IST)
+
+### Tickets done
+- None committed yet. P1-057 is implemented, targeted-green, and mid full-verify (see below).
+
+### Tickets partially done
+- **P1-057 — Entitlement suite** (test, billing/plans, FR-P-01 / FR-P-02 / FR-P-06 / FR-P-07): implemented on branch `phase-1`, uncommitted. New `apps/api/tests/entitlements.rs` (6 live tests, all green targeted, ~71 s): Free 10-image trip (9/10 → 501, 10/10 → 429 PF-3001), Pro 500-image trip (499/500 → 501, 500/500 → 429 PF-3001, headers 0/3600), frozen-clock UTC-midnight reset through the gate AND `/v1/me` (denied 23:59 on the 15th, fresh 10 past midnight, 15th's row untouched), Pro 3-slot concurrency (2 queued → 501, 3rd → 429 PF-3008), plan TTL/limit differences via the app catalog (result TTL 6/24/72 h, concurrency 1/3/10, images 10/500/5000, video-seconds 0/3600/18000, max bytes 25 MiB/1 GiB/4 GiB) + usage-hash 48 h Redis TTL, and reconciliation catches drift without changing enforcement (Redis corrupted to 99, gate still enforces the DB truth 7 remaining, `reconcile_day` repairs it, second reconcile a no-op). Neighboring suites re-ran green after the change: quota_middleware 9/9, quota_headers 8/8, profile 16/16, plans 7/7, feature_flags 7/7, overage_policy 4/4.
+- **Small fix the suite forced (ADR-0027):** `quota_snapshot_for_plan` read its UTC day from `Utc::now()` directly, so a frozen clock could not move the snapshot's day — it now takes the day as a parameter; `precheck` too; the state-level wrappers (`precheck_for_create`, `snapshot_for_user`, both profile call sites) pass `state.clock.now().date_naive()`. Production behavior unchanged (`SystemClock`). ADR-0027 added to DECISIONS.md; P1-057 section added to `docs/05-QUALITY/01-test-strategy.md`. Result TTL has no enforcement surface yet (no real jobs/results) — the catalog value is the proof until retention lands with the Phase 2 intake.
+- **36th VM reset** hit mid-verify (~12:39 IST, attempt 1 killed ~52 min in during the `profile` binary, 41 binaries green, 0 failed). Restored per ASSUMPTION-010: apt update + install exit 0 (~80 s, fastest yet), `pg_ctlcluster 16 main start` + `setsid redis-server`, `pf` role/db recreated, `just migrate` applied all 17 migrations. Full verify attempt 2 re-run from scratch.
+
+### Run-end state (51st coordinator)
+- Branch `phase-1`, HEAD = 8a51f4f (P1-056, same as `main`). Working tree: 5 modified files (`apps/api/src/services/{entitlements,profile,quota}.rs`, `docs/05-QUALITY/01-test-strategy.md`, `docs/09-STATE/DECISIONS.md`) + new `apps/api/tests/entitlements.rs`. **NOT committed, NOT merged.**
+- Full `just verify` attempt 2 was STILL RUNNING at the cron timeout (~13:31 IST): log `~/workspace/goals/detag-watermark-removal-saas/hidden_files/p1-057-verify2.log`, 55 binaries green, 0 failed at last read (last line mid `shutdown.rs` tests). Session `proc_57b2d2ad6dd4`. **The backgrounded exec may die with this timed-out session** (see the Risks note from the 50th coordinator) — the next coordinator MUST check first: if the log has `VERIFY_EXIT=0`, the verify is green and P1-057 can be committed as-is; if the log ends mid-binary with no live verify process, re-run `just verify` from scratch (do NOT trust the partial log). Attempt 1's log is `.../p1-057-verify.log` (41 binaries green, killed by the reset).
+- Services UP at run end: postgres accepting connections, redis PONG (restored after the 36th reset). VM uptime 44 min at 13:31 IST.
+- No S1 blockers. No owner decision needed.
+
+### Next-run plan (first 5)
+1. Check verify attempt 2's fate (log tail + live process); re-run from scratch only if it died.
+2. On green: tick the P1-057 checkbox in `docs/07-PHASES/PHASE-1-identity-billing.md`, update `docs/09-STATE/PROGRESS.md` (Phase 1 57/111, current ticket P1-058, next-up queue, P1-057 note with the 870 expected count), commit ONE commit `feat(billing): P1-057 Entitlement suite (FR-P-01, FR-P-02, FR-P-06, FR-P-07)` on `phase-1`, merge into `main` locally (no push — driver syncs).
+3. P1-058 — Pricing config docs.
+4. CI #37 results (FLAKY-006 fix confirmation — via the user's logs zip).
+5. P1-059 — BillingProvider trait.
+
+### Risks
+- Verify attempt 2's survival past this session timeout is unproven — same session-kill hazard the 50th coordinator recorded. Check before trusting.
+- The `upgrade_url` contract points at a console page (`/plans`) that does not exist until Phase 4 (ASSUMPTION-020).
+
+## 52nd coordinator — P1-057 Entitlement suite (DONE + COMMITTED + MERGED, ~14:27 IST)
+
+### Tickets done
+- **P1-057 — Entitlement suite** (test, billing/plans, FR-P-01 / FR-P-02 / FR-P-06 / FR-P-07): adopted the 51st's uncommitted tree, cross-checked the diff (ADR-0027 shape correct in all three quota readers; `unique_xff()` is the full-UUID form; no secrets in the diff), re-ran full `just verify` from scratch (attempt 3) — **870 passed, 0 failed** (864 + 6 new), ~50 min, no flakes. Drift checks green (openapi / route-table / config-table / env / sqlx-prepare / snapshots). Attempt 2 was confirmed dead (SIGTERM in the log, no live process, no `VERIFY_EXIT`) — not trusted, re-run per the 50th's warning. Committed as ONE commit on `phase-1` and merged into `main` locally (no push — driver syncs). Phase 1 now 57/111.
+
+### Run-end state (52nd coordinator)
+- Branch `phase-1`, HEAD = a69ba76 (P1-057); `main` = same after the local merge below. Working tree clean after the commit.
+- Services UP: postgres accepting connections, redis PONG. No VM reset during this run (uptime ~1:40 at verify end; 36th reset was ~12:39 IST, before this run started).
+- No S1 blockers (re-verified from ISSUES.md at run start: 0 open S1). No owner decision needed.
+
+### Next-run plan (first 5)
+1. P1-058 — Pricing config docs (docs-only, S).
+2. P1-059 — BillingProvider trait (feat, M).
+3. CI #37 results (FLAKY-006 fix confirmation — via the user's logs zip).
+4. P1-060 — Stripe adapter.
+5. Keep the full-verify-per-ticket rule (user's standing choice); the verify takes ~50 min, so one ticket per coordinator run is the realistic pace.
+
+### Risks
+- None new. The `upgrade_url` `/plans` console page still does not exist until Phase 4 (ASSUMPTION-020).

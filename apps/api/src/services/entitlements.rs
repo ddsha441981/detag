@@ -30,6 +30,7 @@
 //! place, so the profile, the middleware, and the quota
 //! snapshot can never disagree about what a plan grants.
 
+use chrono::NaiveDate;
 use detag_core::db::DbPool;
 use detag_core::error::AppError;
 use detag_core::plans::{Entitlements, PlanCache, PlanCatalog, PlanStore};
@@ -187,19 +188,24 @@ pub fn plan_snapshot_of(plan: &plans::Plan) -> PlanSnapshot {
 }
 
 /// The quota snapshot for a plan the caller already loaded:
-/// the plan's daily limits against today's durable usage row
-/// (UTC day — the counters reset at the UTC boundary, P1-050).
-/// No usage row today means zero usage. A missing or mistyped
-/// entitlement key reads as limit 0 (fail closed: a plan
-/// that does not grant a quota grants nothing).
+/// the plan's daily limits against the durable usage row for
+/// `day` (UTC day — the counters reset at the UTC boundary,
+/// P1-050). The day comes from the caller's clock, never
+/// from `Utc::now()` here: the app passes its injected clock
+/// (`state.clock`), so a frozen clock moves the snapshot's
+/// day too — the UsageMeter's rule, extended to the
+/// snapshot (P1-057, ADR-0027). No usage row for the day
+/// means zero usage. A missing or mistyped entitlement key
+/// reads as limit 0 (fail closed: a plan that does not grant
+/// a quota grants nothing).
 pub async fn quota_snapshot_for_plan(
     pool: &DbPool,
     user_id: uuid::Uuid,
     plan: &plans::Plan,
+    day: NaiveDate,
 ) -> Result<QuotaSnapshot, EntitlementError> {
     let entitlements = Entitlements::from_value(&plan.entitlements);
-    let today = chrono::Utc::now().date_naive();
-    let used = usage_counters::for_user_day(pool, user_id, today).await?;
+    let used = usage_counters::for_user_day(pool, user_id, day).await?;
     let (images_used, video_used) = match used {
         Some(row) => (
             i64::from(row.images_used),

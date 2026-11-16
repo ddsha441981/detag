@@ -44,6 +44,7 @@ use super::entitlements::{
     effective_plan, quota_snapshot_for_plan, EntitlementError, QuotaSnapshot,
 };
 use crate::AppState;
+use chrono::NaiveDate;
 use detag_core::db::DbPool;
 use detag_core::error::AppError;
 use detag_core::plans::{PlanCache, PlanCatalog, PlanStore};
@@ -118,7 +119,10 @@ impl From<EntitlementError> for QuotaError {
 
 /// The quota pre-check for one job-create request: load the
 /// upload (404 when missing or foreign), resolve the
-/// effective plan, read today's snapshot, and decide.
+/// effective plan, read the snapshot for `day`, and decide.
+/// `day` is the UTC day from the app's injected clock
+/// (`state.clock`) — never `Utc::now()` here, so a frozen
+/// clock moves the quota day too (P1-057, ADR-0027).
 ///
 /// - Image upload: one image is needed; `remaining < 1` is
 ///   `PF-3001`.
@@ -137,13 +141,14 @@ pub async fn precheck<S: PlanStore, C: PlanCache>(
     pool: &DbPool,
     user_id: Uuid,
     upload_id: Uuid,
+    day: NaiveDate,
 ) -> Result<QuotaOutcome, QuotaError> {
     let upload = uploads::by_id(pool, upload_id)
         .await?
         .filter(|upload| upload.user_id == user_id)
         .ok_or(QuotaError::UploadNotFound)?;
     let resolved = effective_plan(catalog, pool, user_id).await?;
-    let snapshot = quota_snapshot_for_plan(pool, user_id, &resolved.plan).await?;
+    let snapshot = quota_snapshot_for_plan(pool, user_id, &resolved.plan, day).await?;
     if upload.kind == "image" && snapshot.daily_images.remaining < 1 {
         return Ok(QuotaOutcome::Denied(
             AppError::QuotaImagesExceeded,
@@ -175,12 +180,20 @@ pub async fn precheck<S: PlanStore, C: PlanCache>(
 }
 
 /// The pre-check over the app state (the handler's call).
+/// The quota day is the app clock's UTC day.
 pub async fn precheck_for_create(
     state: &AppState,
     user_id: Uuid,
     upload_id: Uuid,
 ) -> Result<QuotaOutcome, QuotaError> {
-    precheck(&state.plans, &state.pool, user_id, upload_id).await
+    precheck(
+        &state.plans,
+        &state.pool,
+        user_id,
+        upload_id,
+        state.clock.now().date_naive(),
+    )
+    .await
 }
 
 /// The caller's quota snapshot (P1-052).
@@ -195,7 +208,13 @@ pub async fn snapshot_for_user(
     user_id: Uuid,
 ) -> Result<QuotaSnapshot, QuotaError> {
     let resolved = effective_plan(&state.plans, &state.pool, user_id).await?;
-    let snapshot = quota_snapshot_for_plan(&state.pool, user_id, &resolved.plan).await?;
+    let snapshot = quota_snapshot_for_plan(
+        &state.pool,
+        user_id,
+        &resolved.plan,
+        state.clock.now().date_naive(),
+    )
+    .await?;
     Ok(snapshot)
 }
 
