@@ -53,10 +53,14 @@ the seed files — the files only matter at install time.
 
 - `plans.stripe_price_id` is `NULL` until a live price is configured.
   It is stored, validated (`price_` + alphanumerics), and shown by
-  `GET /v1/admin/plans` — but **nothing reads it yet**: the billing
-  adapter does not exist (P1-059 trait, P1-060 adapter), so no checkout
-  can charge against it today. Setting it now is preparation, not
-  activation.
+  `GET /v1/admin/plans`. Since P1-061 the catalog sync writes it:
+  the nightly sync (P1-082's schedule) — or `POST
+  /v1/admin/billing/catalog-sync` now — creates the Stripe Product
+  + recurring monthly Price for each paid plan and stores the id.
+  Checkout reads it from P1-062. Setting it by hand (below) is
+  still allowed, but the sync is the normal path: a hand-set id
+  the sync finds drifted (amount/currency changed, or the Price
+  archived in Stripe) is replaced, and the old Price archived.
 - Keys live in env, never in the repo: `PF_STRIPE_SECRET_KEY`,
   `PF_STRIPE_WEBHOOK_SECRET` (test placeholders in `.env.example`;
   see `docs/06-DELIVERY/04-config-reference.md`). P1-060 enforces
@@ -110,12 +114,21 @@ To change what a *new* database gets:
 
 ### 3. Stripe dashboard change
 
+The normal path since P1-061 is the sync, not the dashboard:
+change the amount in the catalog (path 1), then run the sync —
+`POST /v1/admin/billing/catalog-sync`, or wait for the nightly
+run (P1-082) — and the sync creates the new Price, archives the
+old one, and stores the new id, returning a drift report that
+names every action. The manual dashboard path still works:
+
 1. In the Stripe dashboard, create the new Price (same currency as the
    plan row; the amount must match what the plan will charge).
 2. Attach its id to the plan — via the editor (path 1) for a live
    system, or via the seed (path 2) for fresh installs.
 3. Verify: `GET /v1/admin/plans` shows the id; the next checkout
-   (once P1-060/061 lands) buys that Price.
+   buys that Price. (The next sync run adopts the hand-created
+   Price when its amount + currency already match — it does not
+   create a duplicate.)
 
 Order matters: Stripe Price first, attach second. The editor cannot
 check that the id exists in Stripe.
@@ -125,7 +138,7 @@ check that the id exists in Stripe.
 - **Does:** change what the catalog reports (`GET /v1/admin/plans`,
   `GET /v1/plans`, `/v1/me` quota snapshot), what the quota pre-check
   enforces for new job creates, and what new checkouts will buy once
-  billing lands. The change is visible immediately — no cache wait.
+  checkout lands (P1-062). The change is visible immediately — no cache wait.
 - **Does not:** re-price existing Stripe subscriptions. What a subscriber
   is billed is driven by the Stripe Price object their subscription
   holds, not by the catalog row. Changing the catalog amount alone

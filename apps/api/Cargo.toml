@@ -22,6 +22,7 @@ sqlx.workspace = true
 thiserror.workspace = true
 deadpool-redis.workspace = true
 detag-core = { path = "../../crates/core" }
+detag-billing = { path = "../../crates/billing" }
 detag-storage = { path = "../../crates/storage" }
 detag-engine = { path = "../../crates/engine" }
 detag-validator = { path = "../../crates/validator" }

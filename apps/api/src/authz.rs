@@ -79,6 +79,8 @@ pub enum Capability {
     AdminPlansRead,
     /// `PUT /v1/admin/plans`.
     AdminPlansWrite,
+    /// `POST /v1/admin/billing/catalog-sync` (P1-061).
+    AdminBillingWrite,
     /// `GET /v1/admin/audit`.
     AdminAuditRead,
     /// `GET /v1/admin/abuse-reports`.
@@ -106,6 +108,7 @@ impl Capability {
             Capability::AdminFlagsWrite => "admin.flags.write",
             Capability::AdminPlansRead => "admin.plans.read",
             Capability::AdminPlansWrite => "admin.plans.write",
+            Capability::AdminBillingWrite => "admin.billing.write",
             Capability::AdminAuditRead => "admin.audit.read",
             Capability::AdminAbuseRead => "admin.abuse.read",
             Capability::AdminAbuseWrite => "admin.abuse.write",
@@ -134,6 +137,7 @@ impl Capability {
             | Capability::AdminJobsWrite
             | Capability::AdminFlagsWrite
             | Capability::AdminPlansWrite
+            | Capability::AdminBillingWrite
             | Capability::AdminAbuseWrite => &[Role::Admin],
         }
     }
@@ -184,6 +188,7 @@ impl Capability {
             ("PUT", "/v1/admin/flags") => Some(AdminFlagsWrite),
             ("GET", "/v1/admin/plans") => Some(AdminPlansRead),
             ("PUT", "/v1/admin/plans") => Some(AdminPlansWrite),
+            ("POST", "/v1/admin/billing/catalog-sync") => Some(AdminBillingWrite),
             ("GET", "/v1/admin/audit") => Some(AdminAuditRead),
             ("GET", "/v1/admin/abuse-reports") => Some(AdminAbuseRead),
             ("POST", "/v1/admin/abuse-reports/{id}/resolve") => Some(AdminAbuseWrite),
@@ -222,6 +227,7 @@ impl Capability {
             ("POST", "/v1/admin/jobs/{id}/cancel") => Some("admin.jobs.cancelled"),
             ("PUT", "/v1/admin/flags") => Some("admin.flags.updated"),
             ("PUT", "/v1/admin/plans") => Some("admin.plans.updated"),
+            ("POST", "/v1/admin/billing/catalog-sync") => Some("admin.billing.catalog_synced"),
             ("POST", "/v1/admin/abuse-reports/{id}/resolve") => {
                 Some("admin.abuse_reports.resolved")
             }
@@ -245,6 +251,7 @@ impl Capability {
             }
             ("PUT", "/v1/admin/flags") => Some("flags"),
             ("PUT", "/v1/admin/plans") => Some("plans"),
+            ("POST", "/v1/admin/billing/catalog-sync") => Some("plans"),
             ("POST", "/v1/admin/abuse-reports/{id}/resolve") => Some("abuse_report"),
             _ => None,
         }
@@ -460,7 +467,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(writes, 9, "9 admin write routes");
+        assert_eq!(writes, 10, "10 admin write routes");
         assert_eq!(reads, 10, "10 admin read routes");
     }
 
@@ -484,7 +491,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(actions.len(), 9, "one action per write route");
+        assert_eq!(actions.len(), 10, "one action per write route");
     }
 
     #[test]

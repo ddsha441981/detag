@@ -684,14 +684,21 @@ time: Phase 1 55/111, CI green 6 runs straight (#38–#43).
 - Merged `phase-1` → main locally (default `Merge branch 'phase-1'` subject, no rebase, NO push — the driver syncs).
 
 ### Run-end state (59th coordinator)
-- Branch `main`, HEAD = <merge commit — fill at merge time>. `phase-1` HEAD = <P1-060 commit>. P1-060 DONE, committed, merged, NOT pushed (driver syncs).
-- P1-061: <status at run end — fill in before ending the run>.
+- Branch `main`, HEAD = 62e9c20 (`Merge branch 'phase-1'`). `phase-1` HEAD = b50b0e9 (P1-060). P1-060 DONE, committed, merged, NOT pushed (driver syncs — last-pushed.txt still c4f844c; the driver updates it after a verified remote read-back).
+- P1-061 NOT started (implementation) — this run ended on cron timeout after the P1-060 merge; see the prep notes below. Working tree has ONE uncommitted file: docs/09-STATE/ISSUES.md (the 42nd-reset ASSUMPTION-010 line, added after the P1-060 commit — it goes in with the P1-061 commit).
 - Services UP (postgres accepting, redis PONG, `pf` CREATEDB, 17 migrations). No S1 blockers. No owner decision needed.
+
+### P1-061 prep for the 60th (read, not yet implemented)
+- Spec (phase file): "Nightly sync plan catalog to Stripe products/prices (test mode) with drift report; manual trigger admin endpoint." AC: drift report produced. Deps: P1-060. No FR cited in the ticket block — trace it to FR-P-01 (plan catalog) + FR-P-05 (Stripe) in the commit; the price ids land in `plans.stripe_price_id` (migration `20261112065140_billing.up.sql`, NULL until configured; P1-056's admin editor already validates/writes that column, `is_stripe_price_id` = `price_` + alphanumerics).
+- Design gap to decide first: the `BillingProvider` trait has NO product/price methods (only checkout/portal/subscription/invoice/customer + webhook). The sync needs product create/update + price create/list against Stripe. Either (a) extend the trait with provider-agnostic sync methods, or (b) put the sync in a new `crates/billing/src/sync.rs` that talks to the `StripeAdapter`'s client directly. (a) keeps the FR-P-05 swap proof honest; (b) is smaller but Stripe-only — record the choice + why in the commit body and, if (a), in an ADR. Note the adapter's client is private — check `stripe.rs` for how much is exposed before choosing.
+- "Nightly" has NO scheduler on this VM yet: the worker runs apalis Redis queues (`apps/worker/src/workers.rs`); there is no cron-in-worker. P1-082 (reconciliation job, same "nightly" shape) is the pattern to follow — check whether it expects a scheduler to exist by then. The manual-trigger admin endpoint is the shippable core of this ticket: it must be an admin route (authz matrix + route-table + openapi regen — the P1-043/P1-056 drill), and its response IS the drift report (created/updated/unchanged/missing per plan + price id written back to the catalog).
+- Test-mode only: reuse the adapter's test-mode guard — no live key, no spending. Live Stripe calls need a test-mode key that does NOT exist on this VM; if the sync cannot run against real Stripe here, prove it with the FakeProvider pattern (P1-059) + a recorded-Stripe-response fixture, and say so honestly in the commit body (same honesty rule as P1-060's ASSUMPTION-023 clause 4). Do NOT invent a key.
+- Full `just verify` per ticket (user's standing choice); log as `p1-061-verify<N>.log` in the same hidden_files dir; launch detached, tell the next coordinator to check log tail + live process first.
 
 ### Next-run plan (first 5)
 1. P1-061 — Products/prices sync job (deps P1-060): nightly sync plan catalog to Stripe products/prices (test mode) with drift report + manual-trigger admin endpoint; AC: drift report produced. If the P1-061 tree is uncommitted at handoff, verify from scratch (P1-056 rule) before committing.
 2. P1-062 — Checkout endpoint (deps P1-061): first live run of the adapter's HTTP legs, with a test-mode key.
-3. Add the 42nd VM reset update line to ASSUMPTION-010 in ISSUES.md (killed verify attempt 3 mid-sessions_list ~23:34 IST; services were already up at driver check — no restore was needed this run, record that).
+3. The 42nd VM reset ASSUMPTION-010 line is already in ISSUES.md (uncommitted — goes in with the P1-061 commit, with the night-report run-end-state fix above).
 4. CI #37 results (FLAKY-006 fix confirmation — via the user's logs zip); CI #45 on efddaaf was still running as of ~15:41 IST.
 5. CI #45 result when it lands (same source).
 

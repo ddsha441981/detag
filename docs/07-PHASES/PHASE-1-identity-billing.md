@@ -503,11 +503,12 @@
     - [x] live-key guard tested
   - **Status:** DONE 2026-11-16 (57th coordinator implemented, 59th finished + committed as one commit) — full `just verify` green: 885 passed, 0 failed (877 + 8 new StripeAdapter tests), attempt 4, ~48 min, no flakes; attempts 1–3 untrusted (attempt 1 failed on environment — `pf` role lacked CREATEDB; attempt 2 killed by the 41st VM reset; attempt 3 killed by the 42nd VM reset). Drift checks green. New `crates/billing/src/stripe.rs` (`StripeAdapter` over async-stripe 0.41, test-mode enforced at construction, live keys rejected without owner flag) + `BillingError::Configuration` variant; deny.toml migrated for cargo-deny 0.20 in its own commit first; `.gitleaks.toml` gains the "Fake" stopword (the adapter's lookalike test keys tripped the stripe-access-token rule — all deliberately fake). Docs: test-strategy P1-060 section, ASSUMPTION-023.
 
-- [ ] **P1-061** — Products/prices sync job
+- [x] **P1-061** — Products/prices sync job
   - **Type:** feat · **Area:** billing/stripe · **Est:** M · **Deps:** P1-060 · **Prio:** P1
   - **Spec:** Nightly sync plan catalog to Stripe products/prices (test mode) with drift report; manual trigger admin endpoint.
   - **AC:**
-    - [ ] drift report produced
+    - [x] drift report produced
+  - **Status:** DONE 2026-11-17 (60th coordinator implemented, 61st finished + committed as one commit) — full `just verify` green: 898 passed, 0 failed (885 + 13 new: 11 sync-engine FakeCatalog tests + 2 catalog_sync endpoint tests), attempt 1, ~59 min, no flakes. Drift checks green (openapi / route-table / config-table / env / sqlx-prepare / snapshots) + `cargo deny check` green + gitleaks 49 findings, all gitignored build artifacts (`.scratch/` 40, `target/` 8, `scripts/__pycache__` 1 — none tracked, none in the diff). New `crates/billing/src/sync.rs` (sync engine generic over an internal `CatalogProvider`; products matched by `detag_plan_code` metadata, ₹0 plans skipped, drift replaces + archives the old price, adoption before creation, per-plan failure recorded) + `StripeAdapter` impl in `stripe.rs` (list cap 100, recurring monthly price) + `POST /v1/admin/billing/catalog-sync` (admin only, returns the drift report, 503 `PF-5005` when unconfigured, audited as `admin.billing.catalog_synced`) + `catalog_sync` worker kind as a stub. Docs: ADR-0029, ASSUMPTION-024, pricing-config. Honesty: the Stripe HTTP legs are untested live (no test-mode key on this VM); the nightly schedule is P1-082's. The 43rd VM reset (~00:51 IST) wiped services before the verify — restored per ASSUMPTION-010; the 44th VM reset hit mid-gitleaks after the verify went green — tree survived intact, services re-restoring in the background at commit time (log `p1-061-restore2.log`).
 
 - [ ] **P1-062** — Checkout endpoint
   - **Type:** feat · **Area:** billing/stripe · **Est:** M · **Deps:** P1-061 · **Prio:** P1

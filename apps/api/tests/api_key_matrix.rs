@@ -14,7 +14,7 @@
 //!   in the extractor's scope table — fail closed); no
 //!   credential is 401. This covers the live authed routes
 //!   keys must never call (profile, sessions, key management,
-//!   `logout-all`, all 19 admin routes since P1-043 put the
+//!   `logout-all`, all 20 admin routes since P1-043 put the
 //!   matrix guard on the stubs too).
 //! - `Unprotected` — NO credential is checked at all: the
 //!   plain 501 stub answers anonymous and key alike. These
@@ -160,6 +160,7 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow { method: "PUT", path: "/v1/admin/flags", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
     MatrixRow { method: "GET", path: "/v1/admin/plans", outcome: KeyOutcome::Forbidden, note: "live handler (P1-056) behind AdminReadContext; the extractor rejects keys first" },
     MatrixRow { method: "PUT", path: "/v1/admin/plans", outcome: KeyOutcome::Forbidden, note: "live handler (P1-056) behind AdminContext; the guard rejects a key outright (no admin ever)" },
+    MatrixRow { method: "POST", path: "/v1/admin/billing/catalog-sync", outcome: KeyOutcome::Forbidden, note: "live handler (P1-061) behind AdminContext; the guard rejects a key outright (no admin ever)" },
     MatrixRow { method: "GET", path: "/v1/admin/audit", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
     MatrixRow { method: "GET", path: "/v1/admin/abuse-reports", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
     MatrixRow { method: "POST", path: "/v1/admin/abuse-reports/{id}/resolve", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
@@ -176,6 +177,7 @@ const LIVE_ADMIN_ROUTES: &[(&str, &str)] = &[
     ("POST", "/v1/admin/users/{id}/restore"),
     ("POST", "/v1/admin/users/{id}/impersonate"),
     ("GET", "/v1/admin/jobs"),
+    ("POST", "/v1/admin/billing/catalog-sync"),
 ];
 
 /// Test settings: a generous key bucket (burst 1000, refill
@@ -345,12 +347,12 @@ fn matrix_covers_every_v1_route() {
         .collect();
     assert_eq!(
         v1_routes.len(),
-        65,
-        "ROUTE_TABLE must hold the 65 /v1 routes (auth 20 + uploads 4 + jobs 9 + billing 12 + admin 20)"
+        66,
+        "ROUTE_TABLE must hold the 66 /v1 routes (auth 20 + uploads 4 + jobs 9 + billing 12 + admin 21)"
     );
     assert_eq!(
         MATRIX.len(),
-        65,
+        66,
         "the matrix must hold one row per /v1 route ({} rows today)",
         MATRIX.len()
     );

@@ -5,7 +5,7 @@
 //! path a request takes):
 //!
 //! 1. The table itself has no duplicate (method, path) pairs
-//!    and has the 65 entries the API spec lists (63 from the
+//!    and has the 66 entries the API spec lists (63 from the
 //!    spec + `POST /v1/auth/resend-verification`, added by
 //!    P1-002 — the spec names no resend route — + `POST
 //!    /v1/auth/confirm-email-change`, added by P1-006 — the
@@ -82,8 +82,8 @@ fn route_table_has_no_duplicates() {
     }
     assert_eq!(
         ROUTE_TABLE.len(),
-        67,
-        "ROUTE_TABLE must list the spec's 67 routes (auth 20 + uploads 4 + jobs 9 + billing 12 + admin 20 + meta 2)"
+        68,
+        "ROUTE_TABLE must list the spec's 68 routes (auth 20 + uploads 4 + jobs 9 + billing 12 + admin 21 + meta 2)"
     );
 }
 

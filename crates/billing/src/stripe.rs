@@ -63,6 +63,10 @@ use crate::provider::{
     Invoice, PortalRequest, PortalSession, ProviderName, SubscriptionState, SubscriptionStatus,
     PROVIDER_STRIPE,
 };
+use crate::sync::{
+    product_name, CatalogPlan, CatalogProvider, ProviderPrice, ProviderProduct,
+    PLAN_CODE_METADATA_KEY,
+};
 
 /// The Stripe implementation of [`BillingProvider`].
 ///
@@ -477,6 +481,192 @@ impl BillingProvider for StripeAdapter {
     }
 }
 
+/// The plan code for a Stripe product — the `detag_plan_code`
+/// metadata value, when the product carries one.
+fn product_plan_code(product: &stripe::Product) -> Option<String> {
+    product
+        .metadata
+        .as_ref()
+        .and_then(|meta| meta.get(PLAN_CODE_METADATA_KEY).cloned())
+}
+
+/// A Stripe product as the sync sees it.
+fn to_provider_product(product: stripe::Product) -> ProviderProduct {
+    let plan_code = product_plan_code(&product);
+    ProviderProduct {
+        id: product.id.as_str().to_owned(),
+        name: product.name,
+        plan_code,
+    }
+}
+
+/// A Stripe price as the sync sees it. The product id comes off
+/// the expandable — prices are listed per product, so the field
+/// is always populated on a listed price.
+fn to_provider_price(price: stripe::Price) -> Result<ProviderPrice, BillingError> {
+    let product_id = price
+        .product
+        .as_ref()
+        .map(|product| product.id().as_str().to_owned())
+        .ok_or_else(|| BillingError::Provider("stripe price has no product".to_owned()))?;
+    let currency = price
+        .currency
+        .map(|currency| {
+            serde_json::to_value(currency).map_err(|err| {
+                BillingError::Provider(format!("stripe price currency is not a code: {err}"))
+            })
+        })
+        .transpose()?
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .ok_or_else(|| BillingError::Provider("stripe price has no currency".to_owned()))?;
+    Ok(ProviderPrice {
+        id: price.id.as_str().to_owned(),
+        product_id,
+        amount: price
+            .unit_amount
+            .ok_or_else(|| BillingError::Provider("stripe price has no unit amount".to_owned()))?,
+        currency: currency.to_ascii_uppercase(),
+        active: price.active.unwrap_or(false),
+    })
+}
+
+/// Parse a plan currency (`INR`) into Stripe's `Currency`
+/// (lowercase `inr`). A plan currency Stripe does not know is a
+/// provider error for that plan — the sync records it as a
+/// per-plan failure, never a panic.
+fn parse_currency(currency: &str) -> Result<stripe::Currency, BillingError> {
+    use std::str::FromStr;
+    stripe::Currency::from_str(&currency.to_ascii_lowercase())
+        .map_err(|_| BillingError::Provider(format!("unsupported plan currency: {currency}")))
+}
+
+#[async_trait]
+impl CatalogProvider for StripeAdapter {
+    fn provider_name(&self) -> &'static str {
+        PROVIDER_STRIPE
+    }
+
+    async fn list_products(&self) -> Result<Vec<ProviderProduct>, BillingError> {
+        // 100 is the page maximum and far above our three-plan
+        // catalog — no pagination loop (ASSUMPTION-024).
+        let list = stripe::Product::list(
+            &self.client,
+            &stripe::ListProducts {
+                limit: Some(100),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(provider_error)?;
+        Ok(list.data.into_iter().map(to_provider_product).collect())
+    }
+
+    async fn create_product(&self, plan: &CatalogPlan) -> Result<ProviderProduct, BillingError> {
+        let display = product_name(&plan.code);
+        let product = stripe::Product::create(
+            &self.client,
+            stripe::CreateProduct {
+                name: display.as_str(),
+                metadata: Some(
+                    [(PLAN_CODE_METADATA_KEY.to_owned(), plan.code.clone())]
+                        .into_iter()
+                        .collect(),
+                ),
+                active: None,
+                default_price_data: None,
+                description: None,
+                expand: &[],
+                features: None,
+                id: None,
+                images: None,
+                package_dimensions: None,
+                shippable: None,
+                statement_descriptor: None,
+                tax_code: None,
+                type_: None,
+                unit_label: None,
+                url: None,
+            },
+        )
+        .await
+        .map_err(provider_error)?;
+        Ok(to_provider_product(product))
+    }
+
+    async fn list_prices(&self, product_id: &str) -> Result<Vec<ProviderPrice>, BillingError> {
+        let list = stripe::Price::list(
+            &self.client,
+            &stripe::ListPrices {
+                product: Some(stripe::IdOrCreate::Id(product_id)),
+                limit: Some(100),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(provider_error)?;
+        list.data
+            .into_iter()
+            .map(to_provider_price)
+            .collect::<Result<Vec<_>, _>>()
+    }
+
+    async fn create_price(
+        &self,
+        product_id: &str,
+        plan: &CatalogPlan,
+    ) -> Result<ProviderPrice, BillingError> {
+        let price = stripe::Price::create(
+            &self.client,
+            stripe::CreatePrice {
+                currency: parse_currency(&plan.currency)?,
+                unit_amount: Some(i64::from(plan.amount)),
+                product: Some(stripe::IdOrCreate::Id(product_id)),
+                // Plans are monthly subscriptions: the price is a
+                // recurring monthly price (P1-062 sells it).
+                recurring: Some(stripe::CreatePriceRecurring {
+                    interval: stripe::CreatePriceRecurringInterval::Month,
+                    ..Default::default()
+                }),
+                active: None,
+                billing_scheme: None,
+                currency_options: None,
+                custom_unit_amount: None,
+                expand: &[],
+                lookup_key: None,
+                metadata: None,
+                nickname: None,
+                product_data: None,
+                tax_behavior: None,
+                tiers: None,
+                tiers_mode: None,
+                transfer_lookup_key: None,
+                transform_quantity: None,
+                unit_amount_decimal: None,
+            },
+        )
+        .await
+        .map_err(provider_error)?;
+        to_provider_price(price)
+    }
+
+    async fn archive_price(&self, price_id: &str) -> Result<(), BillingError> {
+        let id = price_id
+            .parse::<stripe::PriceId>()
+            .map_err(|_| BillingError::Provider(format!("invalid stored price id: {price_id}")))?;
+        stripe::Price::update(
+            &self.client,
+            &id,
+            stripe::UpdatePrice {
+                active: Some(false),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(provider_error)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -506,7 +696,9 @@ mod tests {
 
     #[test]
     fn provider_name_is_stripe() {
-        assert_eq!(adapter().provider_name(), PROVIDER_STRIPE);
+        // Both `BillingProvider` and `CatalogProvider` define
+        // `provider_name` — disambiguate to the trait under test.
+        assert_eq!(BillingProvider::provider_name(&adapter()), PROVIDER_STRIPE);
     }
 
     #[test]

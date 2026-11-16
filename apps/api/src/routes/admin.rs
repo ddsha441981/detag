@@ -12,8 +12,9 @@
 //! /v1/admin/users`, real since P1-009, `POST
 //! /v1/admin/users/{id}/impersonate`, real since P1-010,
 //! `GET /v1/admin/jobs`, real since P1-038 (in this file),
-//! and `GET` / `PUT /v1/admin/plans`, real since P1-056
-//! (in this file).
+//! `GET` / `PUT /v1/admin/plans`, real since P1-056 (in
+//! this file), and `POST /v1/admin/billing/catalog-sync`,
+//! real since P1-061 (in this file).
 //! Every route — live or stub — sits behind the matrix guard
 //! (P1-043): the stubs take `admin_stub` / `admin_read_stub`
 //! below, so an unauthenticated or wrong-role caller is
@@ -49,6 +50,7 @@ use crate::{
         admin_plans::{
             list_plans, update_plans, PlanEditorError, PlanView, PlansResponse, UpdatePlansRequest,
         },
+        catalog_sync::{run_catalog_sync, CatalogSyncError},
         register::UserResponse,
     },
     AppState,
@@ -60,6 +62,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use detag_billing::CatalogDriftReport;
 use detag_core::error::{AppError, Problem, Profile};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -514,6 +517,63 @@ pub async fn update_plans_handler(
     }
 }
 
+/// POST /v1/admin/billing/catalog-sync (P1-061): run the
+/// products/prices catalog sync now and return the drift
+/// report. Admin only; support gets 403 `PF-1002` from the
+/// extractor, no credential gets 401 `PF-1001`, an API key
+/// gets 403. No Stripe key configured is 503 `PF-5005`; a
+/// provider failure mid-sync is 500 `PF-5000` (the provider
+/// message never reaches the problem body). On success the
+/// changed `stripe_price_id` values are already persisted and
+/// the plan cache invalidated; the write is audited by the
+/// P1-046 middleware (`admin.billing.catalog_synced`) with
+/// the changed price ids attached as the audit `after` — the
+/// handler does NOT mark `AuditHandled`.
+#[utoipa::path(
+    post,
+    path = "/v1/admin/billing/catalog-sync",
+    responses(
+        (status = 200, description = "The drift report — one line per plan, cheapest first", body = CatalogDriftReport),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified non-admin, incl. support, or an API key)", body = Problem),
+        (status = 500, description = "The provider call failed", body = Problem),
+        (status = 503, description = "Billing is not configured (no Stripe secret key)", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn catalog_sync_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    _admin: AdminContext,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    match run_catalog_sync(&state).await {
+        Ok(report) => {
+            let updates: Vec<serde_json::Value> = report
+                .price_id_updates()
+                .iter()
+                .map(|(code, price_id)| serde_json::json!({"plan": code, "price_id": price_id}))
+                .collect();
+            let mut response = Json(report).into_response();
+            response.extensions_mut().insert(AuditDetail {
+                before: None,
+                after: Some(serde_json::json!({"updated": updates})),
+                reason: None,
+            });
+            response
+        }
+        Err(CatalogSyncError::NotConfigured) => ProblemResponse(
+            AppError::BillingNotConfigured.to_problem(Profile::Production, request_id, None),
+        )
+        .into_response(),
+        Err(CatalogSyncError::Provider | CatalogSyncError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// The guarded 501 stubs (P1-043): the same 501 `PF-5004` as
 /// the shared [`stub`](super::stub), but behind the matrix
 /// guard — so a route whose handler has not landed yet still
@@ -575,6 +635,7 @@ pub fn router(state: AppState) -> Router<AppState> {
                 .route("/dlq", get(admin_read_stub))
                 .route("/flags", get(admin_read_stub).put(admin_stub))
                 .route("/plans", get(list_plans_handler).put(update_plans_handler))
+                .route("/billing/catalog-sync", post(catalog_sync_handler))
                 .route("/audit", get(admin_read_stub))
                 .route("/abuse-reports", get(admin_read_stub))
                 .route("/abuse-reports/{id}/resolve", post(admin_stub))

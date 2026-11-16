@@ -12,12 +12,18 @@ pub mod error;
 pub mod provider;
 pub mod razorpay;
 pub mod stripe;
+pub mod sync;
 
 pub use error::BillingError;
 pub use provider::{
     BillingEvent, BillingProvider, CheckoutRequest, CheckoutSession, Customer, DomainEvent,
     DynBillingProvider, Invoice, PortalRequest, PortalSession, SubscriptionState,
     SubscriptionStatus, PROVIDER_RAZORPAY, PROVIDER_STRIPE,
+};
+pub use stripe::StripeAdapter;
+pub use sync::{
+    sync_catalog, CatalogDriftReport, CatalogPlan, CatalogProvider, PlanSyncResult, ProviderPrice,
+    ProviderProduct, SyncAction,
 };
 
 #[cfg(test)]

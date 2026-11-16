@@ -14,7 +14,7 @@
 //!   `Capability::for_route`, and the role table behind it
 //!   admits exactly admin + support on read rows and admin
 //!   only on write/impersonate rows.
-//! - `admin_matrix_live` — the live walk: the 7 live routes
+//! - `admin_matrix_live` — the live walk: the 8 live routes
 //!   × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key), asserting the status
 //!   the matrix predicts — 401 `PF-1001` with no credential,
@@ -63,11 +63,11 @@ struct MatrixRow {
     live: bool,
 }
 
-/// The matrix: all 19 `/v1/admin/*` routes. The public
+/// The matrix: all 20 `/v1/admin/*` routes. The public
 /// `POST /v1/abuse` intake lives in the admin module but is
 /// not an admin route — it has no row (and no capability).
 const MATRIX: &[MatrixRow] = &[
-    // Live (5)
+    // Live (6)
     MatrixRow {
         method: "GET",
         path: "/v1/admin/users",
@@ -96,6 +96,12 @@ const MATRIX: &[MatrixRow] = &[
         method: "POST",
         path: "/v1/admin/users/{id}/impersonate",
         capability: Capability::AdminUsersImpersonate,
+        live: true,
+    },
+    MatrixRow {
+        method: "POST",
+        path: "/v1/admin/billing/catalog-sync",
+        capability: Capability::AdminBillingWrite,
         live: true,
     },
     // Stubs (14) — guard lands with the handler ticket (P1-043)
@@ -199,12 +205,12 @@ fn matrix_covers_every_admin_route() {
         .collect();
     assert_eq!(
         admin_routes.len(),
-        19,
-        "ROUTE_TABLE must hold the 19 /v1/admin/* routes (the public POST /v1/abuse intake is not one)"
+        20,
+        "ROUTE_TABLE must hold the 20 /v1/admin/* routes (the public POST /v1/abuse intake is not one)"
     );
     assert_eq!(
         MATRIX.len(),
-        19,
+        20,
         "the matrix must hold one row per admin route ({} rows today)",
         MATRIX.len()
     );
@@ -523,7 +529,10 @@ async fn admin_matrix_live() {
             );
             assert_eq!(problem_code(&res), "PF-1002", "{} {}", row.method, row.path);
         }
-        // Admin: 200.
+        // Admin: 200 — except the catalog sync, whose handler
+        // is live but billing is unconfigured in the test
+        // environment (no Stripe key): the admitted admin gets
+        // 503 PF-5005, not 200 (P1-061).
         let res = probe(
             &app,
             row.method,
@@ -533,14 +542,26 @@ async fn admin_matrix_live() {
             body.clone(),
         )
         .await;
-        assert_eq!(
-            res.status,
-            StatusCode::OK,
-            "{} {} (admin): {}",
-            row.method,
-            row.path,
-            res.text()
-        );
+        if row.path == "/v1/admin/billing/catalog-sync" {
+            assert_eq!(
+                res.status,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{} {} (admin): {}",
+                row.method,
+                row.path,
+                res.text()
+            );
+            assert_eq!(problem_code(&res), "PF-5005", "{} {}", row.method, row.path);
+        } else {
+            assert_eq!(
+                res.status,
+                StatusCode::OK,
+                "{} {} (admin): {}",
+                row.method,
+                row.path,
+                res.text()
+            );
+        }
         // An admin user's own API key: 403 PF-1002 ("no admin ever").
         let res = probe(&app, row.method, row.path, Some(&admin_key), target, body).await;
         assert_eq!(
