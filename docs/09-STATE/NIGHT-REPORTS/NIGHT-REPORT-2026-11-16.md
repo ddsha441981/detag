@@ -402,3 +402,53 @@ time: Phase 1 55/111, CI green 6 runs straight (#38–#43).
 
 ### Risks
 - None new. The `upgrade_url` `/plans` console page still does not exist until Phase 4 (ASSUMPTION-020).
+
+## 52nd coordinator (continued) — P1-058 Pricing config docs (IN PROGRESS, run interrupted by the 37th VM reset ~14:48 IST)
+
+### Tickets done this run
+- **P1-057 — Entitlement suite**: DONE + COMMITTED + MERGED (see above) — `45c4d0f` on `phase-1`, merged into `main` as `efddaaf`. Full `just verify` green 870 passed, 0 failed. Phase 1 now 57/111. No push — driver syncs.
+
+### Tickets partially done
+- **P1-058 — Pricing config docs** (docs, billing/plans, Est S, deps P1-057): implemented on branch `phase-1`, uncommitted. New `docs/06-DELIVERY/10-pricing-config.md` (where defaults live — migration `20261112065140_billing.up.sql` + `scripts/seed.sql`, kept in sync; Free ₹0 / Pro ₹49900 / Business ₹199900 paise, INR; USD mirror 0/19/79 named in open-question #2 but NOT implemented anywhere — single-currency INR today, stated honestly; Stripe price-id procedure, the three change paths — admin editor / seed+migration / Stripe dashboard — and what a change does/does not do to existing subscriptions) + one cross-pointer line in `docs/06-DELIVERY/07-admin-guide.md` (plans editor bullet). No code, no tests. Phase-file checkbox + PROGRESS.md update NOT done yet — they go in with the commit after the verify is green.
+- **Full `just verify` attempt 1 was killed by the 37th VM reset** (~14:48 IST, mid-`api_keys` binary, 14 binaries green, 0 failed). Log `~/workspace/goals/detag-watermark-removal-saas/hidden_files/p1-058-verify.log` (no `VERIFY_EXIT`, no live process — do NOT trust it, re-run from scratch after the restore).
+
+### Run-end state (52nd coordinator) — UPDATED 15:10 IST, restore done, verify attempt 2 running
+- Branch `phase-1`, HEAD = 45c4d0f (P1-057). `main` = efddaaf (P1-057 merged). Working tree: 1 modified file (`docs/06-DELIVERY/07-admin-guide.md`) + 1 new file (`docs/06-DELIVERY/10-pricing-config.md`). **NOT committed, NOT merged.**
+- **37th VM reset** (~14:48 IST): services + binaries wiped. Restored per ASSUMPTION-010 at ~15:00–15:10 IST: waited out the os-intent replay (pid 776, ~21 min — the slowest yet), then `setsid redis-server` (PONG), `pg_ctlcluster 16 main start` (accepting), recreated `pf` role (password `pf`) + `pf` database, `just migrate` applied all 17 migrations (verified `count(*) = 17` in `_sqlx_migrations`).
+- **Full `just verify` attempt 2 re-launched from scratch** at ~15:10 IST (pid 11325, detached via setsid/nohup): log `~/workspace/goals/detag-watermark-removal-saas/hidden_files/p1-058-verify2.log`, already in the test binaries at last check, 0 failed so far. Attempt 1's log (`p1-058-verify.log`, 14 binaries green, killed by the reset) must NOT be trusted.
+- No S1 blockers. No owner decision needed.
+
+### Next-run plan (first 5)
+1. Check verify attempt 2's fate first (log `~/workspace/goals/detag-watermark-removal-saas/hidden_files/p1-058-verify2.log` tail + live process): if it has `VERIFY_EXIT=0`, P1-058 is green — commit it; if the log ends mid-binary with no live process, re-run from scratch (attempt 3). Services are restored (postgres + redis up, `pf` role/db recreated, all 17 migrations applied) — re-check them first in case another reset hit.
+2. On green: run the drift checks, tick the P1-058 checkbox + status in `docs/07-PHASES/PHASE-1-identity-billing.md`, update `docs/09-STATE/PROGRESS.md` (Phase 1 58/111, current ticket P1-059, P1-058 note), commit ONE commit `docs(billing): P1-058 Pricing config docs (FR-P-01)` on `phase-1`, merge into `main` locally (no push — driver syncs).
+4. P1-059 — BillingProvider trait.
+5. CI #37 results (FLAKY-006 fix confirmation — via the user's logs zip).
+
+### Risks
+- The replay is the slowest yet (~15 min and still going at 15:04 IST) — it installs the whole recorded package list one by one; postgres/redis land late in its list. Do not bypass it with a parallel apt install (ASSUMPTION-010).
+
+## 53rd coordinator — P1-058 Pricing config docs (DONE + COMMITTED + MERGED)
+
+### Tickets done this run
+- **P1-058 — Pricing config docs**: DONE + COMMITTED + MERGED — commit on `phase-1`, merged into `main` locally (no push — driver syncs). Full `just verify` green: 870 passed, 0 failed (same count as P1-057 — docs-only), attempt 2, ~60 min, no flakes. Drift checks green (openapi / route-table / config-table / env / sqlx-prepare / snapshots). `just secrets` (gitleaks) clean — 216 commits scanned, no leaks found. Phase 1 now 58/111.
+
+### How this run went
+- Adopted the 52nd's running verify attempt 2 (pid 11325, launched ~15:10 IST) instead of restarting it: checked the log tail + live process at ~15:37 IST (in `extractor.rs`, 0 failed), waited on it, it finished `VERIFY_EXIT=0`. Attempt 1 had been killed by the 37th VM reset (~14:48 IST, mid-`api_keys`, 14 binaries green, 0 failed).
+- Services re-checked at run start: postgres accepting, redis PONG, `pf` role/db present, all 17 migrations applied — no restore needed (no new reset since the 37th).
+- Cross-checked the new doc's values myself against the migration (`20261112065140_billing.up.sql`), `scripts/seed.sql`, and the live `plans` table: Free ₹0 / Pro ₹49900 / Business ₹199900 paise, INR, and all 7-key entitlements objects agree exactly in all three places. Also verified `crates/core/src/seed.rs` runs `scripts/seed.sql` and the seed's `ON CONFLICT DO NOTHING`.
+- State updates in the commit: P1-058 checkbox + status in `docs/07-PHASES/PHASE-1-identity-billing.md`; `docs/09-STATE/PROGRESS.md` (Phase 1 58/111, current ticket P1-059, next-up queue, P1-058 note, health-snapshot verify line). The 52nd's night-report section (above) is included in the same commit — it was uncommitted working-tree state, and leaving it behind would risk losing it to the next reset.
+- No S1 blockers. No owner decision needed.
+
+### Run-end state (53rd coordinator)
+- Branch `phase-1`, HEAD = the P1-058 commit (see `git log` on `phase-1`). Merged into `main` locally (default `Merge branch 'phase-1'` subject, no push — driver syncs). Working tree clean after the merge.
+- Verify logs: `~/workspace/goals/detag-watermark-removal-saas/hidden_files/p1-058-verify2.log` (green, 870/0), `p1-058-gitleaks.log` (`just secrets`, exit 0). Attempt 1's log (`p1-058-verify.log`) is untrustworthy (killed mid-run, no `VERIFY_EXIT`) — ignore it.
+
+### Next-run plan (first 5)
+1. P1-059 — BillingProvider trait (feat, M): trait create_checkout / create_portal / fetch_subscription / map_webhook(event) → DomainEvent / customer ops, typed error, rationale documented (FR-P-05). TDD where practical, full `just verify`, one commit, merge to main, no push.
+2. P1-060 — Stripe adapter (deps P1-059).
+3. P1-061 — Products/prices sync job (deps P1-060).
+4. CI #37 results (FLAKY-006 fix confirmation — via the user's logs zip; CI #45 on efddaaf was still running as of ~15:41 IST).
+5. CI #45 result when it lands (same source).
+
+### Risks
+- None new. The `upgrade_url` `/plans` console page still does not exist until Phase 4 (ASSUMPTION-020).
