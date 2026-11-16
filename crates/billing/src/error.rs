@@ -47,4 +47,11 @@ pub enum BillingError {
     /// rather than being read as `active`.
     #[error("unknown subscription status: {0}")]
     UnknownStatus(String),
+
+    /// The billing configuration is invalid: an empty secret, a key
+    /// that is neither `sk_test_` nor `sk_live_`, or a live key used
+    /// without the owner flag (test mode only until owner decision
+    /// #3). The message names the problem, never the key value.
+    #[error("billing configuration error: {0}")]
+    Configuration(String),
 }

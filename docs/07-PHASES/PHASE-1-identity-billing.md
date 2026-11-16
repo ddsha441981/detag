@@ -496,11 +496,12 @@
     - [x] trait + docs committed
   - **Status:** DONE 2026-11-16 (53rd coordinator implemented, 57th finished + committed as one commit) — full `just verify` green: 877 passed, 0 failed (870 + 7 new FakeProvider tests), attempt 4, ~46 min, no flakes; drift checks green; gitleaks clean. New `crates/billing/src/provider.rs` (trait + domain types + FakeProvider double) + `crates/billing/src/error.rs` (typed `BillingError`); ADR-0028.
 
-- [ ] **P1-060** — Stripe adapter
+- [x] **P1-060** — Stripe adapter
   - **Type:** feat · **Area:** billing/stripe · **Est:** M · **Deps:** P1-059 · **Prio:** P1
   - **Spec:** async-stripe: checkout session (price from plan config), portal session, subscription fetch; test-mode enforced (live keys rejected without owner flag).
   - **AC:**
-    - [ ] live-key guard tested
+    - [x] live-key guard tested
+  - **Status:** DONE 2026-11-16 (57th coordinator implemented, 59th finished + committed as one commit) — full `just verify` green: 885 passed, 0 failed (877 + 8 new StripeAdapter tests), attempt 4, ~48 min, no flakes; attempts 1–3 untrusted (attempt 1 failed on environment — `pf` role lacked CREATEDB; attempt 2 killed by the 41st VM reset; attempt 3 killed by the 42nd VM reset). Drift checks green. New `crates/billing/src/stripe.rs` (`StripeAdapter` over async-stripe 0.41, test-mode enforced at construction, live keys rejected without owner flag) + `BillingError::Configuration` variant; deny.toml migrated for cargo-deny 0.20 in its own commit first; `.gitleaks.toml` gains the "Fake" stopword (the adapter's lookalike test keys tripped the stripe-access-token rule — all deliberately fake). Docs: test-strategy P1-060 section, ASSUMPTION-023.
 
 - [ ] **P1-061** — Products/prices sync job
   - **Type:** feat · **Area:** billing/stripe · **Est:** M · **Deps:** P1-060 · **Prio:** P1

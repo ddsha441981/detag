@@ -28,4 +28,11 @@ stopwords = [
     "placeholder",
     "changeme",
     "example-key",
+    # "Fake" — the Stripe adapter's unit tests (P1-060, crates/billing/src/stripe.rs)
+    # use lookalike keys that carry "Fake" in the id part
+    # (sk_test_51FakeForTestsOnly..., sk_live_51FakeLive...); they are
+    # deliberately fake values, never real keys. A real Stripe key is
+    # random alphanumerics and cannot contain the word "Fake" by chance
+    # in any practical sense, so this weakens nothing real.
+    "Fake",
 ]
