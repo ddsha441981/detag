@@ -118,7 +118,9 @@ Notes on the live routes:
   removed while any subscription references it (409
   `PF-2012`), and Free can never be removed. The edit
   invalidates the plan cache at once, and audits once as
-  `admin.plans.updated` with the changed codes in `after`.
+  `admin.plans.updated` with the changed codes in `after`. The pricing
+  change procedure (where defaults live, Stripe dashboard steps,
+  rollout) is `docs/06-DELIVERY/10-pricing-config.md`.
 - The public abuse intake (`POST /v1/abuse`) is **not** an
   admin route: it takes no credential and never reaches the
   matrix or the audit middleware.
