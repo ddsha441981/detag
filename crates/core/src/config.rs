@@ -1782,7 +1782,7 @@ mod tests {
     fn file_overrides_env() {
         let _env = clean_env();
         env::set_var("PF_LOG_LEVEL", "debug");
-        let dir = std::env::temp_dir().join("detag-config-test");
+        let dir = std::env::temp_dir().join("detag-config-test-file-overrides-env");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("detag.toml");
         std::fs::write(&path, "log_level = \"warn\"\n").unwrap();
@@ -1806,7 +1806,7 @@ mod tests {
         let _env = clean_env();
         env::set_var("PF_LOG_LEVEL", "debug");
         env::set_var("PF_SMTP_PORT", "2525");
-        let dir = std::env::temp_dir().join("detag-config-test");
+        let dir = std::env::temp_dir().join("detag-config-test-layer-precedence-all-three");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("detag.toml");
         std::fs::write(&path, "log_level = \"warn\"\n").unwrap();
@@ -1861,7 +1861,7 @@ mod tests {
     #[test]
     fn file_bad_value_fails_with_var_name() {
         let _env = clean_env();
-        let dir = std::env::temp_dir().join("detag-config-test");
+        let dir = std::env::temp_dir().join("detag-config-test-file-bad-value");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("detag.toml");
         std::fs::write(&path, "log_level = \"verbose\"\n").unwrap();
