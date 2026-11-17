@@ -218,6 +218,15 @@ pub enum AppError {
     /// cannot be deleted at the DB level.
     #[error("plan has subscriptions")]
     PlanHasSubscriptions,
+    /// Kit (P1-063, FR-P-04): a provider webhook's signature does
+    /// not verify (missing header, wrong secret, tampered body,
+    /// stale timestamp). PF-2013, 400 — the next free PF-2xxx
+    /// slot. Stripe's own guidance is 400 for a bad signature;
+    /// the receiver answers 4xx ONLY on a bad signature (a
+    /// verified event that is unknown or unmappable is 200, so
+    /// the provider stops retrying).
+    #[error("webhook signature verification failed")]
+    WebhookSignatureInvalid,
 
     // -- PF-3xxx quota / billing (+ rate limiting) ------------------------
     /// Kit: image quota exhausted (pre-check). PF-3001, 429.
@@ -332,6 +341,7 @@ impl AppError {
             NotFound => "PF-2010",
             Conflict => "PF-2011",
             PlanHasSubscriptions => "PF-2012",
+            WebhookSignatureInvalid => "PF-2013",
             QuotaImagesExceeded => "PF-3001",
             QuotaVideoSecondsExceeded => "PF-3002",
             QuotaConcurrencyExceeded => "PF-3008",
@@ -379,6 +389,7 @@ impl AppError {
             NotFound => 404,
             Conflict => 409,
             PlanHasSubscriptions => 409,
+            WebhookSignatureInvalid => 400,
             QuotaImagesExceeded => 429,
             QuotaVideoSecondsExceeded => 429,
             QuotaConcurrencyExceeded => 429,
@@ -426,6 +437,7 @@ impl AppError {
             NotFound => "not_found",
             Conflict => "conflict",
             PlanHasSubscriptions => "plan_has_subscriptions",
+            WebhookSignatureInvalid => "webhook_signature_invalid",
             QuotaImagesExceeded => "quota_images_exceeded",
             QuotaVideoSecondsExceeded => "quota_video_seconds_exceeded",
             QuotaConcurrencyExceeded => "quota_concurrency_exceeded",
@@ -477,6 +489,7 @@ impl AppError {
             NotFound => "the requested resource was not found",
             Conflict => "the request conflicts with the current state",
             PlanHasSubscriptions => "plan has subscriptions and cannot be removed",
+            WebhookSignatureInvalid => "the webhook signature could not be verified",
             QuotaImagesExceeded => "image quota exceeded; upgrade your plan for more",
             QuotaVideoSecondsExceeded => "video-seconds quota exceeded; upgrade your plan for more",
             QuotaConcurrencyExceeded => "concurrency limit reached; upgrade your plan for more",
@@ -627,6 +640,7 @@ mod tests {
             NotFound,
             Conflict,
             PlanHasSubscriptions,
+            WebhookSignatureInvalid,
             QuotaImagesExceeded,
             QuotaVideoSecondsExceeded,
             QuotaConcurrencyExceeded,
@@ -646,6 +660,7 @@ mod tests {
             CacheUnavailable,
             InvalidStateTransition,
             NotImplemented,
+            BillingNotConfigured,
         ]
     }
 
@@ -655,7 +670,7 @@ mod tests {
     #[test]
     fn every_variant_maps_to_status_code_title() {
         let variants = all_variants();
-        assert_eq!(variants.len(), 39, "a variant was added without a test");
+        assert_eq!(variants.len(), 41, "a variant was added without a test");
         for err in &variants {
             let code = err.code();
             let status = err.status();
@@ -691,7 +706,8 @@ mod tests {
                 | AppError::ResultExpired
                 | AppError::NotFound
                 | AppError::Conflict
-                | AppError::PlanHasSubscriptions => assert!((2000..3000).contains(&n)),
+                | AppError::PlanHasSubscriptions
+                | AppError::WebhookSignatureInvalid => assert!((2000..3000).contains(&n)),
                 AppError::QuotaImagesExceeded
                 | AppError::QuotaVideoSecondsExceeded
                 | AppError::QuotaConcurrencyExceeded
@@ -1001,6 +1017,13 @@ mod tests {
                 "plan has subscriptions and cannot be removed",
             ),
             (
+                WebhookSignatureInvalid,
+                "PF-2013",
+                400,
+                "webhook_signature_invalid",
+                "the webhook signature could not be verified",
+            ),
+            (
                 QuotaImagesExceeded,
                 "PF-3001",
                 429,
@@ -1133,6 +1156,13 @@ mod tests {
                 "not_implemented",
                 "this endpoint is not implemented yet",
             ),
+            (
+                BillingNotConfigured,
+                "PF-5005",
+                503,
+                "billing_not_configured",
+                "billing is not configured",
+            ),
         ]
     }
 
@@ -1142,7 +1172,7 @@ mod tests {
     #[test]
     fn variant_to_response_table() {
         let table = response_table();
-        assert_eq!(table.len(), 39, "a variant is missing from the table");
+        assert_eq!(table.len(), 41, "a variant is missing from the table");
         assert_eq!(
             table.len(),
             all_variants().len(),
@@ -1151,7 +1181,7 @@ mod tests {
         let mut codes: Vec<&str> = table.iter().map(|(_, c, _, _, _)| *c).collect();
         codes.sort_unstable();
         codes.dedup();
-        assert_eq!(codes.len(), 39, "two variants share a code");
+        assert_eq!(codes.len(), 41, "two variants share a code");
 
         for (err, code, status, title, detail) in &table {
             assert_eq!(err.code(), *code, "{code}");

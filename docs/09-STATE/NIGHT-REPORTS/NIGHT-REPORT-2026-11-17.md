@@ -270,3 +270,95 @@
 - Next ticket: P1-063 — Webhook receiver (deps P1-062):
   signature verify, raw-body capture, event table insert,
   dispatch; 4xx only on bad signature.
+
+---
+
+## 66th coordinator — P1-063 DONE (2026-11-17, ~04:06–05:35 UTC / 09:36–11:05 IST)
+
+### Tickets done
+
+- **P1-063 — Webhook receiver (FR-P-04): DONE + COMMITTED + MERGED.**
+  Implemented by the 64th coordinator, finished by the 66th (adopted the
+  uncommitted tree, code-reviewed it against the spec + ADR-0031 +
+  ASSUMPTION-026, re-ran the full verify from scratch, committed as one
+  commit — hash below — merged to `main` locally, no push; the driver
+  syncs). Full `just verify` green: **913 passed, 0 failed** (905 + 8 new
+  webhook tests), attempt 3, ~68 min, no flakes; attempts 1–2 NOT adopted
+  (no VERIFY_EXIT; attempt 2 killed by signal 15 mid-`bootstrap` — the
+  65th's cron timeout — P1-056 rule). Drift checks green (openapi /
+  route-table / config-table / env / sqlx-prepare / snapshots) +
+  `cargo deny check` green + gitleaks clean on the P1-063 diff (no leaks
+  found; whole-tree scan not re-run — the 49-findings-in-gitignored-
+  artifacts precedent stands). New `POST /v1/webhooks/stripe` (no auth
+  extractor — the provider signature IS the credential, matrix row
+  `Ignored`): real `StripeAdapter` verify (`construct_event`, HMAC-SHA256,
+  constant-time, 5-min tolerance) → parse → insert into new
+  `webhook_events` table (`UNIQUE (provider, event_id)` = idempotency)
+  → dispatch seam (stamps `dispatched_at` + logs the variant only;
+  subscription writes land in P1-065 behind P1-064's state machine).
+  Bad signature is 400 `PF-2013` — the endpoint's ONLY 4xx;
+  unconfigured billing is 503 `PF-5005`; every verified delivery is 200
+  with a receipt. 8 new tests in `apps/api/tests/webhook.rs` (+ 3 new
+  `.sqlx/` queries) incl. both ACs. Docs: ADR-0031, ASSUMPTION-026,
+  api-spec row, data-model section, test-strategy section,
+  security-testing bullet + matrix counts (13 Allowed / 29 Forbidden /
+  13 Unprotected / 10 Ignored). Honesty: the Stripe HTTP legs are STILL
+  untested live (no test-mode key on this VM) — the suite proves the real
+  HMAC path end to end through the real HTTP layer with a fake `sk_test_`
+  key + test webhook secret; no test here calls the provider.
+
+### S1 check (66th, run start)
+
+- 0 open S1 at run start (0 `status: open` in ISSUES.md). No S1 fix was
+  needed before P1-063. CI-FAIL-021 (CI #49/#50 Coverage llvm-cov —
+  runner disk full) was fixed + pushed by the driver as 3c799ee during
+  this run; proof waits on CI #51.
+
+### The 46th VM reset (ASSUMPTION-010)
+
+- 46th reset (~09:00 IST, before this run; uptime 34 min at the driver
+  check): services wiped. The 65th restored them (log
+  `p1-063-restore.log`: postgres + redis up, `pf` role/db recreated).
+  The 66th verified before verifying: postgres accepting on :5432,
+  redis PONG, `pf` role/db present, 18 migrations applied including
+  the new `20261117021707` (DB name is `pf`, not `pf_dev` — the first
+  `psql` probe hung on a password prompt and was killed; use
+  `PGPASSWORD=pf` + `-d pf`). No new reset during this run.
+
+### Incident: night report briefly overwritten (66th, recovered)
+
+- The 66th wrote a provisional night report with `cat >` over the
+  tracked `NIGHT-REPORT-2026-11-17.md`, destroying the 60th/61st/62nd
+  content in the working tree (272 lines). Caught immediately via
+  `git status` (`M` on a file expected untracked) + `git diff`;
+  restored byte-for-byte with `git checkout --` before any commit —
+  no prior content lost. Lesson for the next coordinator: never
+  `cat >` a file in `docs/09-STATE/` without checking `git status`
+  / `git ls-files` first; night reports are tracked and appended to,
+  not replaced.
+
+### Run-end state (66th coordinator)
+
+- Branch `main`, HEAD = <merge-hash> (`Merge branch 'phase-1'`).
+  `phase-1` HEAD = <commit-hash> (P1-063). P1-063 DONE, committed,
+  merged, NOT pushed (driver syncs — last-pushed.txt is the driver's;
+  the driver pushed 3c799ee during this run).
+- Working tree CLEAN. Services UP (postgres accepting, redis PONG,
+  `pf` role/db, 18 migrations). No S1 blockers. No owner decision needed.
+- P1-064 NOT started — this run ended after the P1-063 merge; see the
+  prep notes below.
+
+### P1-064 prep for the 67th (read, not yet implemented)
+
+- Next ticket: P1-064 — Subscription state machine (deps P1-063):
+  trialing/active/past_due/canceled transitions; side effects:
+  entitlement cache flush, emails (welcome, dunning, canceled), audit.
+  AC: invalid transitions rejected.
+- The webhook ledger (`webhook_events`) is the durable queue P1-065's
+  handlers read from — P1-064 owns transition validation only; the
+  subscription writes land in P1-065. `dispatched_at` means
+  "dispatched", not "applied" (ASSUMPTION-026).
+- Full `just verify` now takes ~68 min on this VM; the 66th's run
+  finished with ~25 min to spare before the ~2 h coordinator timeout.
+  If a run is cut off mid-verify, re-run from scratch (P1-056 rule) —
+  never adopt a log without VERIFY_EXIT.

@@ -3,7 +3,8 @@
 //!
 //! User webhook endpoints live here: they are gated by plan
 //! entitlement, so they belong with billing, not with jobs.
-//! The checkout endpoint is live (P1-062); the rest are the
+//! The checkout endpoint is live (P1-062) and the Stripe
+//! provider webhook is live (P1-063); the rest are the
 //! shared 501 stub until their Phase 1 tickets land — except
 //! the webhook-endpoints nest, which uses the authenticated
 //! stub (`stub_authed`, P1-034): an API key needs
@@ -25,10 +26,15 @@ use crate::{
             create_checkout as create_checkout_service, CheckoutError, CheckoutRequestBody,
         },
         entitlements::require_feature,
+        webhook::{
+            receive_stripe_webhook as receive_stripe_webhook_service, signature_header,
+            WebhookError, WebhookReceipt,
+        },
     },
     AppState,
 };
 use axum::{
+    body::Bytes,
     extract::{Extension, State},
     http::{header::HeaderMap, StatusCode},
     response::{IntoResponse, Json, Response},
@@ -151,6 +157,57 @@ pub async fn create_checkout(
     }
 }
 
+/// Receive a Stripe webhook delivery (P1-063, FR-P-04).
+/// No auth extractor runs here by design — the provider's
+/// signature IS the credential (the matrix row is `Ignored`).
+/// The raw body is read as bytes: the signature covers the
+/// exact bytes Stripe sent, and any JSON parse before the
+/// check would break it. A bad signature is 400 `PF-2013`
+/// (the endpoint's only 4xx); billing unconfigured is 503
+/// `PF-5005`; every verified delivery — stored, replayed, or
+/// ignored — is 200 with a receipt.
+#[utoipa::path(
+    post,
+    path = "/v1/webhooks/stripe",
+    request_body(
+        content = String,
+        description = "The raw Stripe event envelope — the signature covers these exact bytes",
+        content_type = "application/json"
+    ),
+    responses(
+        (status = 200, description = "Received (stored, replayed, or ignored)", body = WebhookReceipt),
+        (status = 400, description = "The webhook signature does not verify (PF-2013)", body = Problem),
+        (status = 503, description = "Billing is not configured (no Stripe secret key)", body = Problem)
+    ),
+    tag = "billing"
+)]
+pub async fn receive_stripe_webhook(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let signature = headers
+        .get(signature_header())
+        .and_then(|value| value.to_str().ok());
+    match receive_stripe_webhook_service(&state, &body, signature).await {
+        Ok(_) => (StatusCode::OK, Json(WebhookReceipt { received: true })).into_response(),
+        Err(WebhookError::NotConfigured) => ProblemResponse(
+            AppError::BillingNotConfigured.to_problem(Profile::Production, request_id, None),
+        )
+        .into_response(),
+        Err(WebhookError::SignatureInvalid) => ProblemResponse(
+            AppError::WebhookSignatureInvalid.to_problem(Profile::Production, request_id, None),
+        )
+        .into_response(),
+        Err(WebhookError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// The billing nests: public plans, the subscription / checkout /
 /// portal / invoices group, usage, provider webhooks (Stripe,
 /// Razorpay), and the user's own webhook endpoints.
@@ -169,7 +226,7 @@ pub fn router() -> Router<AppState> {
         .nest(
             "/v1/webhooks",
             Router::new()
-                .route("/stripe", post(stub))
+                .route("/stripe", post(receive_stripe_webhook))
                 .route("/razorpay", post(stub)),
         )
         .nest(
