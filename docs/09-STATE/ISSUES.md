@@ -145,6 +145,13 @@
 - Fix: add `"pyyaml==6.0.2"` to the pip install in commits.yml.
 - Status: fixed (this commit) — waits on Commits #24.
 
+### CI-FAIL-021 [bug] CI #49/#50 verify job fails at Coverage (llvm-cov) — runner disk full (`No space left on device`)
+- Date: 2026-11-17 · Severity: S1 (CI red on main)
+- Symptom: CI #49 (on cf37b8b, P1-061) and CI #50 (on a3810fe, P1-062) — verify job fails ONLY at the Coverage (llvm-cov) step; every other step green (fmt, clippy, all drift checks, Test (JUnit) success) and every other job green (gitleaks, smoke, cargo-deny, image-size). CI #49: coverage failed after ~7 min. CI #50: coverage ran ~52 min, job ended with the step still `in_progress` and the `if: always()` upload step never ran. Broke the 11-run green streak (#38–#48).
+- Cause (proven from the user's screenshot of the CI #50 verify log, lines 580–582): `error: linking with 'cc' failed: exit status: 1` + `Error: No space left on device : '/home/runner/actions-runner/cached/2.338.2/_diag/pages/..._1.log'` — the runner disk filled during the instrumented rebuild (llvm-cov compiles the whole workspace a second time, after the Test step already built it once, plus the compose service containers). The coverage gate script is report-only (no `--gate` in CI), so a floor breach cannot fail this step — the failure is inside `cargo llvm-cov` itself, i.e. the disk. The logs zip for #50 contained only the 4 green jobs (verify missing); the verify log was unreadable via the API (403, no auth) — the screenshot is the evidence. Not a product or test bug.
+- Fix: free-disk step as the first step of the verify job in `.github/workflows/ci.yml` — removes the preinstalled toolchains the build never uses (.NET, Android SDK, GHC/GHCup, Swift, Boost) + `apt-get clean`, with `df -h` before/after for the log. Docker untouched (the job needs its service containers + compose). No product code changed.
+- Status: fixed (this commit) — waits on CI #51 (the next push to main) to prove the streak is restored. Follow-up if it recurs: prune the non-instrumented `target/` build before the coverage step, or split coverage into its own job on a fresh runner.
+
 ### TESTKIT-MINIO-001 [follow-up] testcontainers live legs + local-dev compose.minio.yml still reference dead MinIO images
 - Date: 2026-11-13 · Severity: S3 (not CI-blocking)
 - Cause: CI never sets PF_TEST_CONTAINERS/PF_TEST_LIVE_MINIO, so the live legs skip in CI; compose-minio-check only renders. But anyone running the live legs locally (or `docker compose -f ops/compose.minio.yml up`) hits the same dead MinIO pulls as CI-FAIL-004.
