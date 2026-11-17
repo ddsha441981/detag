@@ -189,7 +189,7 @@ pub struct PortalRequest {
 }
 
 /// What `create_portal` returns: the hosted billing-portal URL.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PortalSession {
     /// The hosted billing-portal URL.
     pub url: String,

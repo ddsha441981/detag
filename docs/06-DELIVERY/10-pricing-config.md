@@ -172,6 +172,36 @@ check that the id exists in Stripe.
 6. Announce: existing subscribers are unaffected (see above) — say so
    explicitly in the announcement, or the support queue will ask.
 
+## The billing portal (P1-067)
+
+- `POST /v1/billing/portal` returns the provider-hosted portal
+  URL for the caller's own customer (see the api-spec billing
+  row). The portal is where a subscriber manages payment
+  methods, sees invoices, and cancels — no code of ours runs
+  inside it; subscription changes made there land back with
+  the webhook (P1-063/065).
+- The portal's configuration is Stripe-dashboard-side, not
+  code: the adapter passes `configuration: None` when it
+  creates the session, so the account's **default portal
+  configuration** applies. That configuration is where the
+  product decisions live:
+  - **Invoice display** — which invoices the customer sees
+    (all, or only paid/open) and whether the hosted invoice
+    page / PDF download is offered.
+  - **Cancel behavior** — whether the customer may cancel in
+    the portal at all, and whether cancellation is immediate
+    or at period end. Our state machine treats `canceled` as
+    terminal either way (P1-064); the timing only decides
+    when the `customer.subscription.deleted` event arrives.
+  - **Payment-method updates** — whether the customer may
+    add/remove cards inside the portal.
+- Change it in the Stripe dashboard (Settings → Billing →
+  Customer portal) — no deploy, no migration, no code
+  change. The default configuration is in force until an
+  owner changes it; if the default ever stops matching the
+  product (e.g. cancel must be period-end-only), that is an
+  owner decision, not a ticket — see ASSUMPTION-030.
+
 ## Related docs
 
 - Open question #2 — `docs/02-REQUIREMENTS/06-open-questions.md`

@@ -3,9 +3,10 @@
 //!
 //! User webhook endpoints live here: they are gated by plan
 //! entitlement, so they belong with billing, not with jobs.
-//! The checkout endpoint is live (P1-062) and the Stripe
-//! provider webhook is live (P1-063); the rest are the
-//! shared 501 stub until their Phase 1 tickets land — except
+//! The checkout endpoint is live (P1-062), the portal is
+//! live (P1-067), and the Stripe provider webhook is live
+//! (P1-063); the rest are the shared 501 stub until their
+//! Phase 1 tickets land — except
 //! the webhook-endpoints nest, which uses the authenticated
 //! stub (`stub_authed`, P1-034): an API key needs
 //! `webhooks:manage` there, a caller without a credential is
@@ -26,6 +27,7 @@ use crate::{
             create_checkout as create_checkout_service, CheckoutError, CheckoutRequestBody,
         },
         entitlements::require_feature,
+        portal::{create_portal as create_portal_service, PortalError},
         webhook::{
             receive_stripe_webhook as receive_stripe_webhook_service, signature_header,
             WebhookError, WebhookReceipt,
@@ -41,7 +43,7 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
-use detag_billing::CheckoutSession;
+use detag_billing::{CheckoutSession, PortalSession};
 use detag_core::error::{AppError, FieldError, Problem, Profile};
 use detag_validator::ValidationErrors;
 
@@ -157,6 +159,60 @@ pub async fn create_checkout(
     }
 }
 
+/// Open the billing portal (P1-067, FR-P-03): the caller is
+/// sent to the provider-hosted page at the returned `url` to
+/// manage payment methods, see invoices, and cancel. JWT
+/// only — the route is not in the extractor's scope table, so
+/// an API key is 403 `PF-1002` before this handler runs
+/// (P1-040's "no billing for keys"); no credential is 401
+/// `PF-1001` from the extractor. A user with no provider
+/// customer on file is 404 `PF-2010`; billing not configured
+/// is 503 `PF-5005`.
+#[utoipa::path(
+    post,
+    path = "/v1/billing/portal",
+    responses(
+        (status = 200, description = "The hosted billing-portal session — redirect the buyer to `url`", body = PortalSession),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "An API key cannot open the portal (PF-1002)", body = Problem),
+        (status = 404, description = "No billing customer on file (PF-2010)", body = Problem),
+        (status = 500, description = "The provider call failed", body = Problem),
+        (status = 503, description = "Billing is not configured (no Stripe secret key)", body = Problem)
+    ),
+    tag = "billing",
+    security(("bearer_auth" = []))
+)]
+pub async fn create_portal(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    auth: AuthContext,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let Some(ref user) = auth.user else {
+        return ProblemResponse(AppError::Unauthenticated.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
+    match create_portal_service(&state, user).await {
+        Ok(session) => (StatusCode::OK, Json(session)).into_response(),
+        Err(PortalError::NotConfigured) => ProblemResponse(
+            AppError::BillingNotConfigured.to_problem(Profile::Production, request_id, None),
+        )
+        .into_response(),
+        Err(PortalError::NoCustomer) => {
+            ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(PortalError::Provider | PortalError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// Receive a Stripe webhook delivery (P1-063, FR-P-04).
 /// No auth extractor runs here by design — the provider's
 /// signature IS the credential (the matrix row is `Ignored`).
@@ -223,7 +279,7 @@ pub fn router() -> Router<AppState> {
             Router::new()
                 .route("/subscription", get(stub))
                 .route("/checkout", post(create_checkout))
-                .route("/portal", post(stub))
+                .route("/portal", post(create_portal))
                 .route("/invoices", get(stub)),
         )
         .nest("/v1/usage", Router::new().route("/", get(stub)))

@@ -43,8 +43,9 @@
 //! stub since P1-043 (never `Allowed`), and every billing row
 //! is `Unprotected` except the webhook-endpoints nest, which
 //! is key-managed by design, the checkout endpoint, which
-//! is `Forbidden` since P1-062 (JWT only), and the Stripe
-//! webhook, which is `Ignored` since P1-063 (live handler,
+//! is `Forbidden` since P1-062 (JWT only), the portal
+//! endpoint, which is `Forbidden` since P1-067 (JWT only),
+//! and the Stripe webhook, which is `Ignored` since P1-063 (live handler,
 //! signature-verified, no Bearer credential — a key changes
 //! nothing). An admin user's
 //! OWN key is 403 on the live admin routes too
@@ -140,7 +141,7 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow { method: "GET", path: "/v1/plans", outcome: KeyOutcome::Unprotected, note: "public by design — the plan matrix is public data, no credential" },
     MatrixRow { method: "GET", path: "/v1/billing/subscription", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the extractor (no billing for keys)" },
     MatrixRow { method: "POST", path: "/v1/billing/checkout", outcome: KeyOutcome::Forbidden, note: "JWT only — the route is not in the extractor's scope table, so any key is 403 (P1-062)" },
-    MatrixRow { method: "POST", path: "/v1/billing/portal", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the extractor (no billing for keys)" },
+    MatrixRow { method: "POST", path: "/v1/billing/portal", outcome: KeyOutcome::Forbidden, note: "JWT only — the route is not in the extractor's scope table, so any key is 403 (P1-067)" },
     MatrixRow { method: "GET", path: "/v1/billing/invoices", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the extractor (no billing for keys)" },
     MatrixRow { method: "GET", path: "/v1/usage", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the extractor (no billing for keys)" },
     MatrixRow { method: "POST", path: "/v1/webhooks/stripe", outcome: KeyOutcome::Ignored, note: "public by design — provider webhook, signature-verified, no Bearer credential; a key changes nothing (both probes 503 here: billing unconfigured in the matrix app, P1-063)" },
