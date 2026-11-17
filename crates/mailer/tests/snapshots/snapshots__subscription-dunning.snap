@@ -1,0 +1,37 @@
+---
+source: crates/mailer/tests/snapshots.rs
+expression: "format!(\"subject: {}\\n\\n--- text ---\\n{}\\n--- html ---\\n{}\", rendered.subject,\nrendered.text_body, rendered.html_body)"
+---
+subject: Your Detag payment failed — update your payment method
+
+--- text ---
+Hi,
+
+Your Detag pro plan payment failed, so your subscription is past due. Your plan's paid limits are paused until the payment succeeds.
+
+Update your payment method at http://localhost:8080/billing. If the payment keeps failing, your subscription will be canceled.
+
+— The Detag team
+
+--- html ---
+<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f6f6f6;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f6f6;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;margin:24px 0;padding:32px;font-family:Arial,Helvetica,sans-serif;color:#222222;">
+            <tr>
+              <td>
+                <p>Hi,</p>
+                <p>Your Detag pro plan payment failed, so your subscription is past due. Your plan's paid limits are paused until the payment succeeds.</p>
+                <p>Update your payment method at <a href="http://localhost:8080/billing">http://localhost:8080/billing</a>. If the payment keeps failing, your subscription will be canceled.</p>
+                <p>— The Detag team</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

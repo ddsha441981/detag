@@ -54,4 +54,12 @@ pub enum BillingError {
     /// #3). The message names the problem, never the key value.
     #[error("billing configuration error: {0}")]
     Configuration(String),
+
+    /// The state machine (P1-064) rejected a subscription move:
+    /// out of `canceled`, back to `trialing`, or any other move
+    /// the transition table does not allow. The message names the
+    /// two states (`trialing -> active`); a same-state ask is a
+    /// no-op, never this error.
+    #[error("invalid subscription transition: {0}")]
+    InvalidTransition(String),
 }

@@ -11,6 +11,7 @@
 pub mod error;
 pub mod provider;
 pub mod razorpay;
+pub mod state_machine;
 pub mod stripe;
 pub mod sync;
 
@@ -20,6 +21,7 @@ pub use provider::{
     DynBillingProvider, Invoice, PortalRequest, PortalSession, ProviderName, SubscriptionState,
     SubscriptionStatus, PROVIDER_RAZORPAY, PROVIDER_STRIPE,
 };
+pub use state_machine::{target_for_event, transition, Transition};
 pub use stripe::StripeAdapter;
 pub use sync::{
     sync_catalog, CatalogDriftReport, CatalogPlan, CatalogProvider, PlanSyncResult, ProviderPrice,

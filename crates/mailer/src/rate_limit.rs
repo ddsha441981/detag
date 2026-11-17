@@ -190,6 +190,9 @@ mod tests {
             "new-login-digest",
             "refresh-reuse-alert",
             "account-deletion",
+            "subscription-welcome",
+            "subscription-dunning",
+            "subscription-canceled",
         ] {
             assert_eq!(template_class(template), MailClass::Transactional);
         }
