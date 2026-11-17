@@ -58,6 +58,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::error::BillingError;
@@ -161,7 +162,7 @@ pub struct CheckoutRequest {
 
 /// What `create_checkout` returns: the hosted session to redirect the
 /// buyer to. The `url` is the provider's hosted page, not ours.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct CheckoutSession {
     /// The provider's checkout session id.
     pub id: String,
@@ -278,10 +279,16 @@ pub enum DomainEvent {
 /// (Stripe in P1-060, Razorpay behind its flag after it); the api
 /// holds `Arc<dyn BillingProvider>` and never names an implementation.
 ///
+/// Object-safe (`Arc<dyn BillingProvider>` is the state field)
+/// and `Debug` (so `AppState` can derive `Debug`/`Clone` —
+/// the same shape as [`Clock`](detag_core::clock::Clock)).
+/// Implementors that hold a secret (the Stripe adapter's
+/// client) must hand-write `Debug` and print nothing.
+///
 /// All methods are provider calls except [`BillingProvider::map_webhook`]
 /// and [`BillingProvider::verify_webhook_signature`], which are pure.
 #[async_trait]
-pub trait BillingProvider: Send + Sync {
+pub trait BillingProvider: Send + Sync + std::fmt::Debug {
     /// `stripe` or `razorpay` — the `subscriptions.provider` value.
     fn provider_name(&self) -> ProviderName;
 
@@ -396,6 +403,7 @@ mod tests {
     /// understands exactly one event shape — the point here is the
     /// contract (what the trait promises), not any adapter's mapping;
     /// the Stripe adapter's mapping is proven in P1-060.
+    #[derive(Debug)]
     struct FakeProvider {
         name: ProviderName,
     }

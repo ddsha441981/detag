@@ -76,6 +76,7 @@ pub mod secure_headers;
 pub mod services;
 
 use axum::{extract::Extension, middleware, Router};
+use detag_billing::{DynBillingProvider, StripeAdapter};
 use detag_core::clock::{Clock, SystemClock};
 use detag_core::config::Settings;
 use detag_core::db::{connect_lazy, DbPool, PoolConfig};
@@ -114,6 +115,22 @@ pub struct AppState {
             detag_core::plans::InMemoryPlanCache,
         >,
     >,
+    /// The billing provider (P1-062, FR-P-03/FR-P-05): the
+    /// `Arc<dyn BillingProvider>` ADR-0028 anticipated — one
+    /// shared Stripe adapter (test mode only, owner decision
+    /// #3 still pending), built once at boot so checkout /
+    /// portal / invoices all call the same client. `None`
+    /// when no real Stripe key is configured (empty or the
+    /// dev placeholder): billing endpoints answer 503
+    /// `PF-5005` instead of failing boot — billing is
+    /// optional at boot, the api must still serve without it.
+    /// A key that fails construction (bad prefix, live key
+    /// without the owner flag) is also `None`, with a warn
+    /// logged — the operator typo'd the key, and a 503 that
+    /// says "billing is not configured" is the honest answer
+    /// until it is fixed. Tests replace it with a fake
+    /// provider via [`AppState::with_billing_provider`].
+    pub billing: Option<DynBillingProvider>,
     /// Time source: [`SystemClock`] in production, a frozen
     /// [`ManualClock`](detag_core::clock::ManualClock) in tests.
     pub clock: Arc<dyn Clock>,
@@ -185,6 +202,29 @@ impl AppState {
             detag_core::plans::SqlxPlanStore::new(pool.clone()),
             detag_core::plans::InMemoryPlanCache::new(),
         ));
+        // The billing provider (P1-062): built once from the
+        // configured key, or `None` when billing is not
+        // configured — a missing key must not fail boot (see
+        // the field docs). `allow_live` is always false here
+        // (owner decision #3, test mode only).
+        let billing = if settings.stripe_configured() {
+            match StripeAdapter::new(
+                &settings.stripe_secret_key,
+                &settings.stripe_webhook_secret,
+                false,
+            ) {
+                Ok(adapter) => Some(Arc::new(adapter) as DynBillingProvider),
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        "billing provider not built: misconfigured Stripe key; billing endpoints will answer 503"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
         Ok(Self {
             pool,
             redis,
@@ -192,6 +232,7 @@ impl AppState {
             settings: Arc::new(settings.clone()),
             rate_limit: rate_limit::RateLimitPolicy::from_settings(settings),
             plans,
+            billing,
             clock: Arc::new(SystemClock),
             dummy_password_hash,
         })
@@ -201,6 +242,15 @@ impl AppState {
     /// `Clone`, so this is cheap — it clones the `Arc`s.
     pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
         self.clock = clock;
+        self
+    }
+
+    /// Replace the billing provider (tests: inject a fake
+    /// provider so the checkout happy path is provable without
+    /// a Stripe key). The state is `Clone`, so this is cheap
+    /// — it clones the `Arc`s.
+    pub fn with_billing_provider(mut self, provider: DynBillingProvider) -> Self {
+        self.billing = Some(provider);
         self
     }
 }

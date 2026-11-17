@@ -708,7 +708,7 @@ test (`migration_purge_cascade_triggers.rs`).
 | --- | --- | --- |
 | GET | `/v1/plans` | public plan matrix + quotas |
 | GET | `/v1/billing/subscription` | current state |
-| POST | `/v1/billing/checkout` | → Stripe Checkout URL (price_id from plan config) |
+| POST | `/v1/billing/checkout` | JWT only (an API key is 403 — no billing for keys); body `{"plan_code": "pro"}` → `{"id": "cs_...", "url": "https://checkout.stripe.com/..."}`; price from the plan config, customer reused from the user's subscription rows; `Idempotency-Key` honored (replay returns the stored session, reuse with a different request is 409 `PF-2011`); success `{PF_PUBLIC_BASE_URL}/billing/success?session_id={CHECKOUT_SESSION_ID}`, cancel `{PF_PUBLIC_BASE_URL}/billing/cancel` |
 | POST | `/v1/billing/portal` | → Stripe portal URL |
 | GET | `/v1/billing/invoices` | list |
 | GET | `/v1/usage` | today + 30-day daily buckets (images, video-seconds) |

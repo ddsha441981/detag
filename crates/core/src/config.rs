@@ -1049,6 +1049,19 @@ impl Settings {
         !matches!(self.environment.to_lowercase().as_str(), "dev")
     }
 
+    /// Is a real Stripe secret key configured (P1-062, FR-P-03)?
+    /// The dev placeholder (`sk_test_placeholder`,
+    /// `.env.example` + `Settings::default()`) counts as
+    /// unconfigured: it carries the `sk_test_` prefix, so the
+    /// adapter would accept it — and then attempt a live call
+    /// to Stripe with a key that is not a key. Callers treat
+    /// "not configured" as 503 `PF-5005` (billing endpoints)
+    /// or `None` (the `AppState` provider) — never build an
+    /// adapter from the sentinel.
+    pub fn stripe_configured(&self) -> bool {
+        !self.stripe_secret_key.is_empty() && self.stripe_secret_key != "sk_test_placeholder"
+    }
+
     /// Typed view over the feature flags in these settings.
     pub fn feature_flags(&self) -> FeatureFlags {
         FeatureFlags::from_settings(self)

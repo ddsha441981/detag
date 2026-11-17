@@ -224,12 +224,12 @@ async fn every_table_entry_resolves_to_the_stub() {
         // and P1-035 POST /v1/api-keys/{id}/rotate, and
         // P1-036 DELETE /v1/api-keys/{id}, and P1-038 GET
         // /v1/admin/jobs, and P1-043 every remaining
-        // /v1/admin/* stub (the guarded stub): real
-        // handlers behind an auth extractor — the probe
-        // sends no credential, so the extractor rejects with
-        // 401 PF-1001 (not 501) and echoes the probe id (the
-        // route exists; each handler's own test covers its
-        // success paths).
+        // /v1/admin/* stub (the guarded stub), and P1-062
+        // POST /v1/billing/checkout: real handlers behind an
+        // auth extractor — the probe sends no credential, so
+        // the extractor rejects with 401 PF-1001 (not 501)
+        // and echoes the probe id (the route exists; each
+        // handler's own test covers its success paths).
         if ((*method == "GET" || *method == "PATCH" || *method == "DELETE") && *path == "/v1/me")
             || (*method == "POST"
                 && (*path == "/v1/admin/users/{id}/suspend"
@@ -237,7 +237,8 @@ async fn every_table_entry_resolves_to_the_stub() {
                     || *path == "/v1/admin/users/{id}/impersonate"
                     || *path == "/v1/auth/logout-all"
                     || *path == "/v1/api-keys"
-                    || *path == "/v1/api-keys/{id}/rotate"))
+                    || *path == "/v1/api-keys/{id}/rotate"
+                    || *path == "/v1/billing/checkout"))
             || (*method == "GET" && *path == "/v1/admin/users")
             || (*method == "GET" && *path == "/v1/admin/jobs")
             || path.starts_with("/v1/admin/")

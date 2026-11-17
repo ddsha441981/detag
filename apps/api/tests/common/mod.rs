@@ -319,16 +319,52 @@ impl TestApp {
         Self::spawn_with_settings(settings, Some(fixtures), Some(clock)).await
     }
 
+    /// App from explicit fixtures + settings + clock + billing
+    /// provider (P1-062): like
+    /// [`spawn_with_fixtures_settings_and_clock`](Self::spawn_with_fixtures_settings_and_clock)
+    /// but the app runs on the caller's provider — a fake
+    /// provider makes the checkout happy path provable without
+    /// a Stripe key (the adapter's HTTP legs are still untested
+    /// live — ASSUMPTION-023 — but the endpoint, the
+    /// idempotency, and the customer reuse are all proven
+    /// through the real HTTP layer against the double).
+    pub async fn spawn_with_fixtures_settings_clock_and_provider(
+        fixtures: TestFixtures,
+        settings: Settings,
+        clock: Arc<dyn Clock>,
+        provider: detag_billing::DynBillingProvider,
+    ) -> Self {
+        Self::spawn_with_settings_and_provider(
+            settings,
+            Some(fixtures),
+            Some(clock),
+            Some(provider),
+        )
+        .await
+    }
+
     async fn spawn_with_settings(
         settings: Settings,
         fixtures: Option<TestFixtures>,
         clock: Option<Arc<dyn Clock>>,
+    ) -> Self {
+        Self::spawn_with_settings_and_provider(settings, fixtures, clock, None).await
+    }
+
+    async fn spawn_with_settings_and_provider(
+        settings: Settings,
+        fixtures: Option<TestFixtures>,
+        clock: Option<Arc<dyn Clock>>,
+        provider: Option<detag_billing::DynBillingProvider>,
     ) -> Self {
         let pool = connect_lazy(&settings.database_url, &PoolConfig::default())
             .expect("harness: seed pool builds");
         let mut state = AppState::from_settings(&settings).expect("harness: AppState builds");
         if let Some(clock) = clock {
             state = state.with_clock(clock);
+        }
+        if let Some(provider) = provider {
+            state = state.with_billing_provider(provider);
         }
         let router = build_router(state.clone(), Metrics::new());
         Self {
