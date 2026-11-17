@@ -95,7 +95,7 @@ class TestRealRepo(unittest.TestCase):
         missing_doc, missing_mig = diff(migration_tables, doc_tables)
         self.assertEqual(missing_doc, set())
         self.assertEqual(missing_mig, set())
-        self.assertEqual(len(migration_tables), 22)  # was 20 in Phase 0; P1 added login_attempt_counters + worker_heartbeats is counted here — doc and migrations agree at 22
+        self.assertEqual(len(migration_tables), 23)  # was 20 in Phase 0; P1 added login_attempt_counters + worker_heartbeats (22); P1-063 added webhook_events (23) — doc and migrations agree at 23
 
 
 if __name__ == "__main__":
