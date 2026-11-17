@@ -129,6 +129,13 @@ impl SubscriptionStatus {
 /// `GET /v1/billing/subscription` returns, and the shape a webhook
 /// [`DomainEvent`] updates. Amounts and plan codes are NOT here: the
 /// plan comes from our own catalog, the amount from the `plans` row.
+///
+/// `price_ids` are the subscription's item prices (P1-065): the
+/// webhook handler resolves the plan by matching one of them
+/// against `plans.stripe_price_id` — the provider reports the
+/// price, our catalog says what the price buys. Empty when the
+/// provider reports no items (a subscription with no line items
+/// buys nothing we sell).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubscriptionState {
     /// The provider's subscription id (`sub_...` / Razorpay equivalent).
@@ -141,6 +148,8 @@ pub struct SubscriptionState {
     pub current_period_end: Option<DateTime<Utc>>,
     /// True when the subscriber asked to cancel at period end.
     pub cancel_at_period_end: bool,
+    /// The item price ids on the subscription (`price_...`).
+    pub price_ids: Vec<String>,
 }
 
 /// The input to [`BillingProvider::create_checkout`]. The `price_id`
@@ -241,11 +250,18 @@ pub struct BillingEvent {
 #[derive(Debug, Clone, PartialEq)]
 pub enum DomainEvent {
     /// A checkout completed: link this customer to this subscription.
+    /// `user_id` is our user, read off the session's
+    /// `client_reference_id` (P1-060 sets it at checkout) — `None`
+    /// when the session was not created by our checkout (a
+    /// dashboard-created session, or an older one): the handler
+    /// cannot link it to a user and logs it instead of guessing.
     CheckoutCompleted {
         /// The provider's customer id.
         customer_id: String,
         /// The provider's subscription id.
         subscription_id: String,
+        /// Our user, when the session names one.
+        user_id: Option<Uuid>,
     },
     /// A subscription changed state (created / updated / renewed /
     /// past-due / resumed): upsert the row with this state.
@@ -268,6 +284,16 @@ pub enum DomainEvent {
     /// An invoice was paid. The subscription link is `None` for
     /// one-off invoices; the handler ignores those for lifecycle.
     InvoicePaid {
+        /// The provider's invoice id.
+        invoice_id: String,
+        /// The subscription it belongs to, when it has one.
+        subscription_id: Option<String>,
+    },
+    /// An invoice payment failed (P1-065). The handler moves the
+    /// linked subscription to `past_due` (the dunning trigger);
+    /// `None` for a one-off invoice, which has no subscription
+    /// to move.
+    InvoicePaymentFailed {
         /// The provider's invoice id.
         invoice_id: String,
         /// The subscription it belongs to, when it has one.
@@ -448,6 +474,7 @@ mod tests {
                 status: SubscriptionStatus::Active,
                 current_period_end: None,
                 cancel_at_period_end: false,
+                price_ids: vec![],
             })
         }
 

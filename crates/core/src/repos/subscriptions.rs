@@ -154,6 +154,57 @@ pub async fn by_id(
     .map_err(RepoError::from_sqlx)
 }
 
+/// Create a subscription row (P1-065, FR-P-04): the webhook
+/// handler inserts the row a `checkout.session.completed`
+/// event describes — the user bought a plan at the provider,
+/// and this is our record of it. The caller resolves the
+/// user, the plan, and the provider-reported status first;
+/// this is the insert only. No uniqueness is enforced here
+/// beyond the primary key: the handler checks
+/// [`by_provider_id`] before inserting, and the webhook
+/// ledger's UNIQUE event id guarantees one dispatch per
+/// delivery, so a second insert for the same provider
+/// subscription cannot arrive through the receiver.
+/// Eight arguments, like the P1-064 state service it pairs
+/// with (`apps/api/src/services/subscription_state.rs`):
+/// a params struct would hide which column each value lands
+/// in, and the call sites pass them in column order.
+#[allow(clippy::too_many_arguments)]
+pub async fn create(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+    plan_id: Uuid,
+    provider: &str,
+    provider_customer_id: &str,
+    provider_subscription_id: &str,
+    status: &str,
+    current_period_end: Option<DateTime<Utc>>,
+    cancel_at_period_end: bool,
+) -> Result<Subscription, RepoError> {
+    sqlx::query_as!(
+        Subscription,
+        "INSERT INTO subscriptions
+             (user_id, plan_id, provider, provider_customer_id,
+              provider_subscription_id, status, current_period_end,
+              cancel_at_period_end)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id, user_id, plan_id, provider, provider_customer_id,
+                   provider_subscription_id, status, current_period_end,
+                   cancel_at_period_end, created_at, updated_at",
+        user_id,
+        plan_id,
+        provider,
+        provider_customer_id,
+        provider_subscription_id,
+        status,
+        current_period_end,
+        cancel_at_period_end,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
 /// Load a subscription row by its provider identity (P1-064,
 /// FR-P-04): the webhook handlers (P1-065) key off the
 /// provider's subscription id, not ours — the event carries

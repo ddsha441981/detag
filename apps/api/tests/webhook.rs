@@ -29,7 +29,10 @@
 //!   `dispatched_at` stamp; no credential is needed.
 //! - `webhook_checkout_completed_dispatched` — a verified
 //!   `checkout.session.completed` is 200, stored, and
-//!   dispatched (the subscription write itself is P1-065's).
+//!   dispatched. The payload names no user (no
+//!   `client_reference_id`), so P1-065's handler logs it and
+//!   writes no row — the row-creation proof lives in the
+//!   handlers suite (`webhook_handlers.rs`).
 //! - `webhook_replay_is_noop` — the AC: the same event id
 //!   posted twice is 200 both times, exactly one ledger row,
 //!   and the `dispatched_at` stamp does not move.
@@ -48,7 +51,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use axum::http::{Method, Request, StatusCode};
 use chrono::{DateTime, Utc};
-use common::{TestApp, TestFixtures};
+use common::{DelegatingProvider, TestApp, TestFixtures};
 use detag_billing::{
     BillingError, BillingEvent, BillingProvider, CheckoutRequest, CheckoutSession, Customer,
     DomainEvent, DynBillingProvider, Invoice, PortalRequest, PortalSession, ProviderName,
@@ -104,6 +107,31 @@ async fn webhook_app(frozen_at: DateTime<Utc>) -> (TestApp, Arc<ManualClock>) {
     let adapter = StripeAdapter::new(TEST_KEY, WEBHOOK_SECRET, false)
         .expect("test key and secret build the adapter");
     let provider: DynBillingProvider = Arc::new(adapter) as DynBillingProvider;
+    let app = TestApp::spawn_with_fixtures_settings_clock_and_provider(
+        fixtures,
+        settings,
+        Arc::clone(&clock) as Arc<dyn Clock>,
+        provider,
+    )
+    .await;
+    (app, clock)
+}
+
+/// The app on a frozen clock with the DELEGATING provider: the
+/// real Stripe adapter for signature verification + mapping,
+/// canned `fetch_subscription` (P1-065 — the handler fetches
+/// the subscription a checkout completed, and the real adapter
+/// would call Stripe live). The checkout tests use this app;
+/// the signature / ignore / replay-stamp tests keep the real
+/// adapter above, so the HMAC path stays proven against it.
+async fn webhook_handler_app(frozen_at: DateTime<Utc>) -> (TestApp, Arc<ManualClock>) {
+    let fixtures = TestFixtures::from_env().await;
+    let settings = fixtures.settings();
+    let clock = Arc::new(ManualClock::new(frozen_at));
+    let adapter = StripeAdapter::new(TEST_KEY, WEBHOOK_SECRET, false)
+        .expect("test key and secret build the adapter");
+    let provider: DynBillingProvider =
+        Arc::new(DelegatingProvider::new(adapter)) as DynBillingProvider;
     let app = TestApp::spawn_with_fixtures_settings_clock_and_provider(
         fixtures,
         settings,
@@ -365,7 +393,7 @@ async fn webhook_valid_ignored_event_stored() {
 #[tokio::test]
 async fn webhook_checkout_completed_dispatched() {
     let frozen = Utc::now();
-    let (app, _clock) = webhook_app(frozen).await;
+    let (app, _clock) = webhook_handler_app(frozen).await;
     let event_id = format!("evt_checkout_{}", Uuid::now_v7());
     let payload = checkout_completed_payload(&event_id, Utc::now().timestamp());
     let header = stripe_signature_header(&payload, WEBHOOK_SECRET);
@@ -386,7 +414,7 @@ async fn webhook_checkout_completed_dispatched() {
 #[tokio::test]
 async fn webhook_replay_is_noop() {
     let frozen = Utc::now();
-    let (app, _clock) = webhook_app(frozen).await;
+    let (app, _clock) = webhook_handler_app(frozen).await;
     let event_id = format!("evt_replay_{}", Uuid::now_v7());
     let payload = checkout_completed_payload(&event_id, Utc::now().timestamp());
     let header = stripe_signature_header(&payload, WEBHOOK_SECRET);

@@ -44,6 +44,29 @@ pub async fn by_code(
     .map_err(RepoError::from_sqlx)
 }
 
+/// Fetch by Stripe price id (P1-065, FR-P-04): the webhook
+/// handler resolves the plan a checkout bought from the price
+/// the provider reports on the subscription — the price is the
+/// provider's id for the plan, and this is the catalog side of
+/// that link. `None` when no plan carries that price (a price
+/// configured at Stripe but never synced into the catalog, or
+/// a plan whose price changed after the checkout — the handler
+/// logs it instead of inventing a plan).
+pub async fn by_stripe_price_id(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    stripe_price_id: &str,
+) -> Result<Option<Plan>, RepoError> {
+    sqlx::query_as!(
+        Plan,
+        "SELECT id, code, stripe_price_id, currency, amount, entitlements, created_at, updated_at
+         FROM plans WHERE stripe_price_id = $1",
+        stripe_price_id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
 /// All plans, cheapest first (by `amount`).
 pub async fn all(
     pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,

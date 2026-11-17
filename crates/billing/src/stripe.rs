@@ -29,11 +29,16 @@
 //! already carry the id and the type. A `checkout.session.completed`
 //! without a `subscription` id is ignored (`None`) — it is not one
 //! of our subscription checkouts, and ignoring it answers 200 so
-//! Stripe stops retrying. A subscription event whose `status` is none
-//! of the four DB values (`incomplete`, `unpaid`, `paused`, ...) fails
-//! closed with [`BillingError::UnknownStatus`] — the provider never
-//! tells us what a user is entitled to, and a status we cannot store
-//! must not be read as `active`.
+//! Stripe stops retrying. The completed session's
+//! `client_reference_id` carries our user id (P1-065 reads it);
+//! a session without one maps with `user_id: None` and the handler
+//! logs it instead of guessing. A subscription event whose `status`
+//! is none of the four DB values (`incomplete`, `unpaid`, `paused`,
+//! ...) fails closed with [`BillingError::UnknownStatus`] — the
+//! provider never tells us what a user is entitled to, and a status
+//! we cannot store must not be read as `active`. `invoice.paid`
+//! and `invoice.payment_failed` both map (P1-065); the failed one
+//! targets `past_due`.
 //!
 //! # What is (and is not) tested here
 //!
@@ -196,8 +201,30 @@ fn subscription_state_from_object(
             status,
             current_period_end: Some(current_period_end),
             cancel_at_period_end,
+            // No prices here: a status event never creates the
+            // row, so the handler never resolves a plan from it.
+            // Prices come off a fresh `fetch_subscription`
+            // (P1-065) when the row is created.
+            price_ids: vec![],
         },
     ))
+}
+
+/// The price ids on a retrieved Stripe subscription (its item
+/// prices), for the plan lookup (P1-065). An item whose price
+/// is absent (an unexpanded or deleted item) contributes
+/// nothing — the handler resolves the plan from the prices
+/// that are there.
+fn price_ids_from_subscription(sub: &stripe::Subscription) -> Vec<String> {
+    sub.items
+        .data
+        .iter()
+        .filter_map(|item| {
+            item.price
+                .as_ref()
+                .map(|price| price.id.as_str().to_owned())
+        })
+        .collect()
 }
 
 #[async_trait]
@@ -281,7 +308,11 @@ impl BillingProvider for StripeAdapter {
         let id = provider_subscription_id
             .parse::<stripe::SubscriptionId>()
             .map_err(|_| BillingError::UnknownSubscription(provider_subscription_id.to_owned()))?;
-        let sub = stripe::Subscription::retrieve(&self.client, &id, &[])
+        // `items` is expanded so the price ids come back with
+        // the subscription (P1-065: the webhook handler resolves
+        // the plan from them); the prices themselves need no
+        // expansion — the expandable carries its id.
+        let sub = stripe::Subscription::retrieve(&self.client, &id, &["items"])
             .await
             .map_err(|err| {
                 if is_not_found(&err) {
@@ -302,6 +333,7 @@ impl BillingProvider for StripeAdapter {
                 })?,
             ),
             cancel_at_period_end: sub.cancel_at_period_end,
+            price_ids: price_ids_from_subscription(&sub),
         })
     }
 
@@ -448,9 +480,29 @@ impl BillingProvider for StripeAdapter {
                     event.payload.get("subscription").and_then(Value::as_str),
                 ) {
                     (Some(customer_id), Some(subscription_id)) => {
+                        // The user comes off `client_reference_id`
+                        // (P1-060 writes our user id there at
+                        // checkout). Absent means the session was
+                        // not created by our checkout — the handler
+                        // logs it instead of guessing a user. A
+                        // present-but-unparseable value is our own
+                        // bug, so it fails mapping loudly.
+                        let user_id = match event
+                            .payload
+                            .get("client_reference_id")
+                            .and_then(Value::as_str)
+                        {
+                            None => None,
+                            Some(raw) => Some(raw.parse::<uuid::Uuid>().map_err(|_| {
+                                BillingError::InvalidPayload(
+                                    "client_reference_id is not a user id".to_owned(),
+                                )
+                            })?),
+                        };
                         Ok(Some(DomainEvent::CheckoutCompleted {
                             customer_id: customer_id.to_owned(),
                             subscription_id: subscription_id.to_owned(),
+                            user_id,
                         }))
                     }
                     _ => Ok(None),
@@ -469,6 +521,17 @@ impl BillingProvider for StripeAdapter {
                 subscription_id: required_str(&event.payload, "id")?.to_owned(),
             })),
             "invoice.paid" => Ok(Some(DomainEvent::InvoicePaid {
+                invoice_id: required_str(&event.payload, "id")?.to_owned(),
+                subscription_id: event
+                    .payload
+                    .get("subscription")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            })),
+            // A failed payment duns the linked subscription
+            // (P1-065); a one-off invoice has no subscription to
+            // move, so it maps with `None` like `invoice.paid`.
+            "invoice.payment_failed" => Ok(Some(DomainEvent::InvoicePaymentFailed {
                 invoice_id: required_str(&event.payload, "id")?.to_owned(),
                 subscription_id: event
                     .payload
@@ -833,7 +896,34 @@ mod tests {
             Some(DomainEvent::CheckoutCompleted {
                 customer_id: "cus_123".to_owned(),
                 subscription_id: "sub_123".to_owned(),
+                user_id: None,
             })
+        );
+        // The user comes off client_reference_id (P1-065).
+        let user_id = Uuid::now_v7();
+        assert_eq!(
+            adapter
+                .map_webhook(stripe_event(
+                    "checkout.session.completed",
+                    json!({"customer": "cus_123", "subscription": "sub_123", "client_reference_id": user_id.to_string()}),
+                ))
+                .expect("checkout with a user maps"),
+            Some(DomainEvent::CheckoutCompleted {
+                customer_id: "cus_123".to_owned(),
+                subscription_id: "sub_123".to_owned(),
+                user_id: Some(user_id),
+            })
+        );
+        // A client_reference_id that is not our user id fails
+        // mapping — it is our own bug, not a session to guess on.
+        assert_eq!(
+            adapter
+                .map_webhook(stripe_event(
+                    "checkout.session.completed",
+                    json!({"customer": "cus_123", "subscription": "sub_123", "client_reference_id": "not-a-uuid"}),
+                ))
+                .expect_err("a bad client_reference_id must fail"),
+            BillingError::InvalidPayload("client_reference_id is not a user id".to_owned())
         );
         // A checkout with no subscription is not ours — ignored, not an error.
         assert_eq!(
@@ -897,6 +987,32 @@ mod tests {
                 subscription_id: None,
             })
         );
+        // A failed payment maps too (P1-065) — with and without
+        // a subscription link, like invoice.paid.
+        assert_eq!(
+            adapter
+                .map_webhook(stripe_event(
+                    "invoice.payment_failed",
+                    json!({"id": "in_125", "subscription": "sub_123"}),
+                ))
+                .expect("failed invoice maps"),
+            Some(DomainEvent::InvoicePaymentFailed {
+                invoice_id: "in_125".to_owned(),
+                subscription_id: Some("sub_123".to_owned()),
+            })
+        );
+        assert_eq!(
+            adapter
+                .map_webhook(stripe_event(
+                    "invoice.payment_failed",
+                    json!({"id": "in_126"})
+                ))
+                .expect("one-off failed invoice maps"),
+            Some(DomainEvent::InvoicePaymentFailed {
+                invoice_id: "in_126".to_owned(),
+                subscription_id: None,
+            })
+        );
         // Unknown-but-well-formed types are ignored, not errors.
         assert_eq!(
             adapter
@@ -909,6 +1025,42 @@ mod tests {
                 .map_webhook(stripe_event("payment_intent.succeeded", json!({})))
                 .expect("ignoring a type never errors"),
             None
+        );
+    }
+
+    /// The price ids come off a retrieved subscription's items
+    /// (P1-065): this deserializes a real subscription shape and
+    /// proves the field path the live `fetch_subscription` uses
+    /// — the fetch itself stays untested live (ASSUMPTION-023),
+    /// but the extraction from what it returns is proven here.
+    #[test]
+    fn price_ids_come_off_a_retrieved_subscription() {
+        let sub: stripe::Subscription = serde_json::from_value(json!({
+            "id": "sub_123",
+            "object": "subscription",
+            "automatic_tax": {"enabled": false},
+            "billing_cycle_anchor": 1794844800,
+            "cancel_at_period_end": false,
+            "created": 1794844800,
+            "currency": "inr",
+            "current_period_end": 1794844800,
+            "current_period_start": 1794844800,
+            "customer": "cus_123",
+            "items": {"object": "list", "data": [
+                {"id": "si_1", "object": "subscription_item", "price": {"id": "price_pro", "object": "price"}},
+                {"id": "si_2", "object": "subscription_item", "price": {"id": "price_addon", "object": "price"}},
+                {"id": "si_3", "object": "subscription_item"}
+            ], "has_more": false, "total_count": 3, "url": "/v1/subscription_items?subscription=sub_123"},
+            "livemode": false,
+            "metadata": {},
+            "start_date": 1794844800,
+            "status": "active"
+        }))
+        .expect("the fixture is a real subscription shape");
+        assert_eq!(
+            price_ids_from_subscription(&sub),
+            vec!["price_pro".to_owned(), "price_addon".to_owned()],
+            "an item without a price contributes nothing"
         );
     }
 

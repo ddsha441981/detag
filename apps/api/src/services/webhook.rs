@@ -32,17 +32,21 @@
 //!   (P1-065's rule, applied here too).
 //! - A replay (the event id is already in the ledger) is 200
 //!   with no dispatch and no stamp moved: the first delivery's
-//!   `dispatched_at` stands.
-//! - Dispatch (P1-063's seam): the verified event is mapped
+//!   `dispatched_at` stands — unless the first delivery never
+//!   finished dispatching (its `dispatched_at` is still NULL:
+//!   the handler failed after the store). Then the redelivery
+//!   IS the retry that applies the event (P1-065): dispatching
+//!   again is safe because the handler is idempotent, and
+//!   without it a transient failure would lose a paid
+//!   subscription forever — the provider's retry would be
+//!   answered as a no-op.
+//! - Dispatch (P1-065): the verified event is mapped
 //!   (`provider.map_webhook`, pure — P1-060) and the resulting
-//!   `DomainEvent` is handed to [`dispatch_domain_event`].
-//!   P1-063's dispatcher only records the dispatch (the
-//!   `dispatched_at` stamp + an info log): the subscription
-//!   writes land in P1-065, which reads the stored envelopes
-//!   — the ledger is the durable queue, so no event is lost
-//!   by dispatching later. The state machine (P1-064) owns
-//!   transition validation, so this ticket applies no status
-//!   change itself.
+//!   `DomainEvent` is handed to
+//!   [`crate::services::webhook_handlers::handle_domain_event`],
+//!   which applies it to the `subscriptions` table through
+//!   P1-064's state machine. The seam P1-063 left (log-only)
+//!   is gone: the subscription writes live here now.
 //!
 //! No auth extractor runs on this route by design (the matrix
 //! row is `Ignored`, not `Allowed`): the provider's signature
@@ -51,7 +55,7 @@
 //! static `WebhookSignatureInvalid` sentence.
 
 use crate::AppState;
-use detag_billing::{BillingEvent, DomainEvent, PROVIDER_STRIPE};
+use detag_billing::{BillingEvent, PROVIDER_STRIPE};
 use detag_core::repos::webhook_events;
 use serde::Serialize;
 use serde_json::Value;
@@ -156,7 +160,32 @@ pub async fn receive_stripe_webhook(
     .await
     .map_err(|_| WebhookError::Internal)?;
     if !stored {
-        return Ok(WebhookOutcome::Replayed { event_id });
+        // A replay is a no-op — unless the first delivery
+        // never finished dispatching (its `dispatched_at` is
+        // still NULL: the handler failed after the store).
+        // Then this redelivery is the retry that applies the
+        // event (P1-065): the handler is idempotent, so
+        // dispatching again cannot double-apply, and without
+        // this a transient failure would lose the event — the
+        // provider's retry would be answered as a no-op.
+        let row = webhook_events::get(&state.pool, PROVIDER_STRIPE, &event_id)
+            .await
+            .map_err(|_| WebhookError::Internal)?;
+        if row.as_ref().and_then(|row| row.dispatched_at).is_some() {
+            return Ok(WebhookOutcome::Replayed { event_id });
+        }
+        let Some((_, _, object, _)) = row
+            .as_ref()
+            .and_then(|row| parse_envelope_value(&row.payload))
+        else {
+            tracing::warn!(
+                event_id = event_id,
+                "stripe webhook: stored envelope no longer parses; replay answered without dispatch"
+            );
+            return Ok(WebhookOutcome::Replayed { event_id });
+        };
+        let mapped = dispatch(state, provider, &event_id, &event_type, object).await?;
+        return Ok(WebhookOutcome::Accepted { event_id, mapped });
     }
     let mapped = dispatch(state, provider, &event_id, &event_type, object).await?;
     Ok(WebhookOutcome::Accepted { event_id, mapped })
@@ -184,7 +213,22 @@ async fn dispatch(
     };
     let mapped = match provider.map_webhook(event) {
         Ok(Some(domain_event)) => {
-            dispatch_domain_event(&domain_event);
+            // P1-065: apply the event to the subscriptions
+            // table. A handler outcome that is about the event
+            // (unresolvable, stale, already recorded) is a
+            // Noop — logged inside the handler, still 200,
+            // still stamped. Only a genuine failure (the DB, a
+            // provider call) is an error, and the receiver
+            // answers it 500 so Stripe retries — the redelivery
+            // then re-dispatches (see the replay path above).
+            crate::services::webhook_handlers::handle_domain_event(
+                state,
+                provider,
+                &domain_event,
+                event_id,
+            )
+            .await
+            .map_err(|_| WebhookError::Internal)?;
             true
         }
         Ok(None) => {
@@ -213,33 +257,21 @@ async fn dispatch(
     Ok(mapped)
 }
 
-/// The dispatch seam (P1-063): hand a mapped domain event to
-/// its handler. This ticket's dispatcher only records the
-/// dispatch — the subscription writes land in P1-065 (which
-/// reads the stored envelopes) behind P1-064's state machine.
-/// Logging the variant only: no ids, no payload.
-fn dispatch_domain_event(event: &DomainEvent) {
-    let variant = match event {
-        DomainEvent::CheckoutCompleted { .. } => "checkout_completed",
-        DomainEvent::SubscriptionStatusChanged { .. } => "subscription_status_changed",
-        DomainEvent::SubscriptionDeleted { .. } => "subscription_deleted",
-        DomainEvent::InvoicePaid { .. } => "invoice_paid",
-    };
-    tracing::info!(
-        domain_event = variant,
-        "stripe webhook: domain event dispatched (application lands in P1-065)"
-    );
-}
-
 /// Parse a verified envelope into (`id`, `type`,
 /// `data.object`, the whole envelope). `None` when the body
 /// is not JSON, or any of the three is missing or mistyped.
 fn parse_envelope(raw_body: &[u8]) -> Option<(String, String, Value, Value)> {
     let envelope: Value = serde_json::from_slice(raw_body).ok()?;
+    parse_envelope_value(&envelope)
+}
+
+/// The same parse over an already-decoded envelope (a stored
+/// ledger row, for the replay re-dispatch).
+fn parse_envelope_value(envelope: &Value) -> Option<(String, String, Value, Value)> {
     let event_id = envelope.get("id")?.as_str()?.to_owned();
     let event_type = envelope.get("type")?.as_str()?.to_owned();
     let object = envelope.get("data")?.get("object")?.clone();
-    Some((event_id, event_type, object, envelope))
+    Some((event_id, event_type, object, envelope.clone()))
 }
 
 /// The signature header name, for the handler.
