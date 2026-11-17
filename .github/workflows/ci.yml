@@ -159,8 +159,14 @@ jobs:
       - name: Free build space before coverage (CI-FAIL-023)
         run: |
           echo "--- disk before ---"; df -h /
+          mkdir -p target/keep-bin
+          if [ -f target/debug/detag-api ]; then mv target/debug/detag-api target/keep-bin/; fi
           rm -rf target/debug
+          mkdir -p target/debug
+          if [ -f target/keep-bin/detag-api ]; then mv target/keep-bin/detag-api target/debug/; fi
+          rmdir target/keep-bin
           echo "--- disk after ---"; df -h /
+          ls -la target/debug/detag-api || echo "WARN: detag-api binary missing after restore"
       - name: Coverage (llvm-cov)
         run: |
           mkdir -p target/llvm-cov
