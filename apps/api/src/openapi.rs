@@ -62,7 +62,9 @@ use crate::routes::auth::{
     __path_logout_all, __path_refresh, __path_register, __path_resend_verification,
     __path_reset_password, __path_verify_email,
 };
-use crate::routes::billing::{__path_create_checkout, __path_receive_stripe_webhook};
+use crate::routes::billing::{
+    __path_create_checkout, __path_create_portal, __path_receive_stripe_webhook,
+};
 use crate::routes::meta::{__path_healthz, __path_readyz};
 use crate::routes::profile::{__path_delete_me, __path_get_me, __path_patch_me};
 use crate::routes::sessions::{__path_delete_session, __path_list_sessions};
@@ -93,7 +95,7 @@ use crate::AppState;
         version = "1.0.0",
         description = "Detag — watermark removal for images and videos you own. All errors are RFC 7807 problem+json with a stable PF-code (see the Problem schema)."
     ),
-    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, refresh, logout, logout_all, forgot_password, reset_password, get_me, patch_me, delete_me, list_sessions, delete_session, create_api_key, rotate_api_key, revoke_api_key, suspend, restore, search_users_handler, list_jobs_handler, impersonate, list_plans_handler, update_plans_handler, catalog_sync_handler, create_checkout, receive_stripe_webhook),
+    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, refresh, logout, logout_all, forgot_password, reset_password, get_me, patch_me, delete_me, list_sessions, delete_session, create_api_key, rotate_api_key, revoke_api_key, suspend, restore, search_users_handler, list_jobs_handler, impersonate, list_plans_handler, update_plans_handler, catalog_sync_handler, create_checkout, create_portal, receive_stripe_webhook),
     components(schemas(
         Problem,
         Readiness,

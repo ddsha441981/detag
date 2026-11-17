@@ -41,7 +41,8 @@
 //!    webhook-endpoints nest (4 routes) use the authenticated
 //!    stub, so they answer 401 PF-1001 the same way. P1-062
 //!    `POST /v1/billing/checkout` answers 401 PF-1001 the same
-//!    way (JWT only). P1-063 `POST /v1/webhooks/stripe` answers
+//!    way (JWT only), as does P1-067 `POST /v1/billing/portal`.
+//!    P1-063 `POST /v1/webhooks/stripe` answers
 //!    503 PF-5005 (billing not configured in the probe app —
 //!    the signature check needs a provider first).
 //!
@@ -229,7 +230,8 @@ async fn every_table_entry_resolves_to_the_stub() {
         // P1-036 DELETE /v1/api-keys/{id}, and P1-038 GET
         // /v1/admin/jobs, and P1-043 every remaining
         // /v1/admin/* stub (the guarded stub), and P1-062
-        // POST /v1/billing/checkout: real handlers behind an
+        // POST /v1/billing/checkout, and P1-067 POST
+        // /v1/billing/portal: real handlers behind an
         // auth extractor — the probe sends no credential, so
         // the extractor rejects with 401 PF-1001 (not 501)
         // and echoes the probe id (the route exists; each
@@ -242,7 +244,8 @@ async fn every_table_entry_resolves_to_the_stub() {
                     || *path == "/v1/auth/logout-all"
                     || *path == "/v1/api-keys"
                     || *path == "/v1/api-keys/{id}/rotate"
-                    || *path == "/v1/billing/checkout"))
+                    || *path == "/v1/billing/checkout"
+                    || *path == "/v1/billing/portal"))
             || (*method == "GET" && *path == "/v1/admin/users")
             || (*method == "GET" && *path == "/v1/admin/jobs")
             || path.starts_with("/v1/admin/")
