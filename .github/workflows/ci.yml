@@ -156,6 +156,11 @@ jobs:
           tool: cargo-nextest, cargo-llvm-cov
       - name: Test (JUnit)
         run: cargo nextest run --workspace --profile ci
+      - name: Free build space before coverage (CI-FAIL-023)
+        run: |
+          echo "--- disk before ---"; df -h /
+          rm -rf target/debug
+          echo "--- disk after ---"; df -h /
       - name: Coverage (llvm-cov)
         run: |
           mkdir -p target/llvm-cov
