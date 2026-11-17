@@ -712,7 +712,7 @@ test (`migration_purge_cascade_triggers.rs`).
 | POST | `/v1/billing/portal` | → Stripe portal URL |
 | GET | `/v1/billing/invoices` | list |
 | GET | `/v1/usage` | today + 30-day daily buckets (images, video-seconds) |
-| POST | `/v1/webhooks/stripe` | provider-signed; idempotent (event table) |
+| POST | `/v1/webhooks/stripe` | provider-signed; idempotent (event table) — P1-063 (FR-P-04): the raw body is read as bytes (the signature covers the exact bytes), verified with `Stripe-Signature` via the provider (`construct_event`: real HMAC-SHA256 + 5-min timestamp tolerance); a missing/wrong/tampered signature is 400 `PF-2013` (the endpoint's only 4xx), billing unconfigured is 503 `PF-5005`, and every verified delivery is 200 with `{"received": true}`. The event is stored in `webhook_events` (UNIQUE `(provider, event_id)`) before dispatch — a redelivery inserts nothing and is answered 200 without dispatching twice (replay no-op), and `dispatched_at` is stamped once the event is mapped + handed to the dispatcher. A verified-but-unparseable envelope, an ignored type, or an unmappable event is logged + 200 (no retry storm). No auth extractor runs (the signature IS the credential; the matrix row is `Ignored`). Dispatch is the seam, not the application: P1-063 maps the event and records the dispatch — the subscription writes land in P1-065 behind P1-064's state machine; the stored envelope is the durable queue. |
 | POST | `/v1/webhooks/razorpay` | flagged; HMAC verify |
 
 ### User webhooks (entitled plans)

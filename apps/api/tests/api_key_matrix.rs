@@ -42,8 +42,11 @@
 //! every `/v1/admin/*` row is `Forbidden` — live or guarded
 //! stub since P1-043 (never `Allowed`), and every billing row
 //! is `Unprotected` except the webhook-endpoints nest, which
-//! is key-managed by design, and the checkout endpoint, which
-//! is `Forbidden` since P1-062 (JWT only). An admin user's
+//! is key-managed by design, the checkout endpoint, which
+//! is `Forbidden` since P1-062 (JWT only), and the Stripe
+//! webhook, which is `Ignored` since P1-063 (live handler,
+//! signature-verified, no Bearer credential — a key changes
+//! nothing). An admin user's
 //! OWN key is 403 on the live admin routes too
 //! (`admin_users_key_cannot_reach_admin_routes`) — the guard
 //! rejects a key-carrying context outright, so a future
@@ -140,7 +143,7 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow { method: "POST", path: "/v1/billing/portal", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the extractor (no billing for keys)" },
     MatrixRow { method: "GET", path: "/v1/billing/invoices", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the extractor (no billing for keys)" },
     MatrixRow { method: "GET", path: "/v1/usage", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the extractor (no billing for keys)" },
-    MatrixRow { method: "POST", path: "/v1/webhooks/stripe", outcome: KeyOutcome::Unprotected, note: "public by design — provider webhook, signature-verified, no Bearer credential" },
+    MatrixRow { method: "POST", path: "/v1/webhooks/stripe", outcome: KeyOutcome::Ignored, note: "public by design — provider webhook, signature-verified, no Bearer credential; a key changes nothing (both probes 503 here: billing unconfigured in the matrix app, P1-063)" },
     MatrixRow { method: "POST", path: "/v1/webhooks/razorpay", outcome: KeyOutcome::Unprotected, note: "public by design — provider webhook, signature-verified, no Bearer credential" },
     MatrixRow { method: "GET", path: "/v1/webhook-endpoints", outcome: KeyOutcome::Allowed("webhooks:manage"), note: "stub_authed; the user's own webhook endpoints are key-managed" },
     MatrixRow { method: "POST", path: "/v1/webhook-endpoints", outcome: KeyOutcome::Allowed("webhooks:manage"), note: "stub_authed; the user's own webhook endpoints are key-managed" },

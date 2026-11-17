@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE webhook_events SET dispatched_at = $3 WHERE provider = $1 AND event_id = $2 AND dispatched_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4cc1455d40cec0ed30d3c01d63f0f75face5ccd6c715cd11b6fa81bbad917358"
+}

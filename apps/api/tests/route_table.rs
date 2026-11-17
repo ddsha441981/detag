@@ -39,7 +39,11 @@
 //!    credential — the Bearer extractor rejects before the
 //!    handler runs). P1-034's jobs nest (9 routes) + the
 //!    webhook-endpoints nest (4 routes) use the authenticated
-//!    stub, so they answer 401 PF-1001 the same way.
+//!    stub, so they answer 401 PF-1001 the same way. P1-062
+//!    `POST /v1/billing/checkout` answers 401 PF-1001 the same
+//!    way (JWT only). P1-063 `POST /v1/webhooks/stripe` answers
+//!    503 PF-5005 (billing not configured in the probe app —
+//!    the signature check needs a provider first).
 //!
 //! The probes send a fixed `x-request-id` and assert the 501
 //! problem body echoes it — that proves the whole chain at
@@ -274,6 +278,41 @@ async fn every_table_entry_resolves_to_the_stub() {
             let json: serde_json::Value =
                 serde_json::from_slice(&body).expect("auth-rejection body is JSON");
             assert_eq!(json["code"], "PF-1001", "{method} {path}: {json}");
+            assert_eq!(json["request_id"], PROBE_ID, "{method} {path}: {json}");
+            continue;
+        }
+        // P1-063 POST /v1/webhooks/stripe: a real handler
+        // with no auth extractor — the probe app builds no
+        // billing provider (default settings), so the empty
+        // probe answers 503 PF-5005 (billing not configured),
+        // not 501 and not 400 (the signature check needs a
+        // provider first). The webhook suite covers the
+        // signature paths with a provider injected.
+        if *method == "POST" && *path == "/v1/webhooks/stripe" {
+            let req = Request::builder()
+                .method(Method::POST)
+                .uri(*path)
+                .header("x-request-id", PROBE_ID)
+                .header("x-forwarded-for", xff.as_str())
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let res = router
+                .clone()
+                .oneshot(req)
+                .await
+                .unwrap_or_else(|err| panic!("oneshot {method} {path} failed: {err:?}"));
+            assert_eq!(
+                res.status(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{method} {path} without a provider must be 503, got {}",
+                res.status()
+            );
+            let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .expect("read body");
+            let json: serde_json::Value =
+                serde_json::from_slice(&body).expect("real-handler body is JSON");
+            assert_eq!(json["code"], "PF-5005", "{method} {path}: {json}");
             assert_eq!(json["request_id"], PROBE_ID, "{method} {path}: {json}");
             continue;
         }

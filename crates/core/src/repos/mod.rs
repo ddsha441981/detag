@@ -38,6 +38,7 @@ pub mod subscriptions;
 pub mod uploads;
 pub mod usage_counters;
 pub mod users;
+pub mod webhook_events;
 pub mod worker_heartbeats;
 
 pub use error::RepoError;
