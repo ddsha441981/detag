@@ -498,3 +498,144 @@ impl TestResponse {
         String::from_utf8_lossy(&self.body).into_owned()
     }
 }
+
+/// A billing provider for webhook-handler tests (P1-065): it
+/// delegates signature verification, webhook mapping, and every
+/// call except `fetch_subscription` to a REAL `StripeAdapter`
+/// (so the HMAC path and the mapping table stay real — the same
+/// adapter the receiver uses in production) and answers
+/// `fetch_subscription` from a canned table, so the handler is
+/// provable through the real HTTP layer without a Stripe key
+/// (ASSUMPTION-023: the adapter's HTTP legs are still untested
+/// live). A subscription the table does not know is
+/// [`BillingError::UnknownSubscription`] — the handler logs it
+/// instead of inventing a row.
+///
+/// `fail_next_fetch` makes the next `fetch_subscription` fail
+/// with a transient provider error (and clears itself): the
+/// replay re-dispatch test uses it to prove a first delivery
+/// that 500s is applied by its redelivery.
+pub struct DelegatingProvider {
+    inner: detag_billing::StripeAdapter,
+    subscriptions:
+        std::sync::Mutex<std::collections::HashMap<String, detag_billing::SubscriptionState>>,
+    fail_next_fetch: std::sync::atomic::AtomicBool,
+}
+
+impl DelegatingProvider {
+    /// Wrap a real adapter (built with the test key + secret).
+    pub fn new(inner: detag_billing::StripeAdapter) -> Self {
+        Self {
+            inner,
+            subscriptions: std::sync::Mutex::new(std::collections::HashMap::new()),
+            fail_next_fetch: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Answer `fetch_subscription` for this subscription id
+    /// with the canned state. Takes `&self` so the test can add
+    /// canned answers after the app (and its shared provider)
+    /// is spawned.
+    pub fn with_subscription(&self, state: detag_billing::SubscriptionState) -> &Self {
+        self.subscriptions
+            .lock()
+            .expect("delegating provider lock")
+            .insert(state.provider_subscription_id.clone(), state);
+        self
+    }
+
+    /// Fail the next `fetch_subscription` once, transiently.
+    pub fn fail_next_fetch(&self) {
+        self.fail_next_fetch
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[async_trait::async_trait]
+impl detag_billing::BillingProvider for DelegatingProvider {
+    fn provider_name(&self) -> detag_billing::ProviderName {
+        self.inner.provider_name()
+    }
+
+    async fn create_checkout(
+        &self,
+        req: detag_billing::CheckoutRequest,
+    ) -> Result<detag_billing::CheckoutSession, detag_billing::BillingError> {
+        self.inner.create_checkout(req).await
+    }
+
+    async fn create_portal(
+        &self,
+        req: detag_billing::PortalRequest,
+    ) -> Result<detag_billing::PortalSession, detag_billing::BillingError> {
+        self.inner.create_portal(req).await
+    }
+
+    async fn fetch_subscription(
+        &self,
+        provider_subscription_id: &str,
+    ) -> Result<detag_billing::SubscriptionState, detag_billing::BillingError> {
+        if self
+            .fail_next_fetch
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(detag_billing::BillingError::Provider(
+                "canned transient fetch failure".to_owned(),
+            ));
+        }
+        self.subscriptions
+            .lock()
+            .expect("delegating provider lock")
+            .get(provider_subscription_id)
+            .cloned()
+            .ok_or_else(|| {
+                detag_billing::BillingError::UnknownSubscription(
+                    provider_subscription_id.to_owned(),
+                )
+            })
+    }
+
+    async fn list_invoices(
+        &self,
+        customer_id: &str,
+        limit: u32,
+    ) -> Result<Vec<detag_billing::Invoice>, detag_billing::BillingError> {
+        self.inner.list_invoices(customer_id, limit).await
+    }
+
+    async fn create_customer(
+        &self,
+        user_id: Uuid,
+        email: &str,
+    ) -> Result<detag_billing::Customer, detag_billing::BillingError> {
+        self.inner.create_customer(user_id, email).await
+    }
+
+    async fn fetch_customer(
+        &self,
+        provider_customer_id: &str,
+    ) -> Result<detag_billing::Customer, detag_billing::BillingError> {
+        self.inner.fetch_customer(provider_customer_id).await
+    }
+
+    fn verify_webhook_signature(
+        &self,
+        payload: &[u8],
+        signature: &str,
+    ) -> Result<(), detag_billing::BillingError> {
+        self.inner.verify_webhook_signature(payload, signature)
+    }
+
+    fn map_webhook(
+        &self,
+        event: detag_billing::BillingEvent,
+    ) -> Result<Option<detag_billing::DomainEvent>, detag_billing::BillingError> {
+        self.inner.map_webhook(event)
+    }
+}
+
+impl std::fmt::Debug for DelegatingProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DelegatingProvider").finish_non_exhaustive()
+    }
+}

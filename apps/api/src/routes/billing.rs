@@ -165,7 +165,10 @@ pub async fn create_checkout(
 /// check would break it. A bad signature is 400 `PF-2013`
 /// (the endpoint's only 4xx); billing unconfigured is 503
 /// `PF-5005`; every verified delivery — stored, replayed, or
-/// ignored — is 200 with a receipt.
+/// ignored — is 200 with a receipt, unless the handler itself
+/// fails (the database, or a provider call — P1-065): then it
+/// is 500 `PF-5000` so Stripe retries, and the redelivery
+/// re-dispatches the still-undispatched event.
 #[utoipa::path(
     post,
     path = "/v1/webhooks/stripe",
@@ -177,6 +180,7 @@ pub async fn create_checkout(
     responses(
         (status = 200, description = "Received (stored, replayed, or ignored)", body = WebhookReceipt),
         (status = 400, description = "The webhook signature does not verify (PF-2013)", body = Problem),
+        (status = 500, description = "The handler failed (database or provider call — PF-5000); Stripe retries", body = Problem),
         (status = 503, description = "Billing is not configured (no Stripe secret key)", body = Problem)
     ),
     tag = "billing"

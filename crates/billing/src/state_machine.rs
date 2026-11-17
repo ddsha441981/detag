@@ -34,6 +34,10 @@
 //! creation is not a transition), and `InvoicePaid` changes
 //! nothing by itself (a past-due recovery arrives as a
 //! `SubscriptionStatusChanged` to `active` alongside it).
+//! `InvoicePaymentFailed` (P1-065) targets `past_due`: a failed
+//! payment is the dunning trigger, and the machine's own rules
+//! decide whether the row may move there (an already-canceled
+//! row rejects it — a stale failure for a dead subscription).
 
 use crate::error::BillingError;
 use crate::provider::{DomainEvent, SubscriptionStatus};
@@ -102,6 +106,7 @@ pub fn target_for_event(event: &DomainEvent) -> Option<SubscriptionStatus> {
     match event {
         DomainEvent::SubscriptionStatusChanged { status, .. } => Some(*status),
         DomainEvent::SubscriptionDeleted { .. } => Some(SubscriptionStatus::Canceled),
+        DomainEvent::InvoicePaymentFailed { .. } => Some(SubscriptionStatus::PastDue),
         DomainEvent::CheckoutCompleted { .. } | DomainEvent::InvoicePaid { .. } => None,
     }
 }
@@ -217,6 +222,7 @@ mod tests {
             target_for_event(&DomainEvent::CheckoutCompleted {
                 customer_id: "cus_1".to_string(),
                 subscription_id: "sub_1".to_string(),
+                user_id: None,
             }),
             None,
             "checkout creates the row — it is not a transition"
@@ -228,6 +234,22 @@ mod tests {
             }),
             None,
             "an invoice payment alone moves no state"
+        );
+        assert_eq!(
+            target_for_event(&DomainEvent::InvoicePaymentFailed {
+                invoice_id: "in_1".to_string(),
+                subscription_id: Some("sub_1".to_string()),
+            }),
+            Some(PastDue),
+            "a failed payment duns the subscription"
+        );
+        assert_eq!(
+            target_for_event(&DomainEvent::InvoicePaymentFailed {
+                invoice_id: "in_1".to_string(),
+                subscription_id: None,
+            }),
+            Some(PastDue),
+            "the target is past_due either way — the handler skips a one-off invoice before applying it"
         );
     }
 }
