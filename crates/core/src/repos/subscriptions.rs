@@ -131,3 +131,88 @@ pub async fn latest_customer_id_for_user(
     .map_err(RepoError::from_sqlx)?;
     Ok(row.and_then(|row| row.provider_customer_id))
 }
+
+/// Load one subscription row by id (P1-064, FR-P-04): the state
+/// machine's service loads the row, validates the move against
+/// its current status, then applies the guarded update below.
+/// `None` when the row does not exist — the service answers 404
+/// `PF-2010`, never inventing a row.
+pub async fn by_id(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> Result<Option<Subscription>, RepoError> {
+    sqlx::query_as!(
+        Subscription,
+        "SELECT id, user_id, plan_id, provider, provider_customer_id,
+                provider_subscription_id, status, current_period_end,
+                cancel_at_period_end, created_at, updated_at
+         FROM subscriptions WHERE id = $1",
+        id,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
+/// Load a subscription row by its provider identity (P1-064,
+/// FR-P-04): the webhook handlers (P1-065) key off the
+/// provider's subscription id, not ours — the event carries
+/// `sub_...`, never our UUID. `None` when no row carries that
+/// provider subscription yet (a `checkout.session.completed`
+/// for a subscription the receiver has not recorded — P1-065
+/// inserts it then).
+pub async fn by_provider_id(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    provider: &str,
+    provider_subscription_id: &str,
+) -> Result<Option<Subscription>, RepoError> {
+    sqlx::query_as!(
+        Subscription,
+        "SELECT id, user_id, plan_id, provider, provider_customer_id,
+                provider_subscription_id, status, current_period_end,
+                cancel_at_period_end, created_at, updated_at
+         FROM subscriptions
+         WHERE provider = $1 AND provider_subscription_id = $2",
+        provider,
+        provider_subscription_id,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
+/// Move a row's status, guarded on its current status (P1-064,
+/// FR-P-04): the `UPDATE ... WHERE id = $1 AND status = $from`
+/// is the concurrency guard — two handlers racing the same row
+/// cannot both apply their move; the loser sees `false` and
+/// re-reads (the uploads machine, P0-057, uses the same shape).
+/// Returns `true` when exactly one row moved. The caller runs
+/// this inside its transaction, next to the audit + outbox
+/// writes, so a status change never lands without its trail.
+/// `current_period_end` / `cancel_at_period_end` are the
+/// provider-reported values the caller carries (P1-065 passes
+/// the event's; a caller with none passes the row's own).
+pub async fn set_status_guarded(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+    from_status: &str,
+    to_status: &str,
+    current_period_end: Option<DateTime<Utc>>,
+    cancel_at_period_end: bool,
+) -> Result<bool, RepoError> {
+    let done = sqlx::query!(
+        "UPDATE subscriptions
+         SET status = $2, current_period_end = $3,
+             cancel_at_period_end = $4, updated_at = now()
+         WHERE id = $1 AND status = $5",
+        id,
+        to_status,
+        current_period_end,
+        cancel_at_period_end,
+        from_status,
+    )
+    .execute(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(done.rows_affected() == 1)
+}

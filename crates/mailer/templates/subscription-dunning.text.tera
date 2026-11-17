@@ -1,0 +1,7 @@
+Hi,
+
+Your {{ app_name }} {{ plan_code }} plan payment failed, so your subscription is past due. Your plan's paid limits are paused until the payment succeeds.
+
+Update your payment method at {{ base_url }}/billing. If the payment keeps failing, your subscription will be canceled.
+
+— The {{ app_name }} team

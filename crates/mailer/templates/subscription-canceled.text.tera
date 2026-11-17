@@ -1,0 +1,7 @@
+Hi,
+
+Your {{ app_name }} {{ plan_code }} plan subscription was canceled. Your plan's paid limits no longer apply.
+
+You can resubscribe anytime at {{ base_url }}/billing.
+
+— The {{ app_name }} team

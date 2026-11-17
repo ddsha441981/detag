@@ -100,6 +100,22 @@ ignore = [
     # hyper-rustls 0.24 leaves the tree (async-stripe / AWS SDK move
     # to a webpki-roots 1.x client).
     "RUSTSEC-2026-0381",
+    # RUSTSEC-2026-0543 / -0555 / -0559 — chrono 0.4.45, chrono-tz
+    # 0.9.0, chrono-tz-build 0.3.0 unmaintained (all versions
+    # affected; "No safe upgrade is available!"). Chrono is a DIRECT
+    # workspace dependency (api, billing, core, mailer, storage, gc,
+    # worker) and enters transitively via tera 1.20.1 -> chrono-tz
+    # (mailer templates), sqlx (chrono feature), async-stripe /
+    # apalis. The advisory names jiff/time as alternatives — swapping
+    # chrono workspace-wide is a migration, not a patch. Verified
+    # 2026-11-17 (CI-FAIL-024, found during P1-064's checks): the
+    # failure is a newly published advisory against an unchanged tree
+    # (no Cargo.toml/Cargo.lock change in the P1-064 tree). Remove
+    # when the workspace migrates off chrono (jiff/time) or tera
+    # ships a release without chrono-tz.
+    "RUSTSEC-2026-0543",
+    "RUSTSEC-2026-0555",
+    "RUSTSEC-2026-0559",
 ]
 
 [licenses]

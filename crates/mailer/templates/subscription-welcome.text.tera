@@ -1,0 +1,7 @@
+Hi,
+
+Your {{ app_name }} {{ plan_code }} plan is now active. Your subscription is live and your plan's limits apply from now on.
+
+Manage your subscription anytime at {{ base_url }}/billing.
+
+— The {{ app_name }} team
