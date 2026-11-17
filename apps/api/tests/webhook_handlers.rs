@@ -763,3 +763,235 @@ async fn replay_after_failed_dispatch_applies() {
         "the redelivery stamps the dispatch"
     );
 }
+
+/// P1-066 — reordered delivery: a subscription update that
+/// arrives BEFORE its checkout names a row that does not exist
+/// yet, so it is a logged 200 and nothing is written. The
+/// checkout that follows still creates the row — and the row is
+/// built from the provider's FRESH state (`fetch_subscription`),
+/// not from the stale update, so the reorder heals itself: the
+/// early event is not lost work, it was simply early.
+#[tokio::test]
+async fn reordered_update_before_checkout_heals_on_create() {
+    let frozen = Utc::now();
+    let (app, _clock, provider) = handler_app(frozen).await;
+    let user = app.seed_user_unique().await;
+    let subscription_id = format!("sub_p1066_{}", Uuid::now_v7());
+    let period_end = DateTime::from_timestamp(1794844800, 0).expect("in range");
+    provider.with_subscription(canned_fetch(
+        &subscription_id,
+        SubscriptionStatus::Active,
+        period_end,
+    ));
+    set_pro_price(&app).await;
+
+    // The update arrives first: no row exists, so the handler
+    // logs it and answers 200 — it does not invent a row.
+    let early_id = format!("evt_sub_early_{}", Uuid::now_v7());
+    let early = subscription_event_payload(
+        &early_id,
+        "customer.subscription.updated",
+        Utc::now().timestamp(),
+        &subscription_id,
+        Some("active"),
+        Some(1794844800),
+        Some(false),
+    );
+    let early_header = stripe_signature_header(&early, WEBHOOK_SECRET);
+    let early_res = post_webhook(&app, &early, &early_header).await;
+    assert_eq!(early_res.status, StatusCode::OK, "{}", early_res.text());
+    assert!(subscription_row(&app, &subscription_id).await.is_none());
+
+    // The checkout follows: the row is created from the fresh
+    // fetch (active), exactly one creation audit row.
+    let event_id = format!("evt_checkout_late_{}", Uuid::now_v7());
+    let payload = checkout_completed_payload(
+        &event_id,
+        Utc::now().timestamp(),
+        Some(user.id),
+        &subscription_id,
+    );
+    let header = stripe_signature_header(&payload, WEBHOOK_SECRET);
+    let res = post_webhook(&app, &payload, &header).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let row = subscription_row(&app, &subscription_id)
+        .await
+        .expect("the late checkout creates the row");
+    assert_eq!(row.status, "active");
+    let audit = audit_rows(&app, row.id).await;
+    assert_eq!(audit.len(), 1, "exactly one creation audit row");
+    assert_eq!(audit[0].action, "billing.subscription.created");
+}
+
+/// P1-066 — reordered delivery: a delayed update carrying an
+/// OLD state must not move the row backwards. The row is
+/// `past_due` (a failed payment already dunned it); the stale
+/// `trialing` update arrives late and the state machine rejects
+/// the move (no return to `trialing`), so the row stays
+/// `past_due`, no audit row is written, and the answer is 200.
+#[tokio::test]
+async fn reordered_stale_backward_move_rejected() {
+    let (app, _clock, _provider) = handler_app(Utc::now()).await;
+    let user = app.seed_user_unique().await;
+    let subscription_id = seed_subscription(&app, user.id, "pro", "active").await;
+
+    // The payment fails first: active -> past_due (dunning).
+    let failed_id = format!("evt_invoice_failed_{}", Uuid::now_v7());
+    let failed = invoice_event_payload(
+        &failed_id,
+        "invoice.payment_failed",
+        Utc::now().timestamp(),
+        &format!("in_p1066_{}", Uuid::now_v7()),
+        Some(&subscription_id),
+    );
+    let failed_header = stripe_signature_header(&failed, WEBHOOK_SECRET);
+    let failed_res = post_webhook(&app, &failed, &failed_header).await;
+    assert_eq!(failed_res.status, StatusCode::OK, "{}", failed_res.text());
+    let row = subscription_row(&app, &subscription_id)
+        .await
+        .expect("row still exists");
+    assert_eq!(row.status, "past_due");
+    let audit_before = audit_rows(&app, row.id).await.len();
+    assert_eq!(audit_before, 1, "one dunning audit row");
+
+    // The stale update arrives late, claiming `trialing`.
+    let stale_id = format!("evt_sub_stale_{}", Uuid::now_v7());
+    let stale = subscription_event_payload(
+        &stale_id,
+        "customer.subscription.updated",
+        Utc::now().timestamp(),
+        &subscription_id,
+        Some("trialing"),
+        Some(1794844800),
+        Some(false),
+    );
+    let stale_header = stripe_signature_header(&stale, WEBHOOK_SECRET);
+    let stale_res = post_webhook(&app, &stale, &stale_header).await;
+    assert_eq!(stale_res.status, StatusCode::OK, "{}", stale_res.text());
+    let row = subscription_row(&app, &subscription_id)
+        .await
+        .expect("row still exists");
+    assert_eq!(row.status, "past_due", "the stale move must not apply");
+    assert_eq!(
+        audit_rows(&app, row.id).await.len(),
+        audit_before,
+        "no audit row for a rejected move"
+    );
+}
+
+/// P1-066 — replayed event, single effect: the same
+/// status-changing delivery twice (same event id) moves the row
+/// once, writes one audit row, and the replay moves no stamp.
+#[tokio::test]
+async fn replayed_status_change_has_single_effect() {
+    let (app, _clock, _provider) = handler_app(Utc::now()).await;
+    let user = app.seed_user_unique().await;
+    let subscription_id = seed_subscription(&app, user.id, "pro", "trialing").await;
+
+    let event_id = format!("evt_sub_replay_{}", Uuid::now_v7());
+    let payload = subscription_event_payload(
+        &event_id,
+        "customer.subscription.updated",
+        Utc::now().timestamp(),
+        &subscription_id,
+        Some("active"),
+        Some(1794844800),
+        Some(false),
+    );
+    let header = stripe_signature_header(&payload, WEBHOOK_SECRET);
+    let first = post_webhook(&app, &payload, &header).await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.text());
+    let row = subscription_row(&app, &subscription_id)
+        .await
+        .expect("row still exists");
+    assert_eq!(row.status, "active");
+    assert_eq!(
+        audit_rows(&app, row.id).await.len(),
+        1,
+        "one audit row for the first delivery"
+    );
+    let first_stamp = ledger_row(&app, &event_id)
+        .await
+        .expect("stored")
+        .dispatched_at;
+
+    // The identical redelivery: 200, no second transition, no
+    // second audit row, stamp unmoved.
+    let second = post_webhook(&app, &payload, &header).await;
+    assert_eq!(second.status, StatusCode::OK, "{}", second.text());
+    let row = subscription_row(&app, &subscription_id)
+        .await
+        .expect("row still exists");
+    assert_eq!(row.status, "active");
+    assert_eq!(
+        audit_rows(&app, row.id).await.len(),
+        1,
+        "the replay writes no second audit row"
+    );
+    assert_eq!(
+        ledger_row(&app, &event_id)
+            .await
+            .expect("stored")
+            .dispatched_at,
+        first_stamp,
+        "the replay moves no stamp"
+    );
+    let mails = mails_for_user(&app, "subscription-welcome", user.id).await;
+    assert_eq!(mails.len(), 1, "exactly one welcome mail");
+}
+
+/// P1-066 — reordered delivery: a delayed update for a
+/// CANCELED row must not resurrect it. `canceled` is terminal
+/// in the state machine, so the late `active` update is a
+/// logged 200 and the row stays canceled.
+#[tokio::test]
+async fn reordered_update_after_delete_stays_canceled() {
+    let (app, _clock, _provider) = handler_app(Utc::now()).await;
+    let user = app.seed_user_unique().await;
+    let subscription_id = seed_subscription(&app, user.id, "pro", "active").await;
+
+    // The delete arrives first: active -> canceled.
+    let deleted_id = format!("evt_sub_deleted_{}", Uuid::now_v7());
+    let deleted = subscription_event_payload(
+        &deleted_id,
+        "customer.subscription.deleted",
+        Utc::now().timestamp(),
+        &subscription_id,
+        None,
+        None,
+        None,
+    );
+    let deleted_header = stripe_signature_header(&deleted, WEBHOOK_SECRET);
+    let deleted_res = post_webhook(&app, &deleted, &deleted_header).await;
+    assert_eq!(deleted_res.status, StatusCode::OK, "{}", deleted_res.text());
+    let row = subscription_row(&app, &subscription_id)
+        .await
+        .expect("row still exists");
+    assert_eq!(row.status, "canceled");
+    let audit_before = audit_rows(&app, row.id).await.len();
+    assert_eq!(audit_before, 1, "one cancel audit row");
+
+    // The delayed update arrives late, claiming `active`.
+    let late_id = format!("evt_sub_late_{}", Uuid::now_v7());
+    let late = subscription_event_payload(
+        &late_id,
+        "customer.subscription.updated",
+        Utc::now().timestamp(),
+        &subscription_id,
+        Some("active"),
+        Some(1794844800),
+        Some(false),
+    );
+    let late_header = stripe_signature_header(&late, WEBHOOK_SECRET);
+    let late_res = post_webhook(&app, &late, &late_header).await;
+    assert_eq!(late_res.status, StatusCode::OK, "{}", late_res.text());
+    let row = subscription_row(&app, &subscription_id)
+        .await
+        .expect("row still exists");
+    assert_eq!(row.status, "canceled", "canceled is terminal");
+    assert_eq!(
+        audit_rows(&app, row.id).await.len(),
+        audit_before,
+        "no audit row for a rejected move"
+    );
+}
