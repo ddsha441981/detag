@@ -145,6 +145,13 @@
 - Fix: add `"pyyaml==6.0.2"` to the pip install in commits.yml.
 - Status: fixed (this commit) — waits on Commits #24.
 
+### CI-FAIL-024 [bug] cargo-deny fails — chrono / chrono-tz / chrono-tz-build unmaintained (RUSTSEC-2026-0543/0555/0559)
+- Date: 2026-11-17 · Ticket: P1-064 (found during its post-verify checks) · Severity: S1 (cargo-deny job runs on every push; CI #55 runs on 634d49d without these ignores, so its cargo-deny job fails the same way if its advisory DB is current)
+- Symptom: local `cargo deny check` (fresh advisory DB) FAILED with exactly 3 `error[unmaintained]`: chrono 0.4.45 (RUSTSEC-2026-0543), chrono-tz 0.9.0 (RUSTSEC-2026-0555), chrono-tz-build 0.3.0 (RUSTSEC-2026-0559) — "The chrono crate is unmaintained; all versions are affected" / "No safe upgrade is available!". Bans, licenses, sources all ok. `just verify` itself is unaffected (verify = fmt + clippy + test; deny is not in it) — P1-064's full verify went green (VERIFY_EXIT=0, 120 test binaries, 0 failed) on the same tree.
+- Cause: a newly published advisory, not a code change — the security-audit header anticipates exactly this ("a lockfile that was green on Friday can be red on Monday without any code change"). chrono 0.4.45 is a DIRECT workspace dependency (api, billing, core, mailer, storage, gc, worker) and enters transitively via tera 1.20.1 -> chrono-tz 0.9.0 (mailer templates), sqlx (chrono feature) and async-stripe/apalis. The advisory says all versions are affected and names jiff/time as alternatives — replacing chrono workspace-wide is a migration, not a patch, and no P1-064 code touches it (no Cargo.toml/Cargo.lock change in the P1-064 tree; the deny result on this tree is identical to HEAD fb34370).
+- Fix: add the three RUSTSEC IDs to deny.toml `ignore` with reason + removal condition, per the documented escape hatch (deny.toml header + security-audit.yml: "an explicit `ignore` entry ... needs a reason and a removal condition"). Verified locally: `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`, exit 0. The chrono → jiff/time migration is a separate follow-up (no ticket yet; needs an owner decision on scope) — the weekly audit job re-checks every Monday, so a fix surfaces within a week.
+- Status: fixed (this commit) — waits on the next CI run.
+
 ### TESTKIT-MINIO-001 [follow-up] testcontainers live legs + local-dev compose.minio.yml still reference dead MinIO images
 - Date: 2026-11-13 · Severity: S3 (not CI-blocking)
 - Cause: CI never sets PF_TEST_CONTAINERS/PF_TEST_LIVE_MINIO, so the live legs skip in CI; compose-minio-check only renders. But anyone running the live legs locally (or `docker compose -f ops/compose.minio.yml up`) hits the same dead MinIO pulls as CI-FAIL-004.
