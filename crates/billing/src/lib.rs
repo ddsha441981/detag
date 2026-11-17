@@ -17,7 +17,7 @@ pub mod sync;
 pub use error::BillingError;
 pub use provider::{
     BillingEvent, BillingProvider, CheckoutRequest, CheckoutSession, Customer, DomainEvent,
-    DynBillingProvider, Invoice, PortalRequest, PortalSession, SubscriptionState,
+    DynBillingProvider, Invoice, PortalRequest, PortalSession, ProviderName, SubscriptionState,
     SubscriptionStatus, PROVIDER_RAZORPAY, PROVIDER_STRIPE,
 };
 pub use stripe::StripeAdapter;

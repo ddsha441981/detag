@@ -3,29 +3,41 @@
 //!
 //! User webhook endpoints live here: they are gated by plan
 //! entitlement, so they belong with billing, not with jobs.
-//! All handlers are the shared 501 stub until their Phase 1
-//! tickets land — except the webhook-endpoints nest, which
-//! uses the authenticated stub (`stub_authed`, P1-034): an API
-//! key needs `webhooks:manage` there, a caller without a
-//! credential is 401. P1-055: `POST /v1/webhook-endpoints`
-//! runs the `webhooks` feature gate first
-//! ([`create_webhook_endpoint`]) — a Free user is 403
-//! `PF-3003`; an entitled caller still reaches the 501 stub
-//! until the real handler lands.
+//! The checkout endpoint is live (P1-062); the rest are the
+//! shared 501 stub until their Phase 1 tickets land — except
+//! the webhook-endpoints nest, which uses the authenticated
+//! stub (`stub_authed`, P1-034): an API key needs
+//! `webhooks:manage` there, a caller without a credential is
+//! 401. P1-055: `POST /v1/webhook-endpoints` runs the
+//! `webhooks` feature gate first ([`create_webhook_endpoint`])
+//! — a Free user is 403 `PF-3003`; an entitled caller still
+//! reaches the 501 stub until the real handler lands.
 
-use super::{stub, stub_authed};
+use super::{
+    extractors::{RequestId, ValidatedJson},
+    stub, stub_authed,
+};
 use crate::{
-    auth::AuthContext, problem::ProblemResponse, services::entitlements::require_feature, AppState,
+    auth::AuthContext,
+    problem::ProblemResponse,
+    services::{
+        checkout::{
+            create_checkout as create_checkout_service, CheckoutError, CheckoutRequestBody,
+        },
+        entitlements::require_feature,
+    },
+    AppState,
 };
 use axum::{
     extract::{Extension, State},
-    response::{IntoResponse, Response},
+    http::{header::HeaderMap, StatusCode},
+    response::{IntoResponse, Json, Response},
     routing::{delete, get, post},
     Router,
 };
-use detag_core::error::{AppError, Profile};
-
-use super::extractors::RequestId;
+use detag_billing::CheckoutSession;
+use detag_core::error::{AppError, FieldError, Problem, Profile};
+use detag_validator::ValidationErrors;
 
 /// Create a webhook endpoint (P1-055, FR-P-01): the plan
 /// gate, then the 501 stub — the real handler has not landed
@@ -63,6 +75,82 @@ async fn create_webhook_endpoint(
         .into_response()
 }
 
+/// Create a checkout session (P1-062, FR-P-03): the buyer
+/// is redirected to the provider-hosted page at the returned
+/// `url`. JWT only — the route is not in the extractor's
+/// scope table, so an API key is 403 `PF-1002` before this
+/// handler runs (P1-040's "no billing for keys"); no
+/// credential is 401 `PF-1001` from the extractor. The
+/// `Idempotency-Key` header is honored (a replay returns the
+/// stored session, a reuse with a different request is 409
+/// `PF-2011`); without the header every call is a fresh
+/// checkout. Billing not configured is 503 `PF-5005`.
+#[utoipa::path(
+    post,
+    path = "/v1/billing/checkout",
+    request_body = CheckoutRequestBody,
+    responses(
+        (status = 200, description = "The hosted checkout session — redirect the buyer to `url`", body = CheckoutSession),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "An API key cannot check out (PF-1002)", body = Problem),
+        (status = 404, description = "Unknown plan code (PF-2010)", body = Problem),
+        (status = 409, description = "Idempotency key reused with a different request (PF-2011)", body = Problem),
+        (status = 422, description = "Invalid body, or the plan cannot be bought (PF-2002)", body = Problem),
+        (status = 500, description = "The provider call failed", body = Problem),
+        (status = 503, description = "Billing is not configured (no Stripe secret key)", body = Problem)
+    ),
+    tag = "billing",
+    security(("bearer_auth" = []))
+)]
+pub async fn create_checkout(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    auth: AuthContext,
+    headers: HeaderMap,
+    ValidatedJson(body): ValidatedJson<CheckoutRequestBody>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let Some(ref user) = auth.user else {
+        return ProblemResponse(AppError::Unauthenticated.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
+    // An empty header value counts as no key (a client that
+    // sends the header with nothing in it gets a fresh
+    // checkout, not a stored row under the empty string).
+    let idempotency_key = headers
+        .get("idempotency-key")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty());
+    match create_checkout_service(&state, user, &body, idempotency_key).await {
+        Ok(session) => (StatusCode::OK, Json(session)).into_response(),
+        Err(CheckoutError::NotConfigured) => ProblemResponse(
+            AppError::BillingNotConfigured.to_problem(Profile::Production, request_id, None),
+        )
+        .into_response(),
+        Err(CheckoutError::UnknownPlan) => {
+            ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(CheckoutError::PlanNotPurchasable(reason)) => {
+            let mut errors = ValidationErrors::default();
+            errors.push(FieldError::new("plan_code", "not_purchasable", reason));
+            ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
+        }
+        Err(CheckoutError::IdempotencyConflict) => {
+            ProblemResponse(AppError::Conflict.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(CheckoutError::Provider | CheckoutError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// The billing nests: public plans, the subscription / checkout /
 /// portal / invoices group, usage, provider webhooks (Stripe,
 /// Razorpay), and the user's own webhook endpoints.
@@ -73,7 +161,7 @@ pub fn router() -> Router<AppState> {
             "/v1/billing",
             Router::new()
                 .route("/subscription", get(stub))
-                .route("/checkout", post(stub))
+                .route("/checkout", post(create_checkout))
                 .route("/portal", post(stub))
                 .route("/invoices", get(stub)),
         )

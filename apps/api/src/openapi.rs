@@ -8,7 +8,7 @@
 //! committed spec drifts from the code — regenerate, never edit
 //! the JSON by hand.
 //!
-//! Coverage today is the twenty-eight real handlers (`/healthz`,
+//! Coverage today is the twenty-nine real handlers (`/healthz`,
 //! `/readyz`, `/v1/auth/register`, `/v1/auth/verify-email`,
 //! `/v1/auth/resend-verification`, `/v1/auth/login`,
 //! `/v1/auth/refresh`, `/v1/auth/logout`,
@@ -23,9 +23,10 @@
 //! `POST /v1/admin/users/{id}/impersonate`,
 //! `GET /v1/admin/jobs`, `GET /v1/admin/plans`,
 //! `PUT /v1/admin/plans`, `POST
-//! /v1/admin/billing/catalog-sync`)
+//! /v1/admin/billing/catalog-sync`, `POST
+//! /v1/billing/checkout`)
 //! plus the shared error schema (`Problem`).
-//! The 40 stub routes are NOT
+//! The 39 stub routes are NOT
 //! in the spec yet: each endpoint ticket adds its
 //! `#[utoipa::path]` annotation and its path to this
 //! `#[openapi]` list when its handler becomes real (see the
@@ -61,6 +62,7 @@ use crate::routes::auth::{
     __path_logout_all, __path_refresh, __path_register, __path_resend_verification,
     __path_reset_password, __path_verify_email,
 };
+use crate::routes::billing::__path_create_checkout;
 use crate::routes::meta::{__path_healthz, __path_readyz};
 use crate::routes::profile::{__path_delete_me, __path_get_me, __path_patch_me};
 use crate::routes::sessions::{__path_delete_session, __path_list_sessions};
@@ -71,6 +73,7 @@ use crate::services::admin_plans::{
     PlanEdit, PlanEntitlementsEdit, PlanView, PlansResponse, UpdatePlansRequest,
 };
 use crate::services::api_keys::{CreateApiKeyRequest, CreateApiKeyResponse};
+use crate::services::checkout::CheckoutRequestBody;
 use crate::services::login::{LoginRequest, LoginResponse};
 use crate::services::password_reset::{ForgotPasswordRequest, ResetPasswordRequest};
 use crate::services::profile::{PatchProfileRequest, ProfileResponse};
@@ -90,7 +93,7 @@ use crate::AppState;
         version = "1.0.0",
         description = "Detag — watermark removal for images and videos you own. All errors are RFC 7807 problem+json with a stable PF-code (see the Problem schema)."
     ),
-    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, refresh, logout, logout_all, forgot_password, reset_password, get_me, patch_me, delete_me, list_sessions, delete_session, create_api_key, rotate_api_key, revoke_api_key, suspend, restore, search_users_handler, list_jobs_handler, impersonate, list_plans_handler, update_plans_handler, catalog_sync_handler),
+    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, refresh, logout, logout_all, forgot_password, reset_password, get_me, patch_me, delete_me, list_sessions, delete_session, create_api_key, rotate_api_key, revoke_api_key, suspend, restore, search_users_handler, list_jobs_handler, impersonate, list_plans_handler, update_plans_handler, catalog_sync_handler, create_checkout),
     components(schemas(
         Problem,
         Readiness,
@@ -120,6 +123,8 @@ use crate::AppState;
         UpdatePlansRequest,
         PlanEdit,
         PlanEntitlementsEdit,
+        CheckoutRequestBody,
+        detag_billing::CheckoutSession,
         detag_billing::CatalogDriftReport,
         detag_billing::PlanSyncResult,
         detag_billing::SyncAction,

@@ -23,14 +23,6 @@ use detag_core::{
     tx::{self, TxError},
 };
 
-/// The dev sentinel for "no Stripe key configured"
-/// (`.env.example` + `Settings::default()`). It carries the
-/// `sk_test_` prefix, so the adapter would accept it — and
-/// then attempt a live call to Stripe with a key that is not
-/// a key. The service treats the sentinel as unconfigured
-/// (ASSUMPTION-024): only a real key reaches the network.
-const STRIPE_SECRET_KEY_PLACEHOLDER: &str = "sk_test_placeholder";
-
 /// What a catalog sync can fail with.
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogSyncError {
@@ -63,17 +55,19 @@ enum SyncTxError {
 /// persist the changed price ids.
 ///
 /// The adapter is built fresh per call from settings (cheap:
-/// key validation + a client) — no `AppState` field, so the
-/// provider stays out of the shared state until P1-062 wires
-/// checkout through it.
+/// key validation + a client) — the sync needs a
+/// `StripeAdapter` specifically (its `CatalogProvider` impl),
+/// not the shared `Arc<dyn BillingProvider>` `AppState` holds
+/// for checkout (P1-062), so the two constructions stay
+/// separate on purpose.
 pub async fn run_catalog_sync(state: &AppState) -> Result<CatalogDriftReport, CatalogSyncError> {
     // Empty or the dev placeholder means billing is not
     // configured — never build an adapter from a sentinel
     // (it would pass the `sk_test_` prefix check and then
     // attempt a live call with a key that is not a key).
-    if state.settings.stripe_secret_key.is_empty()
-        || state.settings.stripe_secret_key == STRIPE_SECRET_KEY_PLACEHOLDER
-    {
+    // The check lives on `Settings` now (P1-062): the
+    // checkout service and `AppState` share it.
+    if !state.settings.stripe_configured() {
         return Err(CatalogSyncError::NotConfigured);
     }
     let adapter = StripeAdapter::new(

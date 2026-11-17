@@ -42,8 +42,9 @@
 //! every `/v1/admin/*` row is `Forbidden` — live or guarded
 //! stub since P1-043 (never `Allowed`), and every billing row
 //! is `Unprotected` except the webhook-endpoints nest, which
-//! is key-managed by design. An admin user's OWN key is 403
-//! on the live admin routes too
+//! is key-managed by design, and the checkout endpoint, which
+//! is `Forbidden` since P1-062 (JWT only). An admin user's
+//! OWN key is 403 on the live admin routes too
 //! (`admin_users_key_cannot_reach_admin_routes`) — the guard
 //! rejects a key-carrying context outright, so a future
 //! mis-rowed scope table cannot smuggle an admin key in.
@@ -135,7 +136,7 @@ const MATRIX: &[MatrixRow] = &[
     // billing (12)
     MatrixRow { method: "GET", path: "/v1/plans", outcome: KeyOutcome::Unprotected, note: "public by design — the plan matrix is public data, no credential" },
     MatrixRow { method: "GET", path: "/v1/billing/subscription", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the extractor (no billing for keys)" },
-    MatrixRow { method: "POST", path: "/v1/billing/checkout", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the extractor (no billing for keys)" },
+    MatrixRow { method: "POST", path: "/v1/billing/checkout", outcome: KeyOutcome::Forbidden, note: "JWT only — the route is not in the extractor's scope table, so any key is 403 (P1-062)" },
     MatrixRow { method: "POST", path: "/v1/billing/portal", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the extractor (no billing for keys)" },
     MatrixRow { method: "GET", path: "/v1/billing/invoices", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the extractor (no billing for keys)" },
     MatrixRow { method: "GET", path: "/v1/usage", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the extractor (no billing for keys)" },

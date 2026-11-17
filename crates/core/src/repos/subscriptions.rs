@@ -107,3 +107,27 @@ pub async fn count_all_for_plan(
     .map_err(RepoError::from_sqlx)?;
     Ok(row.count)
 }
+
+/// The user's newest provider customer id, across ALL
+/// subscription rows (P1-062, FR-P-03): the customer is a
+/// provider-side identity that survives cancellation, so a
+/// `canceled` row's customer is still the right one to reuse
+/// at the next checkout — the newest row's id wins. `None`
+/// when the user has no subscription row yet (first checkout:
+/// the provider mints the customer at checkout and the
+/// webhook records it on the subscription row, P1-063).
+pub async fn latest_customer_id_for_user(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+) -> Result<Option<String>, RepoError> {
+    let row = sqlx::query!(
+        "SELECT provider_customer_id FROM subscriptions \
+         WHERE user_id = $1 AND provider_customer_id IS NOT NULL \
+         ORDER BY created_at DESC LIMIT 1",
+        user_id,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(row.and_then(|row| row.provider_customer_id))
+}
