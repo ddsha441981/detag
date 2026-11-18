@@ -231,7 +231,8 @@ async fn every_table_entry_resolves_to_the_stub() {
         // /v1/admin/jobs, and P1-043 every remaining
         // /v1/admin/* stub (the guarded stub), and P1-062
         // POST /v1/billing/checkout, and P1-067 POST
-        // /v1/billing/portal: real handlers behind an
+        // /v1/billing/portal, and P1-068 GET
+        // /v1/billing/invoices: real handlers behind an
         // auth extractor — the probe sends no credential, so
         // the extractor rejects with 401 PF-1001 (not 501)
         // and echoes the probe id (the route exists; each
@@ -248,6 +249,7 @@ async fn every_table_entry_resolves_to_the_stub() {
                     || *path == "/v1/billing/portal"))
             || (*method == "GET" && *path == "/v1/admin/users")
             || (*method == "GET" && *path == "/v1/admin/jobs")
+            || (*method == "GET" && *path == "/v1/billing/invoices")
             || path.starts_with("/v1/admin/")
             || (*method == "GET" && *path == "/v1/me/sessions")
             || (*method == "DELETE" && *path == "/v1/me/sessions/{id}")

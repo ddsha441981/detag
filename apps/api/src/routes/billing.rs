@@ -4,9 +4,9 @@
 //! User webhook endpoints live here: they are gated by plan
 //! entitlement, so they belong with billing, not with jobs.
 //! The checkout endpoint is live (P1-062), the portal is
-//! live (P1-067), and the Stripe provider webhook is live
-//! (P1-063); the rest are the shared 501 stub until their
-//! Phase 1 tickets land — except
+//! live (P1-067), the invoices list is live (P1-068), and the
+//! Stripe provider webhook is live (P1-063); the rest are the
+//! shared 501 stub until their Phase 1 tickets land — except
 //! the webhook-endpoints nest, which uses the authenticated
 //! stub (`stub_authed`, P1-034): an API key needs
 //! `webhooks:manage` there, a caller without a credential is
@@ -27,6 +27,7 @@ use crate::{
             create_checkout as create_checkout_service, CheckoutError, CheckoutRequestBody,
         },
         entitlements::require_feature,
+        invoices::{list_invoices as list_invoices_service, InvoicesError},
         portal::{create_portal as create_portal_service, PortalError},
         webhook::{
             receive_stripe_webhook as receive_stripe_webhook_service, signature_header,
@@ -43,7 +44,7 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
-use detag_billing::{CheckoutSession, PortalSession};
+use detag_billing::{CheckoutSession, Invoice, PortalSession};
 use detag_core::error::{AppError, FieldError, Problem, Profile};
 use detag_validator::ValidationErrors;
 
@@ -213,6 +214,55 @@ pub async fn create_portal(
     }
 }
 
+/// List the caller's invoices (P1-068, FR-P-03): newest
+/// first, from the provider, cached 5 minutes per customer.
+/// JWT only — the route is not in the extractor's scope
+/// table, so an API key is 403 `PF-1002` before this handler
+/// runs (P1-040's "no billing for keys"); no credential is
+/// 401 `PF-1001` from the extractor. A user with no provider
+/// customer on file gets 200 with an empty list (a list, not
+/// a page to open — the portal's 404 does not apply here);
+/// billing not configured is 503 `PF-5005`.
+#[utoipa::path(
+    get,
+    path = "/v1/billing/invoices",
+    responses(
+        (status = 200, description = "The caller's invoices, newest first", body = Vec<Invoice>),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "An API key cannot list invoices (PF-1002)", body = Problem),
+        (status = 500, description = "The provider call failed", body = Problem),
+        (status = 503, description = "Billing is not configured (no Stripe secret key)", body = Problem)
+    ),
+    tag = "billing",
+    security(("bearer_auth" = []))
+)]
+pub async fn list_invoices(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    auth: AuthContext,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let Some(ref user) = auth.user else {
+        return ProblemResponse(AppError::Unauthenticated.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
+    match list_invoices_service(&state, user).await {
+        Ok(invoices) => (StatusCode::OK, Json(invoices)).into_response(),
+        Err(InvoicesError::NotConfigured) => ProblemResponse(
+            AppError::BillingNotConfigured.to_problem(Profile::Production, request_id, None),
+        )
+        .into_response(),
+        Err(InvoicesError::Provider | InvoicesError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// Receive a Stripe webhook delivery (P1-063, FR-P-04).
 /// No auth extractor runs here by design — the provider's
 /// signature IS the credential (the matrix row is `Ignored`).
@@ -280,7 +330,7 @@ pub fn router() -> Router<AppState> {
                 .route("/subscription", get(stub))
                 .route("/checkout", post(create_checkout))
                 .route("/portal", post(create_portal))
-                .route("/invoices", get(stub)),
+                .route("/invoices", get(list_invoices)),
         )
         .nest("/v1/usage", Router::new().route("/", get(stub)))
         .nest(

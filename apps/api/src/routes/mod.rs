@@ -19,7 +19,7 @@
 //! # The route table
 //!
 //! [`ROUTE_TABLE`] is the (method, path) table from the API
-//! spec (`docs/03-ARCHITECTURE/03-api-spec.md`), 64 entries.
+//! spec (`docs/03-ARCHITECTURE/03-api-spec.md`), 68 entries.
 //! It is the test oracle (`apps/api/tests/route_table.rs`):
 //! no duplicate (method, path) pairs, and every entry resolves
 //! to the 501 stub on the built router. When you add a route,

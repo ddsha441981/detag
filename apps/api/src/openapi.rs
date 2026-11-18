@@ -8,7 +8,7 @@
 //! committed spec drifts from the code — regenerate, never edit
 //! the JSON by hand.
 //!
-//! Coverage today is the thirty real handlers (`/healthz`,
+//! Coverage today is the thirty-two real handlers (`/healthz`,
 //! `/readyz`, `/v1/auth/register`, `/v1/auth/verify-email`,
 //! `/v1/auth/resend-verification`, `/v1/auth/login`,
 //! `/v1/auth/refresh`, `/v1/auth/logout`,
@@ -24,9 +24,10 @@
 //! `GET /v1/admin/jobs`, `GET /v1/admin/plans`,
 //! `PUT /v1/admin/plans`, `POST
 //! /v1/admin/billing/catalog-sync`, `POST
-//! /v1/billing/checkout`, `POST /v1/webhooks/stripe`)
+//! /v1/billing/checkout`, `POST /v1/billing/portal`, `GET
+//! /v1/billing/invoices`, `POST /v1/webhooks/stripe`)
 //! plus the shared error schema (`Problem`).
-//! The 39 stub routes are NOT
+//! The 36 stub routes are NOT
 //! in the spec yet: each endpoint ticket adds its
 //! `#[utoipa::path]` annotation and its path to this
 //! `#[openapi]` list when its handler becomes real (see the
@@ -63,7 +64,8 @@ use crate::routes::auth::{
     __path_reset_password, __path_verify_email,
 };
 use crate::routes::billing::{
-    __path_create_checkout, __path_create_portal, __path_receive_stripe_webhook,
+    __path_create_checkout, __path_create_portal, __path_list_invoices,
+    __path_receive_stripe_webhook,
 };
 use crate::routes::meta::{__path_healthz, __path_readyz};
 use crate::routes::profile::{__path_delete_me, __path_get_me, __path_patch_me};
@@ -95,7 +97,7 @@ use crate::AppState;
         version = "1.0.0",
         description = "Detag — watermark removal for images and videos you own. All errors are RFC 7807 problem+json with a stable PF-code (see the Problem schema)."
     ),
-    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, refresh, logout, logout_all, forgot_password, reset_password, get_me, patch_me, delete_me, list_sessions, delete_session, create_api_key, rotate_api_key, revoke_api_key, suspend, restore, search_users_handler, list_jobs_handler, impersonate, list_plans_handler, update_plans_handler, catalog_sync_handler, create_checkout, create_portal, receive_stripe_webhook),
+    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, refresh, logout, logout_all, forgot_password, reset_password, get_me, patch_me, delete_me, list_sessions, delete_session, create_api_key, rotate_api_key, revoke_api_key, suspend, restore, search_users_handler, list_jobs_handler, impersonate, list_plans_handler, update_plans_handler, catalog_sync_handler, create_checkout, create_portal, list_invoices, receive_stripe_webhook),
     components(schemas(
         Problem,
         Readiness,

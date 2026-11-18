@@ -210,7 +210,7 @@ pub struct Customer {
 /// the provider's smallest unit (paise for INR); `status` is the
 /// provider's own string (`paid` / `open` / `void` / ...), kept opaque
 /// on purpose — each provider spells these differently.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Invoice {
     /// The provider's invoice id.
     pub id: String,
@@ -226,6 +226,10 @@ pub struct Invoice {
     pub created_at: DateTime<Utc>,
     /// The hosted invoice page, when the provider offers one.
     pub hosted_url: Option<String>,
+    /// The Stripe-hosted PDF download, when the provider offers
+    /// one (P1-068: the spec's "stripe-hosted download URLs" —
+    /// `hosted_url` is the page, this is the file).
+    pub download_url: Option<String>,
 }
 
 /// A signature-verified webhook envelope, ready for

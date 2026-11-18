@@ -10,6 +10,7 @@ pub mod catalog_sync;
 pub mod checkout;
 pub mod deletion;
 pub mod entitlements;
+pub mod invoices;
 pub mod login;
 pub mod logout;
 pub mod password;
