@@ -9,3 +9,27 @@
 # (target/nextest/ci/), so ../../junit.xml lands at target/junit.xml.
 [profile.ci]
 junit = { path = "../../junit.xml" }
+
+# FLAKY-008: the dunning tests share one scratch DB
+# (`detag_api_harness`) and `run_dunning` counts every past-due row it
+# scans, so two dunning tests running in parallel under nextest (one
+# process per test) count — or delete — each other's rows. The in-test
+# `DUNNING_TEST_LOCK` is a tokio Mutex: it serializes only within one
+# process, which is why the same tests are green under `cargo test`
+# (one process) and flake under nextest. Serialize them: one thread
+# for the whole dunning group, in the CI profile only.
+# NOTE: `test-threads` is NOT a valid override key in nextest 0.9.151
+# (it is silently ignored with a warning) — the group + `test-group`
+# form below is the one that validates. And the filter MUST be
+# `binary(dunning)`, not `test(dunning::)`: integration-test names are
+# bare function names (`recovery_mid_sequence_stops_the_reminders`,
+# no `dunning::` prefix — the `dunning` in nextest's log line is the
+# target name), so `test(dunning::)` matches nothing and the override
+# silently never applies. Verified 2026-11-18: the first version of
+# this fix used `test(dunning::)` and the tests still ran 4-at-a-time.
+[test-groups.dunning-serial]
+max-threads = 1
+
+[[profile.ci.overrides]]
+filter = "binary(dunning)"
+test-group = "dunning-serial"
