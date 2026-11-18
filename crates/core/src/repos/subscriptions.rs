@@ -72,7 +72,7 @@ pub async fn plan_for_subscription(
 ) -> Result<Option<super::plans::Plan>, RepoError> {
     sqlx::query_as!(
         super::plans::Plan,
-        "SELECT id, code, stripe_price_id, currency, amount, entitlements,
+        "SELECT id, code, stripe_price_id, razorpay_plan_id, currency, amount, entitlements,
                 created_at, updated_at
          FROM plans WHERE id = $1",
         plan_id,

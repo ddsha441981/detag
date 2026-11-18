@@ -109,7 +109,7 @@ use crate::AppState;
 use chrono::{DateTime, Utc};
 use detag_billing::{
     classify, period_start_from_end, preview, preview_no_period, ChangeKind, CheckoutRequest,
-    CheckoutSession, ProrationPreview,
+    CheckoutSession, ProrationPreview, ProviderName, PROVIDER_RAZORPAY,
 };
 use detag_core::{
     error::FieldError,
@@ -349,11 +349,17 @@ pub async fn create_checkout(
                     ));
                 }
                 ChangeKind::Upgrade => {
-                    let price_id =
-                        plan.stripe_price_id
-                            .ok_or(CheckoutError::PlanNotPurchasable(
-                                "this plan has no price configured yet",
-                            ))?;
+                    // The provider is configured by here (the
+                    // replay above returned without one), so a
+                    // name is always available.
+                    let provider_name = state
+                        .billing
+                        .as_ref()
+                        .map(|p| p.provider_name())
+                        .unwrap_or(detag_billing::PROVIDER_STRIPE);
+                    let price_id = price_id_for_provider(&plan, provider_name).ok_or(
+                        CheckoutError::PlanNotPurchasable("this plan has no price configured yet"),
+                    )?;
                     let preview = match sub.current_period_end {
                         Some(end) => preview(
                             current.amount,
@@ -367,7 +373,7 @@ pub async fn create_checkout(
                     let outcome = checkout_with_provider(
                         state,
                         user,
-                        &price_id,
+                        price_id,
                         sub.provider_subscription_id.as_deref(),
                     )
                     .await?;
@@ -419,12 +425,15 @@ pub async fn create_checkout(
                     "the free plan has no checkout",
                 ));
             }
-            let price_id = plan
-                .stripe_price_id
-                .ok_or(CheckoutError::PlanNotPurchasable(
-                    "this plan has no price configured yet",
-                ))?;
-            let session = checkout_with_provider(state, user, &price_id, None).await?;
+            let provider_name = state
+                .billing
+                .as_ref()
+                .map(|p| p.provider_name())
+                .unwrap_or(detag_billing::PROVIDER_STRIPE);
+            let price_id = price_id_for_provider(&plan, provider_name).ok_or(
+                CheckoutError::PlanNotPurchasable("this plan has no price configured yet"),
+            )?;
+            let session = checkout_with_provider(state, user, price_id, None).await?;
             CheckoutOutcome::Session(CheckoutResponse {
                 id: session.id,
                 url: session.url,
@@ -479,6 +488,23 @@ pub async fn create_checkout(
 /// a NEW checkout. `upgrade_from` is the live provider
 /// subscription id an upgrade replaces (`None` for a first
 /// purchase).
+/// The provider-appropriate price id for a plan (P1-073,
+/// FR-P-03): the Razorpay plan id when Razorpay is the active
+/// provider, the Stripe price id otherwise. `None` when the
+/// plan has no id for the active provider — the caller answers
+/// 422 `not_purchasable` ("this plan has no price configured
+/// yet"), never a provider call with a wrong-provider id.
+fn price_id_for_provider(
+    plan: &detag_core::repos::plans::Plan,
+    provider: ProviderName,
+) -> Option<&str> {
+    if provider == PROVIDER_RAZORPAY {
+        plan.razorpay_plan_id.as_deref()
+    } else {
+        plan.stripe_price_id.as_deref()
+    }
+}
+
 async fn checkout_with_provider(
     state: &AppState,
     user: &User,
@@ -509,10 +535,10 @@ async fn checkout_with_provider(
         .await
         .map_err(|err| {
             // An InvalidPrice here means OUR configured price
-            // does not exist at Stripe — config drift, not a
-            // client error. Log it (the price id is ours, not
-            // a secret) and answer 500 either way; the
-            // provider message never reaches the client.
+            // does not exist at the provider — config drift,
+            // not a client error. Log it (the price id is
+            // ours, not a secret) and answer 500 either way;
+            // the provider message never reaches the client.
             tracing::error!(error = %err, "checkout: provider call failed");
             CheckoutError::Provider
         })

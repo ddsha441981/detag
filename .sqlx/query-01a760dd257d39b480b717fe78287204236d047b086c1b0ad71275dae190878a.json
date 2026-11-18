@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, code, stripe_price_id, currency, amount, entitlements, created_at, updated_at\n         FROM plans WHERE id = $1",
+  "query": "SELECT id, code, stripe_price_id, razorpay_plan_id, currency, amount, entitlements, created_at, updated_at\n         FROM plans WHERE stripe_price_id = $1",
   "describe": {
     "columns": [
       {
@@ -38,6 +38,17 @@
       },
       {
         "ordinal": 3,
+        "name": "razorpay_plan_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "plans",
+            "name": "razorpay_plan_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
         "name": "currency",
         "type_info": "Text",
         "origin": {
@@ -48,7 +59,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "amount",
         "type_info": "Int4",
         "origin": {
@@ -59,7 +70,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "entitlements",
         "type_info": "Jsonb",
         "origin": {
@@ -70,7 +81,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -94,12 +105,13 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Text"
       ]
     },
     "nullable": [
       false,
       false,
+      true,
       true,
       false,
       false,
@@ -108,5 +120,5 @@
       false
     ]
   },
-  "hash": "1c357d1ba4ee712ab63275543e87fa109704bdb95044a4bcfedda89a751cc11a"
+  "hash": "01a760dd257d39b480b717fe78287204236d047b086c1b0ad71275dae190878a"
 }

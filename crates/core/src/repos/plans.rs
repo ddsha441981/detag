@@ -20,6 +20,12 @@ pub struct Plan {
     pub id: Uuid,
     pub code: String,
     pub stripe_price_id: Option<String>,
+    /// The Razorpay plan id (`plan_...`, P1-073, FR-P-03):
+    /// `NULL` until the plan is created in the Razorpay
+    /// dashboard and linked here — the Razorpay checkout
+    /// sells this id, exactly as `stripe_price_id` is the
+    /// Stripe side of the same link.
+    pub razorpay_plan_id: Option<String>,
     pub currency: String,
     pub amount: i32,
     pub entitlements: serde_json::Value,
@@ -35,7 +41,7 @@ pub async fn by_code(
 ) -> Result<Option<Plan>, RepoError> {
     sqlx::query_as!(
         Plan,
-        "SELECT id, code, stripe_price_id, currency, amount, entitlements, created_at, updated_at
+        "SELECT id, code, stripe_price_id, razorpay_plan_id, currency, amount, entitlements, created_at, updated_at
          FROM plans WHERE code = $1",
         code
     )
@@ -56,7 +62,7 @@ pub async fn by_id(
 ) -> Result<Option<Plan>, RepoError> {
     sqlx::query_as!(
         Plan,
-        "SELECT id, code, stripe_price_id, currency, amount, entitlements, created_at, updated_at
+        "SELECT id, code, stripe_price_id, razorpay_plan_id, currency, amount, entitlements, created_at, updated_at
          FROM plans WHERE id = $1",
         id
     )
@@ -79,9 +85,31 @@ pub async fn by_stripe_price_id(
 ) -> Result<Option<Plan>, RepoError> {
     sqlx::query_as!(
         Plan,
-        "SELECT id, code, stripe_price_id, currency, amount, entitlements, created_at, updated_at
+        "SELECT id, code, stripe_price_id, razorpay_plan_id, currency, amount, entitlements, created_at, updated_at
          FROM plans WHERE stripe_price_id = $1",
         stripe_price_id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
+/// Fetch by Razorpay plan id (P1-073, FR-P-03): the Razorpay
+/// webhook handler resolves the plan a checkout bought from
+/// the plan id Razorpay reports on the subscription — the
+/// mirror of [`by_stripe_price_id`]. `None` when no plan
+/// carries that id (a plan created at Razorpay but never
+/// linked into the catalog — the handler logs it instead of
+/// inventing a plan).
+pub async fn by_razorpay_plan_id(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    razorpay_plan_id: &str,
+) -> Result<Option<Plan>, RepoError> {
+    sqlx::query_as!(
+        Plan,
+        "SELECT id, code, stripe_price_id, razorpay_plan_id, currency, amount, entitlements, created_at, updated_at
+         FROM plans WHERE razorpay_plan_id = $1",
+        razorpay_plan_id
     )
     .fetch_optional(pool)
     .await
@@ -94,7 +122,7 @@ pub async fn all(
 ) -> Result<Vec<Plan>, RepoError> {
     sqlx::query_as!(
         Plan,
-        "SELECT id, code, stripe_price_id, currency, amount, entitlements, created_at, updated_at
+        "SELECT id, code, stripe_price_id, razorpay_plan_id, currency, amount, entitlements, created_at, updated_at
          FROM plans ORDER BY amount"
     )
     .fetch_all(pool)
@@ -120,7 +148,7 @@ pub async fn update_by_code(
         "UPDATE plans SET amount = $2, currency = $3, stripe_price_id = $4,
                 entitlements = $5, updated_at = now()
          WHERE code = $1
-         RETURNING id, code, stripe_price_id, currency, amount, entitlements,
+         RETURNING id, code, stripe_price_id, razorpay_plan_id, currency, amount, entitlements,
                    created_at, updated_at",
         code,
         amount,

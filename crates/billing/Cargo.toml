@@ -12,10 +12,11 @@ async-trait.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 async-stripe = { version = "0.41", features = ["runtime-tokio-hyper-rustls-webpki"] }
+reqwest.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+hex.workspace = true
 utoipa.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
-hmac = "0.12"
-sha2 = "0.10"
-hex = "0.4"

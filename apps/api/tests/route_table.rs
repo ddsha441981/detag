@@ -45,7 +45,11 @@
 //!    answers 401 PF-1001 the same way (admin only).
 //!    P1-063 `POST /v1/webhooks/stripe` answers
 //!    503 PF-5005 (billing not configured in the probe app —
-//!    the signature check needs a provider first).
+//!    the signature check needs a provider first). P1-073
+//!    `POST /v1/webhooks/razorpay` answers 404 PF-2010 —
+//!    the flag is off in the probe app, so the endpoint does
+//!    not exist there (the flag-on 501 lives in the
+//!    razorpay_flag suite).
 //!
 //! The probes send a fixed `x-request-id` and assert the 501
 //! problem body echoes it — that proves the whole chain at
@@ -321,6 +325,40 @@ async fn every_table_entry_resolves_to_the_stub() {
             let json: serde_json::Value =
                 serde_json::from_slice(&body).expect("real-handler body is JSON");
             assert_eq!(json["code"], "PF-5005", "{method} {path}: {json}");
+            assert_eq!(json["request_id"], PROBE_ID, "{method} {path}: {json}");
+            continue;
+        }
+        // P1-073 POST /v1/webhooks/razorpay: a real handler
+        // with no auth extractor — the probe app runs the
+        // default settings (the flag off), so the empty probe
+        // answers 404 PF-2010 (the endpoint does not exist
+        // while the flag is off), not 501. The flag-on 501
+        // lives in the razorpay_flag suite.
+        if *method == "POST" && *path == "/v1/webhooks/razorpay" {
+            let req = Request::builder()
+                .method(Method::POST)
+                .uri(*path)
+                .header("x-request-id", PROBE_ID)
+                .header("x-forwarded-for", xff.as_str())
+                .body(axum::body::Body::empty())
+                .unwrap();
+            let res = router
+                .clone()
+                .oneshot(req)
+                .await
+                .unwrap_or_else(|err| panic!("oneshot {method} {path} failed: {err:?}"));
+            assert_eq!(
+                res.status(),
+                StatusCode::NOT_FOUND,
+                "{method} {path} with the flag off must be 404, got {}",
+                res.status()
+            );
+            let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .expect("read body");
+            let json: serde_json::Value =
+                serde_json::from_slice(&body).expect("real-handler body is JSON");
+            assert_eq!(json["code"], "PF-2010", "{method} {path}: {json}");
             assert_eq!(json["request_id"], PROBE_ID, "{method} {path}: {json}");
             continue;
         }
