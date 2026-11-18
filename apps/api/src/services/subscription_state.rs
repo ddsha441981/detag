@@ -14,6 +14,9 @@
 //!   never lands without its trail, and two handlers racing the
 //!   same row cannot both apply (the loser gets
 //!   `InvalidStateTransition` and re-reads).
+//! * [`apply_transition_as`] — the same move with a named
+//!   actor (P1-071): a support cancel names the calling
+//!   admin on the audit row instead of the provider shape.
 //! * [`apply_domain_event`] — the P1-065 entry point: map a
 //!   [`DomainEvent`] to its target status (`None` = no state
 //!   change — checkout creation and invoice payment are not
@@ -49,8 +52,13 @@
 //! **Audit** — `billing.subscription.status_changed` in the
 //! same transaction, `before` / `after` the two statuses, the
 //! plan code in `after`, `reason` the caller's trigger (a
-//! webhook event id, for P1-065). The actor is the provider:
-//! `actor_user_id` is `None`, `actor_client` is `"webhook"`.
+//! webhook event id, for P1-065). The actor is the provider
+//! by default: `actor_user_id` is `None`, `actor_client` is
+//! `"webhook"` — but an admin-driven move (P1-071,
+//! [`apply_transition_as`]) names the calling admin
+//! (`actor_user_id` the admin, `actor_client` `"admin"`),
+//! which is what distinguishes a support cancel from a
+//! webhook cancel in the audit viewer.
 //!
 //! A same-state ask is a no-op: no write, no audit, no mail
 //! (`changed: false`) — a replayed webhook event has a single
@@ -120,7 +128,41 @@ pub fn mail_template_for_transition(
     }
 }
 
-/// What [`apply_transition`] / [`apply_domain_event`] did.
+/// Who performed a transition, for the audit row.
+///
+/// ADR-0032's consequence: provider-driven moves are
+/// "no user, client webhook" — a future admin-driven
+/// transition must name its actor explicitly rather than
+/// reusing that row shape. P1-071 is that future: a support
+/// cancel names the calling admin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuditActor {
+    /// The acting user, when a person did it.
+    pub user_id: Option<Uuid>,
+    /// The acting client: `"webhook"` for provider-driven
+    /// moves, `"admin"` for admin-driven ones.
+    pub client: &'static str,
+}
+
+impl AuditActor {
+    /// A provider-driven move (webhook / job): no user,
+    /// client `"webhook"`.
+    pub fn webhook() -> Self {
+        Self {
+            user_id: None,
+            client: "webhook",
+        }
+    }
+
+    /// An admin-driven move: the calling admin, client
+    /// `"admin"`.
+    pub fn admin(user_id: Uuid) -> Self {
+        Self {
+            user_id: Some(user_id),
+            client: "admin",
+        }
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppliedTransition {
     /// The row that moved (or already held the target state).
@@ -150,12 +192,30 @@ enum TransitionTxError {
 /// `current_period_end` / `cancel_at_period_end` (the caller
 /// with fresher provider values uses [`apply_domain_event`]).
 /// `reason` names the trigger (a webhook event id, for P1-065)
-/// and is stored on the audit row.
+/// and is stored on the audit row. The audit actor is the
+/// provider (`None` / `"webhook"`) — an admin-driven move
+/// uses [`apply_transition_as`] instead.
 pub async fn apply_transition(
     state: &AppState,
     subscription_id: Uuid,
     to: SubscriptionStatus,
     reason: &str,
+) -> Result<AppliedTransition, AppError> {
+    apply_transition_as(state, subscription_id, to, reason, AuditActor::webhook()).await
+}
+
+/// Move one subscription row to `to` as a named actor
+/// (P1-071, ADR-0036): the support cancel names the calling
+/// admin on the audit row (`actor_user_id` the admin,
+/// `actor_client` `"admin"`) instead of the provider shape.
+/// Same validation, same guarded write, same mail as
+/// [`apply_transition`] — only the audit actor differs.
+pub async fn apply_transition_as(
+    state: &AppState,
+    subscription_id: Uuid,
+    to: SubscriptionStatus,
+    reason: &str,
+    actor: AuditActor,
 ) -> Result<AppliedTransition, AppError> {
     let row = load_row(state, subscription_id).await?;
     apply_validated(
@@ -165,6 +225,7 @@ pub async fn apply_transition(
         row.current_period_end,
         row.cancel_at_period_end,
         reason,
+        actor,
     )
     .await
 }
@@ -202,7 +263,16 @@ pub async fn apply_domain_event(
         } => (*current_period_end, *cancel_at_period_end),
         _ => (row.current_period_end, row.cancel_at_period_end),
     };
-    apply_validated(state, &row, to, period_end, cancel_at_end, reason).await
+    apply_validated(
+        state,
+        &row,
+        to,
+        period_end,
+        cancel_at_end,
+        reason,
+        AuditActor::webhook(),
+    )
+    .await
 }
 
 async fn load_row(state: &AppState, id: Uuid) -> Result<Subscription, AppError> {
@@ -231,6 +301,7 @@ async fn apply_validated(
     period_end: Option<DateTime<Utc>>,
     cancel_at_period_end: bool,
     reason: &str,
+    actor: AuditActor,
 ) -> Result<AppliedTransition, AppError> {
     let from = parse_status(row)?;
     let outcome = transition(from, to).map_err(|_| AppError::InvalidStateTransition)?;
@@ -270,10 +341,22 @@ async fn apply_validated(
     } else {
         (row.past_due_since, row.dunning_step)
     };
+    // A canceled row has no pending period-end cancel: the
+    // flag is cleared on every move to `canceled` (P1-071 —
+    // the support cancel clears a row that was scheduled to
+    // cancel at period end; the provider path agrees — a
+    // provider-canceled subscription carries the flag false).
+    let cancel_at_period_end = if to == SubscriptionStatus::Canceled {
+        false
+    } else {
+        cancel_at_period_end
+    };
     let timeout = PoolConfig::default().transaction_timeout;
     let from_str = from.as_db_str().to_string();
     let to_str = to.as_db_str().to_string();
     let reason_owned = reason.to_string();
+    let actor_client = actor.client.to_string();
+    let actor_user_id = actor.user_id;
     let user_email = user.email.clone();
     let user_id = user.id;
     let plan_code = plan.code.clone();
@@ -282,6 +365,7 @@ async fn apply_validated(
         let from_str = from_str.clone();
         let to_str = to_str.clone();
         let reason_owned = reason_owned.clone();
+        let actor_client = actor_client.clone();
         let user_email = user_email.clone();
         let plan_code = plan_code.clone();
         Box::pin(async move {
@@ -303,8 +387,8 @@ async fn apply_validated(
             audit_logs::insert(
                 &mut *conn,
                 &NewAuditLog {
-                    actor_user_id: None,
-                    actor_client: Some("webhook".to_string()),
+                    actor_user_id,
+                    actor_client: Some(actor_client),
                     action: SUBSCRIPTION_STATUS_CHANGED_ACTION.to_string(),
                     target_type: "subscription".to_string(),
                     target_id: Some(subscription_id.to_string()),

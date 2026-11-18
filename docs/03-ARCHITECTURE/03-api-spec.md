@@ -758,6 +758,7 @@ P1-047).
 | POST | `/v1/admin/users/{id}/suspend` | body: reason; audited |
 | POST | `/v1/admin/users/{id}/restore` | audited |
 | POST | `/v1/admin/users/{id}/quota-grant` | temporary quota bump; audited |
+| POST | `/v1/admin/billing/subscriptions/{id}/cancel` | support cancel (P1-071, FR-P-03): body: reason; admin only; cancels NOW, audited as `billing.subscription.status_changed` |
 
 Suspend/restore (P1-008, FR-A-01): `POST
 /v1/admin/users/{id}/suspend` takes `{"reason": "..."}` (1–500
@@ -906,6 +907,9 @@ the admin block.
 | GET | `/v1/admin/abuse-reports` | queue; POST resolve with action |
 | GET | `/v1/admin/attestations?flagged=` | review queue |
 | GET | `/v1/admin/system` | storage usage, backup status, model registry state |
+| POST | `/v1/admin/billing/subscriptions/{id}/cancel` | support cancel (P1-071, FR-P-03) — see below |
+
+Support cancel (P1-071, FR-P-03): `POST /v1/admin/billing/subscriptions/{id}/cancel` cancels a subscription immediately, for the support workflow. Admin only (`admin.billing.write` — support stays read-only per FR-A-07, so support gets 403 `PF-1002`); no credential is 401 `PF-1001`, an API key is 403, an unknown subscription is 404 `PF-2010`. The body is the audited note (`{"reason": "..."}`, 1–500 chars, the P1-008 suspend shape — 422 `PF-2002` otherwise). The row moves to `canceled` NOW through the P1-064 state machine (`trialing`/`active`/`past_due → canceled`; `cancel_at_period_end` cleared, `current_period_end` kept as history) — not at period end like a P1-069 downgrade-to-Free — and a pending scheduled plan change is mooted (closed as `canceled`). The move is audited as `billing.subscription.status_changed` in the same transaction (actor the calling admin, client `"admin"`, reason the note) and the `subscription-canceled` mail goes out. Canceling an already-canceled subscription is a 200 no-op (`changed: false`, no second audit, no second mail). The response carries the ToS policy snippet (`policy`) and the refund guidance (`refund_guidance: {dashboard_url, note}` — the Stripe dashboard URL for the subscription, where support cancels the Stripe subscription too and issues any refund on the latest invoice/payment). No provider call is made: the Stripe subscription is NOT canceled here and no refund is issued (ASSUMPTION-034).
 
 ### Abuse & compliance
 | Method | Path | Notes |

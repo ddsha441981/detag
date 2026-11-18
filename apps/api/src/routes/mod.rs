@@ -19,7 +19,7 @@
 //! # The route table
 //!
 //! [`ROUTE_TABLE`] is the (method, path) table from the API
-//! spec (`docs/03-ARCHITECTURE/03-api-spec.md`), 68 entries.
+//! spec (`docs/03-ARCHITECTURE/03-api-spec.md`), 69 entries.
 //! It is the test oracle (`apps/api/tests/route_table.rs`):
 //! no duplicate (method, path) pairs, and every entry resolves
 //! to the 501 stub on the built router. When you add a route,
@@ -57,8 +57,8 @@ use self::extractors::RequestId;
 use crate::AppState;
 
 /// The (method, path) table from the API spec. Counts per
-/// module: auth 20, uploads 4, jobs 9, billing 12, admin 21,
-/// meta 2 — 68 total.
+/// module: auth 20, uploads 4, jobs 9, billing 12, admin 22,
+/// meta 2 — 69 total.
 pub const ROUTE_TABLE: &[(&str, &str)] = &[
     // auth (19)
     ("POST", "/v1/auth/register"),
@@ -109,7 +109,7 @@ pub const ROUTE_TABLE: &[(&str, &str)] = &[
     ("POST", "/v1/webhook-endpoints"),
     ("DELETE", "/v1/webhook-endpoints/{id}"),
     ("GET", "/v1/webhook-endpoints/{id}/deliveries"),
-    // admin (20)
+    // admin (21)
     ("GET", "/v1/admin/metrics/dashboard"),
     ("GET", "/v1/admin/users"),
     ("POST", "/v1/admin/users/{id}/suspend"),
@@ -125,6 +125,7 @@ pub const ROUTE_TABLE: &[(&str, &str)] = &[
     ("GET", "/v1/admin/plans"),
     ("PUT", "/v1/admin/plans"),
     ("POST", "/v1/admin/billing/catalog-sync"),
+    ("POST", "/v1/admin/billing/subscriptions/{id}/cancel"),
     ("GET", "/v1/admin/audit"),
     ("GET", "/v1/admin/abuse-reports"),
     ("POST", "/v1/admin/abuse-reports/{id}/resolve"),

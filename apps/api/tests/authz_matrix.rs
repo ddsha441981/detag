@@ -14,7 +14,7 @@
 //!   `Capability::for_route`, and the role table behind it
 //!   admits exactly admin + support on read rows and admin
 //!   only on write/impersonate rows.
-//! - `admin_matrix_live` — the live walk: the 8 live routes
+//! - `admin_matrix_live` — the live walk: the 9 live routes
 //!   × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key), asserting the status
 //!   the matrix predicts — 401 `PF-1001` with no credential,
@@ -63,11 +63,11 @@ struct MatrixRow {
     live: bool,
 }
 
-/// The matrix: all 20 `/v1/admin/*` routes. The public
+/// The matrix: all 21 `/v1/admin/*` routes. The public
 /// `POST /v1/abuse` intake lives in the admin module but is
 /// not an admin route — it has no row (and no capability).
 const MATRIX: &[MatrixRow] = &[
-    // Live (6)
+    // Live (7)
     MatrixRow {
         method: "GET",
         path: "/v1/admin/users",
@@ -101,6 +101,12 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow {
         method: "POST",
         path: "/v1/admin/billing/catalog-sync",
+        capability: Capability::AdminBillingWrite,
+        live: true,
+    },
+    MatrixRow {
+        method: "POST",
+        path: "/v1/admin/billing/subscriptions/{id}/cancel",
         capability: Capability::AdminBillingWrite,
         live: true,
     },
@@ -205,12 +211,12 @@ fn matrix_covers_every_admin_route() {
         .collect();
     assert_eq!(
         admin_routes.len(),
-        20,
-        "ROUTE_TABLE must hold the 20 /v1/admin/* routes (the public POST /v1/abuse intake is not one)"
+        21,
+        "ROUTE_TABLE must hold the 21 /v1/admin/* routes (the public POST /v1/abuse intake is not one)"
     );
     assert_eq!(
         MATRIX.len(),
-        20,
+        21,
         "the matrix must hold one row per admin route ({} rows today)",
         MATRIX.len()
     );
@@ -394,6 +400,28 @@ async fn create_key(app: &TestApp, token: &str) -> String {
 /// concrete `{id}`, and an optional JSON body (the write
 /// rows need `{"reason": ...}` so an admitted caller
 /// reaches the handler instead of a body rejection).
+/// Seed an active Pro subscription for the user; return its
+/// id. The cancel row in the live walk needs a real
+/// subscription to reach 200 (an unknown id is 404).
+async fn seed_subscription(app: &TestApp, user_id: Uuid) -> Uuid {
+    let plan_id: Uuid = sqlx::query_scalar("SELECT id FROM plans WHERE code = $1")
+        .bind("pro")
+        .fetch_one(&app.pool)
+        .await
+        .expect("plan id");
+    sqlx::query_scalar(
+        "INSERT INTO subscriptions (user_id, plan_id, provider, provider_customer_id, provider_subscription_id, status) \
+         VALUES ($1, $2, 'stripe', $3, $4, 'active') RETURNING id",
+    )
+    .bind(user_id)
+    .bind(plan_id)
+    .bind(format!("cus_p1071_{}", Uuid::now_v7()))
+    .bind(format!("sub_p1071_{}", Uuid::now_v7()))
+    .fetch_one(&app.pool)
+    .await
+    .expect("seed subscription")
+}
+
 async fn probe(
     app: &TestApp,
     method: &str,
@@ -433,7 +461,7 @@ fn problem_code(res: &common::TestResponse) -> String {
 
 #[tokio::test]
 async fn admin_matrix_live() {
-    // The live walk: the 7 live rows × 5 caller kinds.
+    // The live walk: the 9 live rows × 5 caller kinds.
     // Order per row is anonymous → user → support → admin
     // → key, so the mutating admin call (suspend,
     // impersonate) runs last and cannot affect the earlier
@@ -452,6 +480,11 @@ async fn admin_matrix_live() {
     let (suspend_target, _) = make_role(&app, &unique_email("target-s"), "user").await;
     let (restore_target, _) = make_role(&app, &unique_email("target-r"), "user").await;
     let (impersonate_target, _) = make_role(&app, &unique_email("target-i"), "user").await;
+    // The cancel row needs a real subscription to reach 200
+    // (an unknown id is 404): seed one for a sacrificial
+    // user.
+    let (cancel_target_user, _) = make_role(&app, &unique_email("target-c"), "user").await;
+    let cancel_target = seed_subscription(&app, cancel_target_user).await;
 
     for row in MATRIX.iter().filter(|row| row.live) {
         let is_read = row.capability.code().ends_with(".read");
@@ -465,6 +498,12 @@ async fn admin_matrix_live() {
             "/v1/admin/users/{id}/restore" => (Some(restore_target), None),
             "/v1/admin/users/{id}/impersonate" => (
                 Some(impersonate_target),
+                Some(json!({ "reason": "authz matrix probe" })),
+            ),
+            // The cancel row needs a real subscription id +
+            // a reason for the admitted caller to reach 200.
+            "/v1/admin/billing/subscriptions/{id}/cancel" => (
+                Some(cancel_target),
                 Some(json!({ "reason": "authz matrix probe" })),
             ),
             // The plans PUT needs a valid body for the

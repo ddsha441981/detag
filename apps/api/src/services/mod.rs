@@ -26,6 +26,7 @@ pub mod register;
 pub mod revocation;
 pub mod sessions;
 pub mod subscription_state;
+pub mod support_cancel;
 pub mod usage_attribution;
 pub mod verification;
 pub mod webhook;
