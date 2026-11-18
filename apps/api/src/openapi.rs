@@ -77,7 +77,7 @@ use crate::services::admin_plans::{
     PlanEdit, PlanEntitlementsEdit, PlanView, PlansResponse, UpdatePlansRequest,
 };
 use crate::services::api_keys::{CreateApiKeyRequest, CreateApiKeyResponse};
-use crate::services::checkout::CheckoutRequestBody;
+use crate::services::checkout::{CheckoutRequestBody, CheckoutResponse, ScheduledChangeResponse};
 use crate::services::login::{LoginRequest, LoginResponse};
 use crate::services::password_reset::{ForgotPasswordRequest, ResetPasswordRequest};
 use crate::services::profile::{PatchProfileRequest, ProfileResponse};
@@ -128,8 +128,9 @@ use crate::AppState;
         PlanEdit,
         PlanEntitlementsEdit,
         CheckoutRequestBody,
+        CheckoutResponse,
+        ScheduledChangeResponse,
         crate::services::webhook::WebhookReceipt,
-        detag_billing::CheckoutSession,
         detag_billing::CatalogDriftReport,
         detag_billing::PlanSyncResult,
         detag_billing::SyncAction,

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE subscriptions\n         SET plan_id = $2, updated_at = now()\n         WHERE id = $1 AND status IN ('trialing', 'active')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c94b99f87fc83470109a189985e9c86cfa4343b27ad94bfbcd8e114b2bb52b2b"
+}

@@ -259,6 +259,16 @@ impl BillingProvider for StripeAdapter {
                 cancel_url: Some(req.cancel_url.as_str()),
                 customer: customer_id,
                 client_reference_id: Some(user_id.as_str()),
+                // An upgrade names the live subscription it
+                // replaces (P1-069): the id rides as
+                // subscription metadata so the webhook can
+                // supersede the old row when the new checkout
+                // completes (ASSUMPTION-032 — the webhook does
+                // not read it yet). A first purchase sends no
+                // `subscription_data` at all.
+                subscription_data: upgrade_subscription_data(
+                    req.upgrade_from_provider_subscription_id.as_deref(),
+                ),
                 ..Default::default()
             },
         )
@@ -547,6 +557,33 @@ impl BillingProvider for StripeAdapter {
     }
 }
 
+/// The subscription-metadata key carrying the live
+/// subscription an upgrade checkout replaces (P1-069).
+/// The webhook reads it when the new checkout completes
+/// (ASSUMPTION-032); the value is a provider subscription
+/// id (`sub_...`), never a secret.
+const UPGRADE_FROM_METADATA_KEY: &str = "detag_upgrade_from";
+
+/// The `subscription_data` for a checkout: `None` for a
+/// first purchase, metadata carrying the superseded
+/// subscription for an upgrade. Pure, so the mapping is a
+/// unit test even though the checkout call itself needs the
+/// network (ASSUMPTION-023).
+fn upgrade_subscription_data(
+    upgrade_from_provider_subscription_id: Option<&str>,
+) -> Option<stripe::CreateCheckoutSessionSubscriptionData> {
+    upgrade_from_provider_subscription_id.map(|from| {
+        stripe::CreateCheckoutSessionSubscriptionData {
+            metadata: Some(
+                [(UPGRADE_FROM_METADATA_KEY.to_owned(), from.to_owned())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..Default::default()
+        }
+    })
+}
+
 /// The plan code for a Stripe product — the `detag_plan_code`
 /// metadata value, when the product carries one.
 fn product_plan_code(product: &stripe::Product) -> Option<String> {
@@ -765,6 +802,25 @@ mod tests {
         // Both `BillingProvider` and `CatalogProvider` define
         // `provider_name` — disambiguate to the trait under test.
         assert_eq!(BillingProvider::provider_name(&adapter()), PROVIDER_STRIPE);
+    }
+
+    #[test]
+    fn upgrade_subscription_data_carries_the_superseded_id() {
+        // A first purchase sends no subscription_data at all.
+        assert!(upgrade_subscription_data(None).is_none());
+        // An upgrade carries exactly the superseded provider
+        // subscription id, under the documented key — and
+        // nothing else (no price, no proration behaviour:
+        // Stripe's default `create_prorations` applies).
+        let data = upgrade_subscription_data(Some("sub_old_123"))
+            .expect("an upgrade has subscription_data");
+        let metadata = data.metadata.expect("metadata is set");
+        assert_eq!(
+            metadata.get(UPGRADE_FROM_METADATA_KEY).map(String::as_str),
+            Some("sub_old_123")
+        );
+        assert_eq!(metadata.len(), 1);
+        assert!(data.proration_behavior.is_none());
     }
 
     #[test]

@@ -32,6 +32,7 @@ pub mod idempotency;
 pub mod job_events;
 pub mod jobs;
 pub mod login_attempts;
+pub mod plan_changes;
 pub mod plans;
 pub mod sessions;
 pub mod subscriptions;

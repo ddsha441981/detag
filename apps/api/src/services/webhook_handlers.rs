@@ -17,6 +17,11 @@
 //!   the row by provider subscription id and apply the move through
 //!   [`subscription_state::apply_domain_event`](crate::services::subscription_state::apply_domain_event)
 //!   (P1-064's service: guarded write + audit + lifecycle mail).
+//!   A status change that rolls the period also runs the
+//!   scheduled-change applier (P1-069,
+//!   [`plan_changes::apply_due_changes`](crate::services::plan_changes::apply_due_changes)):
+//!   a pending downgrade whose `effective_at` has passed flips
+//!   the row to its target plan in the same delivery.
 //! * `InvoicePaid` — no lifecycle effect by itself (a past-due
 //!   recovery arrives as a `SubscriptionStatusChanged` to `active`
 //!   alongside it, P1-064): the handler resolves the row and
@@ -195,10 +200,32 @@ async fn apply_to_subscription(
         crate::services::subscription_state::apply_domain_event(state, row.id, event, event_id)
             .await;
     match applied {
-        Ok(applied) => Ok(HandlerOutcome::Transitioned {
-            subscription_id: applied.subscription_id,
-            changed: applied.changed,
-        }),
+        Ok(applied) => {
+            // The period may have rolled with this event: a
+            // pending scheduled downgrade comes due with it
+            // (P1-069). The applier reads the event's period
+            // end as the roll evidence; its own failure is a
+            // real failure (Internal → the receiver answers
+            // 500 and Stripe retries — the change row is
+            // still `scheduled`, so the retry applies it).
+            let period_end_evidence = match event {
+                DomainEvent::SubscriptionStatusChanged {
+                    current_period_end, ..
+                } => *current_period_end,
+                _ => None,
+            };
+            crate::services::plan_changes::apply_due_changes(
+                state,
+                row.id,
+                period_end_evidence,
+                event_id,
+            )
+            .await?;
+            Ok(HandlerOutcome::Transitioned {
+                subscription_id: applied.subscription_id,
+                changed: applied.changed,
+            })
+        }
         Err(AppError::InvalidStateTransition) => {
             tracing::info!(
                 event_id = event_id,

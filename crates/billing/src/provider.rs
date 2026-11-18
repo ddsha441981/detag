@@ -167,6 +167,15 @@ pub struct CheckoutRequest {
     pub success_url: String,
     /// Where the provider sends the buyer on cancel.
     pub cancel_url: String,
+    /// The live provider subscription this checkout upgrades
+    /// from (`sub_...`), when the buyer already holds one
+    /// (P1-069): the adapter writes it to the session's
+    /// `subscription_data.metadata` (`detag_upgrade_from`) so
+    /// a later ticket can supersede the old row when the new
+    /// checkout completes — the webhook does not read it yet
+    /// (ASSUMPTION-032). `None` is a first purchase: no
+    /// metadata, no supersede.
+    pub upgrade_from_provider_subscription_id: Option<String>,
 }
 
 /// What `create_checkout` returns: the hosted session to redirect the
@@ -566,6 +575,7 @@ mod tests {
                 price_id: price_id.to_owned(),
                 success_url: "https://app.example/success".to_owned(),
                 cancel_url: "https://app.example/cancel".to_owned(),
+                upgrade_from_provider_subscription_id: None,
             })
             .await
             .expect("fake checkout succeeds")
@@ -611,6 +621,7 @@ mod tests {
                 price_id: String::new(),
                 success_url: "https://app.example/success".to_owned(),
                 cancel_url: "https://app.example/cancel".to_owned(),
+                upgrade_from_provider_subscription_id: None,
             })
             .await
             .expect_err("empty price must fail");
