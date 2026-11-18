@@ -287,6 +287,49 @@ mod tests {
             period_start_from_end(utc(2026, 3, 31, 0, 0, 0)),
             utc(2026, 2, 28, 0, 0, 0)
         );
+        // Leap year: 31 March 2024 → 29 February 2024.
+        assert_eq!(
+            period_start_from_end(utc(2024, 3, 31, 0, 0, 0)),
+            utc(2024, 2, 29, 0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn upgrade_before_period_start_clamps_to_full() {
+        // The clock jumped (or the row is stale): `now` before
+        // the period start clamps the fraction to the whole
+        // period — the buyer is charged the full legs, never
+        // more than the plan prices.
+        let start = utc(2026, 11, 3, 0, 0, 0);
+        let end = utc(2026, 12, 3, 0, 0, 0);
+        let early = utc(2026, 11, 1, 0, 0, 0);
+        let p = preview(49_900, 199_900, start, end, early);
+        assert_eq!((p.credit_paise, p.charge_paise), (49_900, 199_900));
+        assert_eq!(p.net_paise, 150_000);
+    }
+
+    #[test]
+    fn upgrade_one_second_before_period_end_is_near_zero() {
+        // One second of a 30-day period: both legs floor to
+        // zero — the preview never shows a phantom paise, and
+        // the net is never negative.
+        let start = utc(2026, 11, 3, 0, 0, 0);
+        let end = utc(2026, 12, 3, 0, 0, 0);
+        let last_second = end - Duration::seconds(1);
+        let p = preview(49_900, 199_900, start, end, last_second);
+        assert_eq!((p.credit_paise, p.charge_paise), (0, 0));
+        assert_eq!(p.net_paise, 0);
+        assert!(p.net_paise >= 0);
+    }
+
+    #[test]
+    fn zero_length_period_prorates_zero() {
+        // Start == end: no period to prorate — the zero guard
+        // in `prorate` holds, never a divide by zero.
+        let at = utc(2026, 11, 18, 0, 0, 0);
+        let p = preview(49_900, 199_900, at, at, at);
+        assert_eq!((p.credit_paise, p.charge_paise, p.net_paise), (0, 0, 0));
+        assert_eq!(p.effective_at, at);
     }
 
     #[test]
