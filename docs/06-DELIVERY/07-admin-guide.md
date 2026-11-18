@@ -48,7 +48,7 @@ Two rules ride on top of the role table, for every row:
 
 ## The matrix
 
-One row per admin route (19 routes). **Capability** is the
+One row per admin route (21 routes). **Capability** is the
 stable code string the guards consult; **Admitted** is who
 the matrix lets in. **Status** is whether the handler is
 live or still a 501 stub — a stub route is still guarded
@@ -74,6 +74,8 @@ views — and neither are denials, 404s, or 501 stubs.
 | PUT | `/v1/admin/flags` | `admin.flags.write` | admin | stub | `admin.flags.updated` |
 | GET | `/v1/admin/plans` | `admin.plans.read` | admin, support | live | — |
 | PUT | `/v1/admin/plans` | `admin.plans.write` | admin | live | `admin.plans.updated` |
+| POST | `/v1/admin/billing/catalog-sync` | `admin.billing.write` | admin | live | `admin.billing.catalog_synced` |
+| POST | `/v1/admin/billing/subscriptions/{id}/cancel` | `admin.billing.write` | admin | live | `billing.subscription.status_changed` |
 | GET | `/v1/admin/audit` | `admin.audit.read` | admin, support | stub | — |
 | GET | `/v1/admin/abuse-reports` | `admin.abuse.read` | admin, support | stub | — |
 | POST | `/v1/admin/abuse-reports/{id}/resolve` | `admin.abuse.write` | admin | stub | `admin.abuse_reports.resolved` |
@@ -121,6 +123,7 @@ Notes on the live routes:
   `admin.plans.updated` with the changed codes in `after`. The pricing
   change procedure (where defaults live, Stripe dashboard steps,
   rollout) is `docs/06-DELIVERY/10-pricing-config.md`.
+- **Support cancel** (P1-071): `POST /v1/admin/billing/subscriptions/{id}/cancel` cancels a subscription immediately, for the support workflow — admin only (support stays read-only, so support files the request and an admin executes it). Body is the audited note (`{"reason": "..."}`, 1–500 chars); the row moves to `canceled` now (not at period end, like a P1-069 downgrade-to-Free), a pending scheduled change is mooted, the `subscription-canceled` mail goes out, and the call audits as `billing.subscription.status_changed` with the admin as actor. Already-canceled is a 200 no-op. The response carries the ToS policy snippet and the Stripe-dashboard refund guidance — refunds are dashboard-only, and the Stripe subscription must ALSO be canceled in the dashboard, or billing continues (ASSUMPTION-034). The refund & cancel policy is `docs/06-DELIVERY/10-pricing-config.md`.
 - The public abuse intake (`POST /v1/abuse`) is **not** an
   admin route: it takes no credential and never reaches the
   matrix or the audit middleware.
@@ -129,7 +132,7 @@ Notes on the live routes:
 
 A successful admin write writes exactly one audit row —
 actor (the admin), action (the table above), target type +
-id, and before/after where the service has them. The three
+id, and before/after where the service has them. The four
 live writes write their row inside the same transaction as
 the mutation (P1-008's atomicity) and mark the response
 `AuditHandled`; every other write is audited by the P1-046
@@ -177,7 +180,7 @@ change, do all of these in the same commit:
    through `for_route` and admits exactly the promised
    roles; live walk: the live routes × anonymous / user /
    support / admin / an admin user's key),
-   `apps/api/tests/admin_guard.rs` (the 19-route walk, the
+   `apps/api/tests/admin_guard.rs` (the 21-route walk, the
    audit proof, the denied/stub audit-nothing proof), and
    `apps/api/tests/api_key_matrix.rs` if the counts move
    (its rows are per `/v1` route, not per admin route — a

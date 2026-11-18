@@ -14,7 +14,9 @@
 //! `GET /v1/admin/jobs`, real since P1-038 (in this file),
 //! `GET` / `PUT /v1/admin/plans`, real since P1-056 (in
 //! this file), and `POST /v1/admin/billing/catalog-sync`,
-//! real since P1-061 (in this file).
+//! real since P1-061 (in this file), and `POST
+//! /v1/admin/billing/subscriptions/{id}/cancel`, real since
+//! P1-071 (in this file).
 //! Every route — live or stub — sits behind the matrix guard
 //! (P1-043): the stubs take `admin_stub` / `admin_read_stub`
 //! below, so an unauthenticated or wrong-role caller is
@@ -52,6 +54,9 @@ use crate::{
         },
         catalog_sync::{run_catalog_sync, CatalogSyncError},
         register::UserResponse,
+        support_cancel::{
+            support_cancel as support_cancel_service, SupportCancelError, SupportCancelResponse,
+        },
     },
     AppState,
 };
@@ -574,6 +579,85 @@ pub async fn catalog_sync_handler(
     }
 }
 
+/// POST /v1/admin/billing/subscriptions/{id}/cancel
+/// (P1-071): cancel a subscription immediately, as the
+/// calling admin, for the support workflow. Admin only;
+/// support gets 403 `PF-1002` from the extractor (support
+/// stays read-only per FR-A-07 — "support-facing" describes
+/// the workflow, not a new role), no credential gets 401
+/// `PF-1001`, an API key gets 403. The body is the audited
+/// note (`ReasonRequest`, 1–500 chars — the P1-008 suspend
+/// precedent); it lands on the audit row verbatim. The row
+/// moves to `canceled` NOW (not at period end, like a
+/// P1-069 downgrade-to-Free); a pending scheduled change is
+/// mooted; the `subscription-canceled` mail goes out; the
+/// response carries the ToS policy snippet + the Stripe
+/// dashboard refund guidance. No provider call is made — the
+/// Stripe subscription is NOT canceled here and no refund is
+/// issued (ASSUMPTION-034). Canceling an already-canceled
+/// subscription is a 200 no-op (`changed: false`). The
+/// service wrote the audit row in the same transaction as
+/// the move, so the handler marks `AuditHandled` and the
+/// P1-046 middleware stands down (also on the no-op, which
+/// deliberately writes none) — the row exists exactly once.
+#[utoipa::path(
+    post,
+    path = "/v1/admin/billing/subscriptions/{id}/cancel",
+    request_body = ReasonRequest,
+    responses(
+        (status = 200, description = "Canceled (or already canceled) — the policy snippet and the dashboard refund guidance ride the response", body = SupportCancelResponse),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified non-admin, incl. support, or an API key)", body = Problem),
+        (status = 404, description = "No such subscription (PF-2010)", body = Problem),
+        (status = 409, description = "The move lost a race with a concurrent transition (PF-5002) — re-read and retry", body = Problem),
+        (status = 422, description = "Reason missing, blank, too long, or with control characters", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn cancel_subscription(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    admin: AdminContext,
+    Path(subscription_id): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<ReasonRequest>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let Some(admin_user) = admin.auth.user else {
+        // The extractor guarantees a user for a verified context.
+        return ProblemResponse(AppError::Internal.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
+    match support_cancel_service(&state, &admin_user, subscription_id, &req.reason).await {
+        Ok(outcome) => {
+            // The service wrote the audit row in the same
+            // transaction as the mutation (P1-064) — mark the
+            // response so the P1-046 middleware stands down and
+            // the row exists exactly once (also on the
+            // idempotent no-op, which deliberately writes none).
+            let mut response = Json(outcome).into_response();
+            response.extensions_mut().insert(AuditHandled);
+            response
+        }
+        Err(SupportCancelError::NotFound) => {
+            ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(SupportCancelError::Conflict) => ProblemResponse(
+            AppError::InvalidStateTransition.to_problem(Profile::Production, request_id, None),
+        )
+        .into_response(),
+        Err(SupportCancelError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// The guarded 501 stubs (P1-043): the same 501 `PF-5004` as
 /// the shared [`stub`](super::stub), but behind the matrix
 /// guard — so a route whose handler has not landed yet still
@@ -611,7 +695,7 @@ async fn admin_read_stub(
 /// The nest carries the P1-046 audit middleware
 /// ([`audit_admin_writes`]): a successful admin write gets
 /// exactly one audit row from the route metadata, unless the
-/// handler marked its response [`AuditHandled`] (the three live
+/// handler marked its response [`AuditHandled`] (the four live
 /// writes do — their services write the row in the mutation's
 /// transaction). Reads and non-2xx responses audit nothing.
 /// The middleware needs the state ([`middleware::from_fn`]
@@ -636,6 +720,10 @@ pub fn router(state: AppState) -> Router<AppState> {
                 .route("/flags", get(admin_read_stub).put(admin_stub))
                 .route("/plans", get(list_plans_handler).put(update_plans_handler))
                 .route("/billing/catalog-sync", post(catalog_sync_handler))
+                .route(
+                    "/billing/subscriptions/{id}/cancel",
+                    post(cancel_subscription),
+                )
                 .route("/audit", get(admin_read_stub))
                 .route("/abuse-reports", get(admin_read_stub))
                 .route("/abuse-reports/{id}/resolve", post(admin_stub))

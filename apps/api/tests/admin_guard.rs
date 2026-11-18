@@ -8,14 +8,15 @@
 //! rejected before the 501, exactly like on a live route. Two
 //! more routes went live since (P1-056: `GET` / `PUT
 //! /v1/admin/plans`; P1-061: `POST
-//! /v1/admin/billing/catalog-sync`), so the walk now covers 8
-//! live routes and 12 stubs. The three tests:
+//! /v1/admin/billing/catalog-sync`; P1-071: `POST
+//! /v1/admin/billing/subscriptions/{id}/cancel`), so the walk
+//! now covers 9 live routes and 12 stubs. The three tests:
 //!
-//! - `admin_guard_on_every_route` — the walk: all 20 admin
+//! - `admin_guard_on_every_route` — the walk: all 21 admin
 //!   routes × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key). Anonymous is 401
 //!   `PF-1001`, a wrong role or a key is 403 `PF-1002`, an
-//!   admitted role is 200 on the 8 live routes and 501
+//!   admitted role is 200 on the 9 live routes and 501
 //!   `PF-5004` on the 12 stubs — except the catalog sync,
 //!   whose admitted admin gets 503 `PF-5005` (billing is
 //!   unconfigured in the test environment: no Stripe key).
@@ -162,6 +163,28 @@ async fn create_key(app: &TestApp, token: &str) -> String {
     res.json()["secret"].as_str().unwrap().to_string()
 }
 
+/// Seed an active Pro subscription for the user; return its
+/// id. The cancel row in the walk needs a real subscription
+/// to reach 200 (an unknown id is 404).
+async fn seed_subscription(app: &TestApp, user_id: Uuid) -> Uuid {
+    let plan_id: Uuid = sqlx::query_scalar("SELECT id FROM plans WHERE code = $1")
+        .bind("pro")
+        .fetch_one(&app.pool)
+        .await
+        .expect("plan id");
+    sqlx::query_scalar(
+        "INSERT INTO subscriptions (user_id, plan_id, provider, provider_customer_id, provider_subscription_id, status) \
+         VALUES ($1, $2, 'stripe', $3, $4, 'active') RETURNING id",
+    )
+    .bind(user_id)
+    .bind(plan_id)
+    .bind(format!("cus_p1071_{}", Uuid::now_v7()))
+    .bind(format!("sub_p1071_{}", Uuid::now_v7()))
+    .fetch_one(&app.pool)
+    .await
+    .expect("seed subscription")
+}
+
 /// One guard probe: the route with an optional credential
 /// (`None` = anonymous), an optional concrete `{id}`, and an
 /// optional JSON body (the write rows need `{"reason": ...}`
@@ -250,7 +273,7 @@ struct GuardRow {
     read: bool,
 }
 
-/// All 19 `/v1/admin/*` routes. The read flag comes from the
+/// All 21 `/v1/admin/*` routes. The read flag comes from the
 /// matrix: a capability whose code ends in `.read`.
 const GUARD_ROWS: &[GuardRow] = &[
     GuardRow {
@@ -344,6 +367,12 @@ const GUARD_ROWS: &[GuardRow] = &[
         read: false,
     },
     GuardRow {
+        method: "POST",
+        path: "/v1/admin/billing/subscriptions/{id}/cancel",
+        live: true,
+        read: false,
+    },
+    GuardRow {
         method: "GET",
         path: "/v1/admin/audit",
         live: false,
@@ -377,7 +406,7 @@ const GUARD_ROWS: &[GuardRow] = &[
 
 #[tokio::test]
 async fn admin_guard_on_every_route() {
-    // The walk: all 19 admin routes × 5 caller kinds. The
+    // The walk: all 21 admin routes × 5 caller kinds. The
     // read/write flag must agree with the matrix — a row
     // whose flag disagrees with its capability fails here,
     // so the walk cannot drift from the P1-042 table.
@@ -393,7 +422,7 @@ async fn admin_guard_on_every_route() {
             row.path
         );
     }
-    assert_eq!(GUARD_ROWS.len(), 20, "one row per admin route");
+    assert_eq!(GUARD_ROWS.len(), 21, "one row per admin route");
 
     let app = guard_app().await;
     let (user_token, support_token, admin_token, admin_key, _admin_id) = callers(&app).await;
@@ -402,6 +431,11 @@ async fn admin_guard_on_every_route() {
     let (suspend_target, _) = make_role(&app, &unique_email("target-s"), "user").await;
     let (restore_target, _) = make_role(&app, &unique_email("target-r"), "user").await;
     let (impersonate_target, _) = make_role(&app, &unique_email("target-i"), "user").await;
+    // The cancel row needs a real subscription to reach 200
+    // (an unknown id is 404): seed one for a sacrificial
+    // user.
+    let (cancel_target_user, _) = make_role(&app, &unique_email("target-c"), "user").await;
+    let cancel_target = seed_subscription(&app, cancel_target_user).await;
 
     for row in GUARD_ROWS {
         // The target + body the row needs when the caller
@@ -414,6 +448,12 @@ async fn admin_guard_on_every_route() {
             "/v1/admin/users/{id}/restore" => (Some(restore_target), None),
             "/v1/admin/users/{id}/impersonate" => (
                 Some(impersonate_target),
+                Some(json!({ "reason": "guard probe" })),
+            ),
+            // The cancel row needs a real subscription id +
+            // a reason for the admitted caller to reach 200.
+            "/v1/admin/billing/subscriptions/{id}/cancel" => (
+                Some(cancel_target),
                 Some(json!({ "reason": "guard probe" })),
             ),
             // The plans PUT needs a valid body for the

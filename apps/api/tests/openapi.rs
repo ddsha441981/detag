@@ -47,6 +47,10 @@ async fn openapi_json_serves_the_generated_spec_in_dev() {
     assert!(spec["paths"]["/healthz"].is_object(), "{spec}");
     assert!(spec["paths"]["/readyz"].is_object(), "{spec}");
     assert!(
+        spec["paths"]["/v1/admin/billing/subscriptions/{id}/cancel"]["post"].is_object(),
+        "the spec must carry the support-cancel path: {spec}"
+    );
+    assert!(
         spec["components"]["schemas"]["Problem"].is_object(),
         "the spec must carry the Problem error schema: {spec}"
     );

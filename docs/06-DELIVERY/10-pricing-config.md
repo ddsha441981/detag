@@ -231,6 +231,20 @@ check that the id exists in Stripe.
   `detag_upgrade_from` metadata for it; the newest-live-wins
   rule makes the upgrade effective meanwhile).
 
+## Refund & cancel policy (P1-071)
+
+The ToS policy snippet — one const in
+`apps/api/src/services/support_cancel.rs`
+(`REFUND_CANCEL_POLICY`), returned as `policy` on every
+support-cancel response and quoted verbatim here:
+
+> Cancelling ends the subscription immediately: paid access stops at once. No prorated refund is issued automatically — refunds are at support's discretion and are issued in the Stripe dashboard. This endpoint stops access; it does not cancel the Stripe subscription or move money — cancel it in the dashboard too, so billing stops.
+
+- **Support cancel** — `POST /v1/admin/billing/subscriptions/{id}/cancel` (admin only; support stays read-only, so support files the request and an admin executes it). The row moves to `canceled` NOW (not at period end like a P1-069 downgrade-to-Free); a pending scheduled downgrade is mooted; the `subscription-canceled` mail goes out; the call is audited as `billing.subscription.status_changed` with the admin as actor and the support note as `reason`.
+- **Refunds are dashboard-only** — there is no refund endpoint and no refund API call. The cancel response carries `refund_guidance: {dashboard_url, note}`: the Stripe dashboard URL for the subscription (`https://dashboard.stripe.com/subscriptions/{provider_subscription_id}`), where support cancels the Stripe subscription too (so billing stops) and issues any refund on the latest invoice or payment.
+- **Two-step cancel, until the provider leg lands** — the endpoint cancels OUR row only (no provider call, ASSUMPTION-034): access stops at once, but Stripe keeps billing until the subscription is canceled in the dashboard. The provider-side cancel leg is a follow-up; until then the dashboard step is mandatory, not optional.
+- **Customer self-cancel** stays portal-side (above): the customer cancels in the Stripe portal; the webhook lands the `canceled` move. The portal's cancel timing (immediate vs period end) is the dashboard's default portal configuration, not code.
+
 ## Related docs
 
 - Open question #2 — `docs/02-REQUIREMENTS/06-open-questions.md`

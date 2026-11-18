@@ -5,11 +5,10 @@
 //! path a request takes):
 //!
 //! 1. The table itself has no duplicate (method, path) pairs
-//!    and has the 66 entries the API spec lists (63 from the
-//!    spec + `POST /v1/auth/resend-verification`, added by
-//!    P1-002 — the spec names no resend route — + `POST
-//!    /v1/auth/confirm-email-change`, added by P1-006 — the
-//!    spec names no confirm route either).
+//!    and has the 69 entries the route table lists (auth 20 +
+//!    uploads 4 + jobs 9 + billing 12 + admin 22 — the 21
+//!    `/v1/admin/*` routes plus the public `POST /v1/abuse`
+//!    intake — + meta 2).
 //! 2. Every table entry resolves to the 501 stub (never 404):
 //!    the route exists and its handler is the shared stub.
 //!    A duplicate or overlapping route would already have
@@ -29,7 +28,7 @@
 //!    admin suspend/restore, P1-009 `GET /v1/admin/users`, and
 //!    P1-010 admin impersonate answer 401 PF-1001 for the probe
 //!    (no credential — the auth extractor rejects before the
-//!    handler runs), as do all 14 remaining admin stubs since
+//!    handler runs), as do all remaining admin stubs since
 //!    P1-043 put the matrix guard on them. P1-014 `POST
 //!    /v1/auth/refresh` and P1-017 `POST /v1/auth/logout` also answer 401 PF-1001 (no
 //!    cookie — the handler reads the refresh token from the
@@ -42,6 +41,8 @@
 //!    stub, so they answer 401 PF-1001 the same way. P1-062
 //!    `POST /v1/billing/checkout` answers 401 PF-1001 the same
 //!    way (JWT only), as does P1-067 `POST /v1/billing/portal`.
+//!    P1-071 `POST /v1/admin/billing/subscriptions/{id}/cancel`
+//!    answers 401 PF-1001 the same way (admin only).
 //!    P1-063 `POST /v1/webhooks/stripe` answers
 //!    503 PF-5005 (billing not configured in the probe app —
 //!    the signature check needs a provider first).
@@ -87,15 +88,15 @@ fn route_table_has_no_duplicates() {
     }
     assert_eq!(
         ROUTE_TABLE.len(),
-        68,
-        "ROUTE_TABLE must list the spec's 68 routes (auth 20 + uploads 4 + jobs 9 + billing 12 + admin 21 + meta 2)"
+        69,
+        "ROUTE_TABLE must list the spec's 69 routes (auth 20 + uploads 4 + jobs 9 + billing 12 + admin 22 + meta 2)"
     );
 }
 
 #[tokio::test]
 async fn every_table_entry_resolves_to_the_stub() {
     let router = test_router();
-    // The probes send 65 /v1 requests in one burst through the
+    // The probes send 67 /v1 requests in one burst through the
     // rate limiter (P0-103). They use a per-run XFF address so
     // they never share the oneshot "unknown" bucket with the
     // other test binaries running in parallel — the aggregate
@@ -232,7 +233,9 @@ async fn every_table_entry_resolves_to_the_stub() {
         // /v1/admin/* stub (the guarded stub), and P1-062
         // POST /v1/billing/checkout, and P1-067 POST
         // /v1/billing/portal, and P1-068 GET
-        // /v1/billing/invoices: real handlers behind an
+        // /v1/billing/invoices, and P1-071 POST
+        // /v1/admin/billing/subscriptions/{id}/cancel: real
+        // handlers behind an
         // auth extractor — the probe sends no credential, so
         // the extractor rejects with 401 PF-1001 (not 501)
         // and echoes the probe id (the route exists; each
