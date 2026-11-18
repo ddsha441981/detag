@@ -592,11 +592,12 @@
 
 ## E1.8 — Razorpay adapter (area: billing/razorpay)
 
-- [ ] **P1-073** — Razorpay adapter
+- [x] **P1-073** — Razorpay adapter
   - **Type:** feat · **Area:** billing/razorpay · **Est:** M · **Deps:** — · **Prio:** P1
   - **Spec:** BillingProvider impl: checkout link, subscription mapping (best-effort to our states), PF_RAZORPAY_* config; flag OFF default; India-market intent documented.
   - **AC:**
-    - [ ] flag-off endpoints 404
+    - [x] flag-off endpoints 404
+  - **Status:** DONE 2026-11-18 (91st coordinator implemented, 92nd adopted + launched verify attempts 4–7, 93rd restored after the 72nd reset + launched attempt 8 green + finished + committed as one commit) — full `just verify` green: 1017 passed, 0 failed (1000 + 17 new: 13 razorpay unit + 3 razorpay_flag live + 1 config unit), attempt 8, ~56 min, no flakes; attempts 1–3 NOT adopted (fmt/clippy failures, fixed by the 91st); attempts 4–7 killed by VM resets 68th/69th/71st/72nd (no VERIFY_EXIT). The 93rd ADOPTED attempt 8: launched 22:33:39 UTC, VERIFY_EXIT=0 23:29:09 UTC, 128 test-result lines, 0 FAILED; git diff sha256 at launch == at green (99b034f0…), no file changed after launch. New `crates/billing/src/razorpay.rs` (RazorpayAdapter: reqwest + rustls, Basic auth, subscription-create checkout, best-effort status mapping, HMAC webhook verify) + migration `20261118182355_razorpay_plan_id` + `apps/api/tests/razorpay_flag.rs` (3 live tests) incl. the AC (flag-off endpoints 404; flag-on answers the shared stub's 501 PF-5004 — the receiver lands in P1-074). Config PF_RAZORPAY_KEY/SECRET/WEBHOOK_SECRET + PF_FEATURE_RAZORPAY (OFF default); live keys refused without the owner flag. Docs: ADR-0038, ASSUMPTION-035, api-spec, data-model, test-strategy P1-073 section, security-testing matrix counts now 13 Allowed / 33 Forbidden / 10 Unprotected / 11 Ignored (razorpay webhook row Unprotected → Ignored); OpenAPI handler count 33 → 34. Honesty: the Razorpay/Stripe HTTP legs are STILL untested live (no test-mode key on this VM) — the suite proves the adapter through the real HTTP layer with test doubles / the fake provider; no test here calls api.razorpay.com. The 72nd VM reset (~22:19 UTC) killed verify attempt 7 mid-email-templates (97 lines, 0 failed) — restored per ASSUMPTION-010 (log p1-073-restore7.log, RESTORE72_END 22:23:10 UTC; replay restored the binaries, no apt reinstall; fresh cluster, pf role/db recreated, 21 migrations). No new reset during attempt 8 (uptime 1h 13m at verify green).
 
 - [ ] **P1-074** — Razorpay webhook verify
   - **Type:** feat · **Area:** billing/razorpay · **Est:** M · **Deps:** P1-073 · **Prio:** P1

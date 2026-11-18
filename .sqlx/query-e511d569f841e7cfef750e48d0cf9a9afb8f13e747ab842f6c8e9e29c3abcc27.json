@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, code, stripe_price_id, currency, amount, entitlements,\n                created_at, updated_at\n         FROM plans WHERE id = $1",
+  "query": "UPDATE plans SET amount = $2, currency = $3, stripe_price_id = $4,\n                entitlements = $5, updated_at = now()\n         WHERE code = $1\n         RETURNING id, code, stripe_price_id, razorpay_plan_id, currency, amount, entitlements,\n                   created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -38,6 +38,17 @@
       },
       {
         "ordinal": 3,
+        "name": "razorpay_plan_id",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "plans",
+            "name": "razorpay_plan_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
         "name": "currency",
         "type_info": "Text",
         "origin": {
@@ -48,7 +59,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "amount",
         "type_info": "Int4",
         "origin": {
@@ -59,7 +70,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "entitlements",
         "type_info": "Jsonb",
         "origin": {
@@ -70,7 +81,7 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -81,7 +92,7 @@
         }
       },
       {
-        "ordinal": 7,
+        "ordinal": 8,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -94,12 +105,17 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Text",
+        "Int4",
+        "Text",
+        "Text",
+        "Jsonb"
       ]
     },
     "nullable": [
       false,
       false,
+      true,
       true,
       false,
       false,
@@ -108,5 +124,5 @@
       false
     ]
   },
-  "hash": "d14a80f4a857a74cae94aa48fe0ce4db2f6a08eb42a736107df933e24b46646d"
+  "hash": "e511d569f841e7cfef750e48d0cf9a9afb8f13e747ab842f6c8e9e29c3abcc27"
 }

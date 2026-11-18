@@ -522,6 +522,7 @@ mod tests {
             id: Uuid::now_v7(),
             code: code.to_string(),
             stripe_price_id: None,
+            razorpay_plan_id: None,
             currency: "INR".to_string(),
             amount,
             entitlements: seed_entitlements(code),

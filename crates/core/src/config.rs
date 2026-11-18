@@ -151,6 +151,13 @@ pub struct Settings {
     pub razorpay_key: String,
     /// Env: PF_RAZORPAY_SECRET
     pub razorpay_secret: String,
+    /// Env: PF_RAZORPAY_WEBHOOK_SECRET — the webhook secret
+    /// set in the Razorpay dashboard's webhook settings
+    /// (P1-073). NEVER the API key secret (`PF_RAZORPAY_SECRET`):
+    /// Razorpay signs webhooks with this secret, and mixing
+    /// the two up is the documented most-common webhook
+    /// mistake. The adapter refuses an empty value.
+    pub razorpay_webhook_secret: String,
     /// Env: PF_FEATURE_RAZORPAY
     pub feature_razorpay: bool,
     /// Env: PF_BILLING_DUNNING_ENABLED — the dunning policy
@@ -468,6 +475,7 @@ impl Default for Settings {
             stripe_webhook_secret: "whsec_placeholder".to_string(),
             razorpay_key: "rzp_test_placeholder".to_string(),
             razorpay_secret: "placeholder".to_string(),
+            razorpay_webhook_secret: "whsec_placeholder".to_string(),
             feature_razorpay: false,
             dunning_enabled: true,
             dunning_day3_days: 3,
@@ -555,6 +563,7 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("stripe_webhook_secret", "PF_STRIPE_WEBHOOK_SECRET"),
     ("razorpay_key", "PF_RAZORPAY_KEY"),
     ("razorpay_secret", "PF_RAZORPAY_SECRET"),
+    ("razorpay_webhook_secret", "PF_RAZORPAY_WEBHOOK_SECRET"),
     ("feature_razorpay", "PF_FEATURE_RAZORPAY"),
     ("dunning_enabled", "PF_BILLING_DUNNING_ENABLED"),
     ("dunning_day3_days", "PF_BILLING_DUNNING_DAY3_DAYS"),
@@ -746,6 +755,7 @@ impl Settings {
             stripe_webhook_secret: field!(stripe_webhook_secret, String),
             razorpay_key: field!(razorpay_key, String),
             razorpay_secret: field!(razorpay_secret, String),
+            razorpay_webhook_secret: field!(razorpay_webhook_secret, String),
             feature_razorpay: field!(feature_razorpay, bool),
             dunning_enabled: field!(dunning_enabled, bool),
             dunning_day3_days: field!(dunning_day3_days, u32),
@@ -871,6 +881,7 @@ impl Settings {
             ("PF_STRIPE_WEBHOOK_SECRET", &self.stripe_webhook_secret),
             ("PF_RAZORPAY_KEY", &self.razorpay_key),
             ("PF_RAZORPAY_SECRET", &self.razorpay_secret),
+            ("PF_RAZORPAY_WEBHOOK_SECRET", &self.razorpay_webhook_secret),
             ("PF_SMTP_HOST", &self.smtp_host),
             ("PF_MAIL_FROM", &self.mail_from),
             ("PF_ENGINE_MODELS_DIR", &self.engine_models_dir),
@@ -1110,6 +1121,23 @@ impl Settings {
     /// adapter from the sentinel.
     pub fn stripe_configured(&self) -> bool {
         !self.stripe_secret_key.is_empty() && self.stripe_secret_key != "sk_test_placeholder"
+    }
+
+    /// Is a real Razorpay key id configured (P1-073, FR-P-03)?
+    /// The dev placeholder (`rzp_test_placeholder`,
+    /// `.env.example` + `Settings::default()`) counts as
+    /// unconfigured: it carries the `rzp_test_` prefix, so the
+    /// adapter would accept it — and then attempt a live call
+    /// to Razorpay with a key that is not a key. Callers treat
+    /// "not configured" as 503 `PF-5005` (billing endpoints)
+    /// or `None` (the `AppState` provider) — never build an
+    /// adapter from the sentinel. The webhook secret is NOT
+    /// checked here (the Stripe precedent): construction
+    /// rejects an empty one, and a placeholder one fails
+    /// signature verification until the operator sets the real
+    /// dashboard secret.
+    pub fn razorpay_configured(&self) -> bool {
+        !self.razorpay_key.is_empty() && self.razorpay_key != "rzp_test_placeholder"
     }
 
     /// Typed view over the feature flags in these settings.
@@ -1375,7 +1403,13 @@ mod tests {
         assert_eq!(s.stripe_webhook_secret, "whsec_placeholder");
         assert_eq!(s.razorpay_key, "rzp_test_placeholder");
         assert_eq!(s.razorpay_secret, "placeholder");
+        assert_eq!(s.razorpay_webhook_secret, "whsec_placeholder");
         assert!(!s.feature_razorpay);
+        // The dev placeholders count as unconfigured (P1-062
+        // Stripe precedent, P1-073 Razorpay): the adapters must
+        // never be built from a sentinel.
+        assert!(!s.stripe_configured());
+        assert!(!s.razorpay_configured());
         assert!(s.dunning_enabled);
         assert_eq!(s.dunning_day3_days, 3);
         assert_eq!(s.dunning_day7_days, 7);
@@ -2024,6 +2058,20 @@ mod tests {
         assert!(flags.razorpay);
         assert!(flags.provenance_strip);
         assert!(flags.gpu);
+    }
+
+    /// `razorpay_configured` (P1-073): the placeholder is not a
+    /// key; a real `rzp_test_` key id is. (An empty value never
+    /// reaches this check — the loader rejects it as
+    /// `Invalid`, so it is not asserted here.)
+    #[test]
+    fn razorpay_configured_needs_a_real_key() {
+        let _env = clean_env();
+        let settings = Settings::load_from(None).expect("defaults must load");
+        assert!(!settings.razorpay_configured());
+        env::set_var("PF_RAZORPAY_KEY", "rzp_test_00000000000000");
+        let settings = Settings::load_from(None).expect("env load must work");
+        assert!(settings.razorpay_configured());
     }
 
     /// AC: unknown flag warns — detection returns the unknown names,

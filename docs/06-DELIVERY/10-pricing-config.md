@@ -73,6 +73,40 @@ the seed files — the files only matter at install time.
   checkout time, not at save time — the editor validates the shape,
   not the existence.
 
+## The Razorpay side (P1-073)
+
+- `plans.razorpay_plan_id` is `NULL` until a Razorpay plan is linked —
+  the mirror of `stripe_price_id` for the Razorpay provider
+  (ADR-0038). There is NO catalog sync for Razorpay: the plan is
+  created in the Razorpay dashboard (Subscriptions must be enabled
+  in test AND live mode, or the create 400s), then linked by hand:
+  `UPDATE plans SET razorpay_plan_id = 'plan_...' WHERE code = 'pro';`
+  The admin plans editor does not expose the column yet (follow-up) —
+  SQL is the only path today, and the seed leaves it `NULL` like
+  `stripe_price_id`. A plan with no Razorpay plan id is 422
+  `not_purchasable` at checkout while Razorpay is the active
+  provider — the same "no price configured yet" answer Stripe
+  gets, never a provider call with a wrong-provider id.
+- Keys live in env, never in the repo: `PF_RAZORPAY_KEY`,
+  `PF_RAZORPAY_SECRET`, `PF_RAZORPAY_WEBHOOK_SECRET` (test
+  placeholders in `.env.example`; see
+  `docs/06-DELIVERY/04-config-reference.md`). The webhook secret
+  is the THIRD credential — set in the dashboard's webhook
+  settings, never the API key secret. P1-073 enforces test mode —
+  a live key is rejected without an owner flag (owner decision
+  #3, still pending) — so a `rzp_live_` key in dev is a refusal,
+  not a charge. Enabling the flag (`PF_FEATURE_RAZORPAY=true`)
+  makes Razorpay THE provider: Stripe prices are not sold and
+  the Stripe webhook fails signature while it is on (one active
+  provider — ADR-0038).
+- The Razorpay dashboard is the second half of every price change:
+  the Plan object must exist in Razorpay (same amount, same
+  currency, monthly) before its id is useful. Create the Plan
+  first, copy the `plan_...` id, then attach it (above). An id
+  that names no Razorpay Plan will fail at checkout time, not at
+  link time — the link is a plain SQL write, it validates
+  nothing.
+
 ## How to change a price — the three paths
 
 ### 1. Runtime change (the normal path): the admin plan editor
@@ -201,6 +235,13 @@ check that the id exists in Stripe.
   owner changes it; if the default ever stops matching the
   product (e.g. cancel must be period-end-only), that is an
   owner decision, not a ticket — see ASSUMPTION-030.
+- Razorpay has NO hosted customer portal (P1-073): while
+  Razorpay is the active provider, `POST /v1/billing/portal`
+  answers 500 — there is no portal URL to return. A Razorpay
+  subscriber manages payment methods and cancels through
+  support (P1-071) until a portal-side flow exists; the
+  portal section above is Stripe-only. P1-077 lists the
+  parity gap.
 
 ## Upgrade/downgrade proration (P1-069)
 

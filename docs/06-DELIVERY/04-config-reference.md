@@ -68,6 +68,7 @@
 | `PF_RATE_LIMIT_ROUTE_REFILL_PER_MIN` | `600` | api |
 | `PF_RAZORPAY_KEY` | `rzp_test_placeholder` | billing |
 | `PF_RAZORPAY_SECRET` | `placeholder` | billing |
+| `PF_RAZORPAY_WEBHOOK_SECRET` | `whsec_placeholder` | billing |
 | `PF_REDIS_URL` | `redis://localhost:6379` | api, worker |
 | `PF_RESULTS_TTL_BUSINESS_H` | `72` | cleanup |
 | `PF_RESULTS_TTL_FREE_H` | `6` | cleanup |

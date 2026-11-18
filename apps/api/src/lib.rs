@@ -76,7 +76,7 @@ pub mod secure_headers;
 pub mod services;
 
 use axum::{extract::Extension, middleware, Router};
-use detag_billing::{DynBillingProvider, StripeAdapter};
+use detag_billing::{DynBillingProvider, RazorpayAdapter, StripeAdapter};
 use detag_core::clock::{Clock, SystemClock};
 use detag_core::config::Settings;
 use detag_core::db::{connect_lazy, DbPool, PoolConfig};
@@ -115,12 +115,18 @@ pub struct AppState {
             detag_core::plans::InMemoryPlanCache,
         >,
     >,
-    /// The billing provider (P1-062, FR-P-03/FR-P-05): the
-    /// `Arc<dyn BillingProvider>` ADR-0028 anticipated — one
-    /// shared Stripe adapter (test mode only, owner decision
-    /// #3 still pending), built once at boot so checkout /
-    /// portal / invoices all call the same client. `None`
-    /// when no real Stripe key is configured (empty or the
+    /// The billing provider (P1-062, FR-P-03/FR-P-05; P1-073
+    /// adds Razorpay): the `Arc<dyn BillingProvider>` ADR-0028
+    /// anticipated — one shared adapter (test mode only, owner
+    /// decision #3 still pending), built once at boot so
+    /// checkout / portal / invoices all call the same client.
+    /// A SINGLE active provider (ADR-0038): the Razorpay
+    /// adapter when the flag is on and a real Razorpay key is
+    /// configured, else the Stripe adapter when a real Stripe
+    /// key is configured, else `None`. Enabling the flag makes
+    /// Razorpay THE provider — Stripe prices are not sold and
+    /// the Stripe webhook fails signature (400) while it is
+    /// on. `None` when no real key is configured (empty or the
     /// dev placeholder): billing endpoints answer 503
     /// `PF-5005` instead of failing boot — billing is
     /// optional at boot, the api must still serve without it.
@@ -202,12 +208,30 @@ impl AppState {
             detag_core::plans::SqlxPlanStore::new(pool.clone()),
             detag_core::plans::InMemoryPlanCache::new(),
         ));
-        // The billing provider (P1-062): built once from the
-        // configured key, or `None` when billing is not
-        // configured — a missing key must not fail boot (see
-        // the field docs). `allow_live` is always false here
-        // (owner decision #3, test mode only).
-        let billing = if settings.stripe_configured() {
+        // The billing provider (P1-062, P1-073): built once
+        // from the configured key, or `None` when billing is
+        // not configured — a missing key must not fail boot
+        // (see the field docs). A SINGLE active provider
+        // (ADR-0038): flag on + Razorpay configured wins over
+        // Stripe. `allow_live` is always false here (owner
+        // decision #3, test mode only).
+        let billing = if settings.feature_flags().razorpay && settings.razorpay_configured() {
+            match RazorpayAdapter::new(
+                &settings.razorpay_key,
+                &settings.razorpay_secret,
+                &settings.razorpay_webhook_secret,
+                false,
+            ) {
+                Ok(adapter) => Some(Arc::new(adapter) as DynBillingProvider),
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        "billing provider not built: misconfigured Razorpay key; billing endpoints will answer 503"
+                    );
+                    None
+                }
+            }
+        } else if settings.stripe_configured() {
             match StripeAdapter::new(
                 &settings.stripe_secret_key,
                 &settings.stripe_webhook_secret,

@@ -328,6 +328,45 @@ pub async fn receive_stripe_webhook(
     }
 }
 
+/// The Razorpay webhook receiver (P1-073, FR-P-03): flag
+/// only — the full receiver (HMAC verify + event mapping)
+/// lands in P1-074. While `PF_FEATURE_RAZORPAY` is off the
+/// endpoint does not exist: 404 `PF-2010`, the ticket's AC
+/// (flag-off endpoints 404). Flag on, the route answers the
+/// shared stub's 501 `PF-5004` until P1-074 wires the
+/// receiver — a 501 that says "not implemented yet" is the
+/// honest answer for a route the flag just turned on.
+#[utoipa::path(
+    post,
+    path = "/v1/webhooks/razorpay",
+    request_body(
+        content = String,
+        description = "The raw Razorpay event envelope — the signature covers these exact bytes",
+        content_type = "application/json"
+    ),
+    responses(
+        (status = 200, description = "Received (stored, replayed, or ignored)", body = WebhookReceipt),
+        (status = 404, description = "The Razorpay flag is off — the endpoint does not exist (PF-2010)", body = Problem),
+        (status = 501, description = "The flag is on but the receiver is not wired yet (PF-5004; P1-074)", body = Problem)
+    ),
+    tag = "billing"
+)]
+pub async fn receive_razorpay_webhook(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    if !state.settings.feature_flags().razorpay {
+        return ProblemResponse(AppError::NotFound.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    }
+    stub(Extension(id)).await.into_response()
+}
+
 /// The billing nests: public plans, the subscription / checkout /
 /// portal / invoices group, usage, provider webhooks (Stripe,
 /// Razorpay), and the user's own webhook endpoints.
@@ -347,7 +386,7 @@ pub fn router() -> Router<AppState> {
             "/v1/webhooks",
             Router::new()
                 .route("/stripe", post(receive_stripe_webhook))
-                .route("/razorpay", post(stub)),
+                .route("/razorpay", post(receive_razorpay_webhook)),
         )
         .nest(
             "/v1/webhook-endpoints",

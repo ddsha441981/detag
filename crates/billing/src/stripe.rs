@@ -787,7 +787,7 @@ mod tests {
     /// "{ts}.{payload}"))}`. `construct_event` enforces the 5-minute
     /// timestamp tolerance, so the header is built at "now".
     fn stripe_signature_header(payload: &str) -> String {
-        use hmac::{Hmac, Mac};
+        use hmac::{Hmac, KeyInit, Mac};
         use sha2::Sha256;
         let ts = Utc::now().timestamp();
         let signed = format!("{ts}.{payload}");
