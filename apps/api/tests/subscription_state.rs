@@ -49,15 +49,26 @@ async fn seed_subscription(app: &TestApp, user_id: Uuid, plan_code: &str, status
         .await
         .expect("load plan")
         .expect("plan is seeded");
+    // The dunning CHECK (P1-070) requires a `past_due` row to
+    // carry `past_due_since`: stamp it from the app clock, so
+    // a seeded past_due row looks exactly like one the state
+    // machine moved (step 0, the day-0 mail already sent is
+    // NOT seeded — these tests assert on the move's mail).
+    let since = if status == "past_due" {
+        Some(app.state.clock.now())
+    } else {
+        None
+    };
     // Plain `sqlx::query` (not `query!`): the seed needs no
     // offline metadata, like the plans suite's seeder.
     let row = sqlx::query(
-        "INSERT INTO subscriptions (user_id, plan_id, provider, provider_subscription_id, status) \
-         VALUES ($1, $2, 'stripe', 'sub_test_1', $3) RETURNING id",
+        "INSERT INTO subscriptions (user_id, plan_id, provider, provider_subscription_id, status, past_due_since) \
+         VALUES ($1, $2, 'stripe', 'sub_test_1', $3, $4) RETURNING id",
     )
     .bind(user_id)
     .bind(plan.id)
     .bind(status)
+    .bind(since)
     .fetch_one(&app.pool)
     .await
     .expect("seed subscription");
@@ -169,6 +180,17 @@ async fn active_to_past_due_duns_and_revokes() {
     assert!(applied.changed);
     assert_eq!(applied.mail_template, Some("subscription-dunning"));
     assert_eq!(status_of(&app, sub).await, "past_due");
+    // P1-070: the move stamps the dunning clock (step 0 — the
+    // day-0 mail this move just sent).
+    let row = subscriptions::by_id(&app.pool, sub)
+        .await
+        .expect("load row")
+        .expect("row exists");
+    assert!(
+        row.past_due_since.is_some(),
+        "past_due stamps the entry time"
+    );
+    assert_eq!(row.dunning_step, 0);
     assert_eq!(
         plan_code_of(&app, user.id).await,
         "free",
@@ -198,6 +220,17 @@ async fn past_due_to_active_recovers_silently() {
     assert_eq!(applied.mail_template, None, "recovery mails nothing");
     assert_eq!(status_of(&app, sub).await, "active");
     assert_eq!(plan_code_of(&app, user.id).await, "pro");
+    // P1-070: recovery clears the dunning state, so the
+    // sequence resets — a later failure starts at day 0 again.
+    let row = subscriptions::by_id(&app.pool, sub)
+        .await
+        .expect("load row")
+        .expect("row exists");
+    assert!(
+        row.past_due_since.is_none(),
+        "recovery clears the entry time"
+    );
+    assert_eq!(row.dunning_step, 0);
 
     for template in [
         "subscription-welcome",

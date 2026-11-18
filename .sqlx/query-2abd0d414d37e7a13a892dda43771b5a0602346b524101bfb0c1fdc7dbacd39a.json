@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, plan_id, provider, provider_customer_id,\n                provider_subscription_id, status, current_period_end,\n                cancel_at_period_end, created_at, updated_at\n         FROM subscriptions\n         WHERE user_id = $1 AND status IN ('trialing', 'active')\n         ORDER BY created_at DESC LIMIT 1",
+  "query": "SELECT id, user_id, plan_id, provider, provider_customer_id,\n                provider_subscription_id, status, current_period_end,\n                cancel_at_period_end, past_due_since, dunning_step,\n                created_at, updated_at\n         FROM subscriptions\n         WHERE provider = $1 AND provider_subscription_id = $2",
   "describe": {
     "columns": [
       {
@@ -104,6 +104,28 @@
       },
       {
         "ordinal": 9,
+        "name": "past_due_since",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "subscriptions",
+            "name": "past_due_since"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "dunning_step",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "subscriptions",
+            "name": "dunning_step"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -114,7 +136,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 12,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -127,7 +149,8 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Text",
+        "Text"
       ]
     },
     "nullable": [
@@ -140,9 +163,11 @@
       false,
       true,
       false,
+      true,
+      false,
       false,
       false
     ]
   },
-  "hash": "31527db15ca8c90b8c4577494fd9116d79b230509f948b91b7765fc15da64378"
+  "hash": "2abd0d414d37e7a13a892dda43771b5a0602346b524101bfb0c1fdc7dbacd39a"
 }

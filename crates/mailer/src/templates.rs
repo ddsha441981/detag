@@ -47,12 +47,15 @@ use crate::error::MailError;
 /// ("reset-password" is `password-reset`, "new-login" is
 /// `new-login-digest`, "lockout" is `lockout-notice`); the
 /// spec's "password-changed" and "verification-thanks" have no
-/// template because no api service enqueues them — the eleven
+/// template because no api service enqueues them — the thirteen
 /// names here are the contract, and the snapshots cover all of
 /// them. P1-064 adds the three subscription lifecycle mails
 /// (`subscription-welcome` / `subscription-dunning` /
 /// `subscription-canceled`), enqueued by the subscription
-/// state machine's service.
+/// state machine's service. P1-070 adds the two dunning
+/// reminders (`subscription-dunning-day3` /
+/// `subscription-dunning-day7`), enqueued by the dunning
+/// policy job.
 pub const TEMPLATES: &[&str] = &[
     "verify-email",
     "email-change-verify",
@@ -64,6 +67,8 @@ pub const TEMPLATES: &[&str] = &[
     "account-deletion",
     "subscription-welcome",
     "subscription-dunning",
+    "subscription-dunning-day3",
+    "subscription-dunning-day7",
     "subscription-canceled",
 ];
 
@@ -130,6 +135,8 @@ impl TemplateEngine {
         add!("account-deletion");
         add!("subscription-welcome");
         add!("subscription-dunning");
+        add!("subscription-dunning-day3");
+        add!("subscription-dunning-day7");
         add!("subscription-canceled");
         Ok(Self { tera })
     }

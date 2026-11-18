@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE subscriptions\n         SET dunning_step = $2, updated_at = now()\n         WHERE id = $1 AND status = 'past_due' AND dunning_step = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int2",
+        "Int2"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "258d6b350462f5b14002c43a612d7b069bbfe2eab6792cb027930be563fdc97e"
+}

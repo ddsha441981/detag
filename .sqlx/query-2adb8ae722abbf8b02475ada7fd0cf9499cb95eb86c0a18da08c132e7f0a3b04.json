@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE subscriptions\n         SET status = $2, current_period_end = $3,\n             cancel_at_period_end = $4, past_due_since = $5,\n             dunning_step = $6, updated_at = now()\n         WHERE id = $1 AND status = $7",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Timestamptz",
+        "Bool",
+        "Timestamptz",
+        "Int2",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2adb8ae722abbf8b02475ada7fd0cf9499cb95eb86c0a18da08c132e7f0a3b04"
+}

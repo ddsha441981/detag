@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, plan_id, provider, provider_customer_id,\n                provider_subscription_id, status, current_period_end,\n                cancel_at_period_end, created_at, updated_at\n         FROM subscriptions WHERE id = $1",
+  "query": "SELECT id, user_id, plan_id, provider, provider_customer_id,\n                provider_subscription_id, status, current_period_end,\n                cancel_at_period_end, past_due_since, dunning_step,\n                created_at, updated_at\n         FROM subscriptions WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -104,6 +104,28 @@
       },
       {
         "ordinal": 9,
+        "name": "past_due_since",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "subscriptions",
+            "name": "past_due_since"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "dunning_step",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "subscriptions",
+            "name": "dunning_step"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -114,7 +136,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 12,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -140,9 +162,11 @@
       false,
       true,
       false,
+      true,
+      false,
       false,
       false
     ]
   },
-  "hash": "983677f37a6c2ef5bac7637f1309890805102d6d4660505186ed8efc513694ff"
+  "hash": "4d9088f0ab163fd2ba242245170b3532aeff8f1c4a83e7183b0f3836d5b52502"
 }

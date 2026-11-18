@@ -244,14 +244,22 @@ async fn seed_subscription(app: &TestApp, user_id: Uuid, plan_code: &str, status
         .expect("load plan")
         .expect("plan is seeded");
     let provider_subscription_id = format!("sub_p1065_{}", Uuid::now_v7());
+    // The dunning CHECK (P1-070) requires a `past_due` row to
+    // carry `past_due_since`: stamp it from the app clock.
+    let since = if status == "past_due" {
+        Some(app.state.clock.now())
+    } else {
+        None
+    };
     sqlx::query(
-        "INSERT INTO subscriptions (user_id, plan_id, provider, provider_customer_id, provider_subscription_id, status) \
-         VALUES ($1, $2, 'stripe', 'cus_test_123', $3, $4)",
+        "INSERT INTO subscriptions (user_id, plan_id, provider, provider_customer_id, provider_subscription_id, status, past_due_since) \
+         VALUES ($1, $2, 'stripe', 'cus_test_123', $3, $4, $5)",
     )
     .bind(user_id)
     .bind(plan.id)
     .bind(&provider_subscription_id)
     .bind(status)
+    .bind(since)
     .execute(&app.pool)
     .await
     .expect("seed subscription");
@@ -363,6 +371,58 @@ async fn checkout_completed_creates_subscription() {
         Some(frozen.timestamp_micros()),
         "a created checkout is dispatched"
     );
+}
+
+#[tokio::test]
+async fn checkout_completed_already_past_due_mails_day_zero() {
+    // P1-070 (ADR-0035): a checkout whose provider-reported
+    // status is already `past_due` mails the day-0 dunning
+    // mail in its creation transaction — a past-due creation
+    // IS a failed payment, and saying nothing for three days
+    // would be the hole in "day 0 IS that mail". The dunning
+    // clock starts at the creation time (the frozen clock).
+    let frozen = Utc::now();
+    let (app, _clock, provider) = handler_app(frozen).await;
+    let user = app.seed_user_unique().await;
+    let subscription_id = format!("sub_p1065_{}", Uuid::now_v7());
+    let period_end = DateTime::from_timestamp(1794844800, 0).expect("in range");
+    provider.with_subscription(canned_fetch(
+        &subscription_id,
+        SubscriptionStatus::PastDue,
+        period_end,
+    ));
+    set_pro_price(&app).await;
+
+    let event_id = format!("evt_checkout_pastdue_{}", Uuid::now_v7());
+    let payload = checkout_completed_payload(
+        &event_id,
+        Utc::now().timestamp(),
+        Some(user.id),
+        &subscription_id,
+    );
+    let header = stripe_signature_header(&payload, WEBHOOK_SECRET);
+    let res = post_webhook(&app, &payload, &header).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+
+    let row = subscription_row(&app, &subscription_id)
+        .await
+        .expect("the checkout created the row");
+    assert_eq!(row.status, "past_due");
+    assert_eq!(
+        row.past_due_since.map(|t| t.timestamp_micros()),
+        Some(frozen.timestamp_micros()),
+        "the dunning clock starts at creation (frozen clock)"
+    );
+    assert_eq!(row.dunning_step, 0);
+    let mails = mails_for_user(&app, "subscription-dunning", user.id).await;
+    assert_eq!(mails.len(), 1, "exactly one day-0 dunning mail");
+    assert_eq!(
+        mails[0].payload,
+        json!({ "user_id": user.id, "plan_code": "pro" })
+    );
+    let audit = audit_rows(&app, row.id).await;
+    assert_eq!(audit.len(), 1, "only the created row — no status change");
+    assert_eq!(audit[0].action, "billing.subscription.created");
 }
 
 #[tokio::test]

@@ -153,6 +153,25 @@ pub struct Settings {
     pub razorpay_secret: String,
     /// Env: PF_FEATURE_RAZORPAY
     pub feature_razorpay: bool,
+    /// Env: PF_BILLING_DUNNING_ENABLED — the dunning policy
+    /// job's kill-switch (P1-070, ADR-0035). Default true: a
+    /// past_due subscription gets its day-3/7 reminders and
+    /// its day-14 cancel. False means the job runs but does
+    /// nothing (it still reports what it would have done) —
+    /// the operator's pause button while a billing incident
+    /// is worked, without touching the schedule (P1-082).
+    pub dunning_enabled: bool,
+    /// Env: PF_BILLING_DUNNING_DAY3_DAYS — days past due
+    /// before the first reminder (P1-070). Default 3.
+    pub dunning_day3_days: u32,
+    /// Env: PF_BILLING_DUNNING_DAY7_DAYS — days past due
+    /// before the second reminder (P1-070). Default 7.
+    pub dunning_day7_days: u32,
+    /// Env: PF_BILLING_DUNNING_SUSPEND_DAYS — days past due
+    /// before the subscription is canceled (P1-070, ADR-0035:
+    /// "suspend" is the subscription cancel, never the user
+    /// account). Default 14.
+    pub dunning_suspend_days: u32,
     /// Env: PF_SMTP_HOST
     pub smtp_host: String,
     /// Env: PF_SMTP_PORT
@@ -450,6 +469,10 @@ impl Default for Settings {
             razorpay_key: "rzp_test_placeholder".to_string(),
             razorpay_secret: "placeholder".to_string(),
             feature_razorpay: false,
+            dunning_enabled: true,
+            dunning_day3_days: 3,
+            dunning_day7_days: 7,
+            dunning_suspend_days: 14,
             smtp_host: "localhost".to_string(),
             smtp_port: 1025,
             smtp_user: String::new(),
@@ -533,6 +556,10 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("razorpay_key", "PF_RAZORPAY_KEY"),
     ("razorpay_secret", "PF_RAZORPAY_SECRET"),
     ("feature_razorpay", "PF_FEATURE_RAZORPAY"),
+    ("dunning_enabled", "PF_BILLING_DUNNING_ENABLED"),
+    ("dunning_day3_days", "PF_BILLING_DUNNING_DAY3_DAYS"),
+    ("dunning_day7_days", "PF_BILLING_DUNNING_DAY7_DAYS"),
+    ("dunning_suspend_days", "PF_BILLING_DUNNING_SUSPEND_DAYS"),
     ("smtp_host", "PF_SMTP_HOST"),
     ("smtp_port", "PF_SMTP_PORT"),
     ("smtp_user", "PF_SMTP_USER"),
@@ -720,6 +747,10 @@ impl Settings {
             razorpay_key: field!(razorpay_key, String),
             razorpay_secret: field!(razorpay_secret, String),
             feature_razorpay: field!(feature_razorpay, bool),
+            dunning_enabled: field!(dunning_enabled, bool),
+            dunning_day3_days: field!(dunning_day3_days, u32),
+            dunning_day7_days: field!(dunning_day7_days, u32),
+            dunning_suspend_days: field!(dunning_suspend_days, u32),
             smtp_host: field!(smtp_host, String),
             smtp_port: field!(smtp_port, u16),
             smtp_user: field!(smtp_user, String),
@@ -876,6 +907,25 @@ impl Settings {
         }
         if self.mailer_max_attempts == 0 {
             invalid("PF_MAILER_MAX_ATTEMPTS", "must be >= 1".to_string());
+        }
+        // Dunning days must order (P1-070, ADR-0035): the
+        // reminders fire in sequence and the suspend comes
+        // last — equal or inverted days would mail day 7
+        // before day 3, or cancel before reminding.
+        if self.dunning_day3_days == 0 {
+            invalid("PF_BILLING_DUNNING_DAY3_DAYS", "must be >= 1".to_string());
+        }
+        if self.dunning_day7_days <= self.dunning_day3_days {
+            invalid(
+                "PF_BILLING_DUNNING_DAY7_DAYS",
+                "must be > PF_BILLING_DUNNING_DAY3_DAYS".to_string(),
+            );
+        }
+        if self.dunning_suspend_days <= self.dunning_day7_days {
+            invalid(
+                "PF_BILLING_DUNNING_SUSPEND_DAYS",
+                "must be > PF_BILLING_DUNNING_DAY7_DAYS".to_string(),
+            );
         }
         if self.mailer_backoff_base_secs == 0 {
             invalid("PF_MAILER_BACKOFF_BASE_SECS", "must be >= 1".to_string());
@@ -1189,7 +1239,7 @@ mod tests {
         }
     }
 
-    /// All 59 vars, so a test can start from a clean env.
+    /// All 63 vars, so a test can start from a clean env.
     /// Keep this in sync with FIELD_VARS: a var missing here
     /// leaks between tests (P0-081 — a test that leaves an
     /// invalid value behind breaks the next test's defaults).
@@ -1229,6 +1279,10 @@ mod tests {
         "PF_RAZORPAY_KEY",
         "PF_RAZORPAY_SECRET",
         "PF_FEATURE_RAZORPAY",
+        "PF_BILLING_DUNNING_ENABLED",
+        "PF_BILLING_DUNNING_DAY3_DAYS",
+        "PF_BILLING_DUNNING_DAY7_DAYS",
+        "PF_BILLING_DUNNING_SUSPEND_DAYS",
         "PF_SMTP_HOST",
         "PF_SMTP_PORT",
         "PF_SMTP_USER",
@@ -1322,6 +1376,10 @@ mod tests {
         assert_eq!(s.razorpay_key, "rzp_test_placeholder");
         assert_eq!(s.razorpay_secret, "placeholder");
         assert!(!s.feature_razorpay);
+        assert!(s.dunning_enabled);
+        assert_eq!(s.dunning_day3_days, 3);
+        assert_eq!(s.dunning_day7_days, 7);
+        assert_eq!(s.dunning_suspend_days, 14);
         assert_eq!(s.smtp_host, "localhost");
         assert_eq!(s.smtp_port, 1025);
         assert!(s.smtp_user.is_empty());

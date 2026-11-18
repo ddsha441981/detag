@@ -192,6 +192,11 @@ async fn apply_change(
                     "canceled",
                     period_end,
                     false,
+                    // Leaving any status for `canceled` clears
+                    // the dunning state (P1-070): a canceled row
+                    // carries no `past_due_since` by the CHECK.
+                    None,
+                    0,
                 )
                 .await
                 .map_err(ApplyTxError::Db)?
