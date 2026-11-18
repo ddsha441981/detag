@@ -173,6 +173,13 @@
 - Fix: add the three RUSTSEC IDs to deny.toml `ignore` with reason + removal condition, per the documented escape hatch (deny.toml header + security-audit.yml: "an explicit `ignore` entry ... needs a reason and a removal condition"). Verified locally: `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`, exit 0. The chrono → jiff/time migration is a separate follow-up (no ticket yet; needs an owner decision on scope) — the weekly audit job re-checks every Monday, so a fix surfaces within a week.
 - Status: fixed (this commit) — waits on the next CI run.
 
+### CI-FAIL-025 [bug] Commits #61 unit-test step fails — `test_migrations_and_doc_agree`: 24 != 23 (P1-069 added scheduled_plan_changes, test count not bumped)
+- Date: 2026-11-18 · Ticket: P1-069 (Commits #61, on 6b5d523)
+- Symptom: Commits #61 `lint-commits` job failed at the "Unit-test the linter" step (the lint step itself passed — 4d18b5b's message lints PASS, "all 2 commit(s) pass"). The scripts suite: 150 tests, 1 failure — `scripts/test_check_schema_docs.py:98` — `AssertionError: 24 != 23`. CI #61 itself is GREEN (all 5 jobs, no error) — only the Commits workflow is red.
+- Cause: P1-069 added migration `20261118003342_scheduled_plan_changes` (the 24th table) and updated the data-model doc (the diff assertions in this very test pass — doc and migrations agree at 24), but never bumped the unit test's hardcoded `23`. The count is a tripwire: every new table must bump it consciously. Same trap as CI-FAIL-022 (22→23).
+- Fix: bump the count 23 → 24 in `scripts/test_check_schema_docs.py` (comment updated) — one line, test-only.
+- Status: fixed (this commit) — verified locally in a detached worktree (the test passes against the live repo at 24). Commits #62 will confirm.
+
 ### TESTKIT-MINIO-001 [follow-up] testcontainers live legs + local-dev compose.minio.yml still reference dead MinIO images
 - Date: 2026-11-13 · Severity: S3 (not CI-blocking)
 - Cause: CI never sets PF_TEST_CONTAINERS/PF_TEST_LIVE_MINIO, so the live legs skip in CI; compose-minio-check only renders. But anyone running the live legs locally (or `docker compose -f ops/compose.minio.yml up`) hits the same dead MinIO pulls as CI-FAIL-004.
