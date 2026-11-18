@@ -44,6 +44,27 @@ pub async fn by_code(
     .map_err(RepoError::from_sqlx)
 }
 
+/// Fetch by id (P1-069, FR-P-03): the downgrade applier
+/// resolves the scheduled change's target plan from its id.
+/// `None` when the plan does not exist (cannot happen for a
+/// scheduled change — `to_plan_id` is `ON DELETE RESTRICT` —
+/// but the caller handles it as "no plan" rather than
+/// crashing).
+pub async fn by_id(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> Result<Option<Plan>, RepoError> {
+    sqlx::query_as!(
+        Plan,
+        "SELECT id, code, stripe_price_id, currency, amount, entitlements, created_at, updated_at
+         FROM plans WHERE id = $1",
+        id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
 /// Fetch by Stripe price id (P1-065, FR-P-04): the webhook
 /// handler resolves the plan a checkout bought from the price
 /// the provider reports on the subscription — the price is the

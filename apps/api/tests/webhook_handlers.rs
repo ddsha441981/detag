@@ -48,7 +48,7 @@ mod common;
 use std::sync::Arc;
 
 use axum::http::{Method, Request, StatusCode};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use common::{DelegatingProvider, TestApp, TestFixtures};
 use detag_api::services::entitlements::effective_plan;
 use detag_billing::{
@@ -994,4 +994,212 @@ async fn reordered_update_after_delete_stays_canceled() {
         audit_before,
         "no audit row for a rejected move"
     );
+}
+
+/// Set a seeded subscription row's period end directly (the
+/// seed helper leaves it NULL; the applier tests need a real
+/// boundary).
+async fn set_period_end(app: &TestApp, provider_subscription_id: &str, period_end: DateTime<Utc>) {
+    sqlx::query(
+        "UPDATE subscriptions SET current_period_end = $1 WHERE provider_subscription_id = $2",
+    )
+    .bind(period_end)
+    .bind(provider_subscription_id)
+    .execute(&app.pool)
+    .await
+    .expect("set period end");
+}
+
+/// Schedule a downgrade directly (the checkout endpoint is
+/// the production path — `proration.rs` proves it; here the
+/// row is the fixture so the test can drive the applier).
+async fn schedule_change(
+    app: &TestApp,
+    user_id: Uuid,
+    provider_subscription_id: &str,
+    from_code: &str,
+    to_code: &str,
+    effective_at: DateTime<Utc>,
+) {
+    let row = subscription_row(app, provider_subscription_id)
+        .await
+        .expect("seeded row");
+    let from = detag_core::repos::plans::by_code(&app.pool, from_code)
+        .await
+        .expect("load plan")
+        .expect("plan is seeded");
+    let to = detag_core::repos::plans::by_code(&app.pool, to_code)
+        .await
+        .expect("load plan")
+        .expect("plan is seeded");
+    sqlx::query(
+        "INSERT INTO scheduled_plan_changes \
+         (user_id, subscription_id, from_plan_id, to_plan_id, effective_at) \
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(user_id)
+    .bind(row.id)
+    .bind(from.id)
+    .bind(to.id)
+    .bind(effective_at)
+    .execute(&app.pool)
+    .await
+    .expect("schedule change");
+}
+
+/// The pending change's status for a provider subscription.
+async fn change_status(app: &TestApp, provider_subscription_id: &str) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT spc.status FROM scheduled_plan_changes spc \
+         JOIN subscriptions s ON s.id = spc.subscription_id \
+         WHERE s.provider_subscription_id = $1",
+    )
+    .bind(provider_subscription_id)
+    .fetch_optional(&app.pool)
+    .await
+    .expect("read change status")
+}
+
+/// Deliver a `customer.subscription.updated` event for a
+/// subscription at a period end; returns the response.
+async fn post_subscription_updated(
+    app: &TestApp,
+    subscription_id: &str,
+    period_end: DateTime<Utc>,
+) -> common::TestResponse {
+    let event_id = format!("evt_sub_updated_{}", Uuid::now_v7());
+    let payload = subscription_event_payload(
+        &event_id,
+        "customer.subscription.updated",
+        Utc::now().timestamp(),
+        subscription_id,
+        Some("active"),
+        Some(period_end.timestamp()),
+        Some(false),
+    );
+    let header = stripe_signature_header(&payload, WEBHOOK_SECRET);
+    post_webhook(app, &payload, &header).await
+}
+
+#[tokio::test]
+async fn scheduled_downgrade_applies_when_period_rolls() {
+    let frozen = Utc::now();
+    let (app, clock, _provider) = handler_app(frozen).await;
+    let user = app.seed_user_unique().await;
+    let subscription_id = seed_subscription(&app, user.id, "business", "active").await;
+    // The period ends 15 days from the frozen now; the
+    // downgrade to Pro is scheduled for exactly then.
+    let period_end = frozen + Duration::days(15);
+    set_period_end(&app, &subscription_id, period_end).await;
+    schedule_change(
+        &app,
+        user.id,
+        &subscription_id,
+        "business",
+        "pro",
+        period_end,
+    )
+    .await;
+
+    // An update that does NOT roll the period (same period
+    // end): the change stays scheduled, the row stays
+    // Business, no audit row.
+    let res = post_subscription_updated(&app, &subscription_id, period_end).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let row = subscription_row(&app, &subscription_id)
+        .await
+        .expect("row still exists");
+    let business = detag_core::repos::plans::by_code(&app.pool, "business")
+        .await
+        .expect("load plan")
+        .expect("plan is seeded");
+    assert_eq!(row.plan_id, business.id, "no switch before the roll");
+    assert_eq!(
+        change_status(&app, &subscription_id).await.as_deref(),
+        Some("scheduled")
+    );
+    assert_eq!(
+        audit_rows(&app, row.id).await.len(),
+        0,
+        "no audit row before the roll"
+    );
+
+    // The period rolls: the clock passes the boundary and the
+    // next update carries the new period end.
+    clock.advance(Duration::days(16));
+    let res =
+        post_subscription_updated(&app, &subscription_id, period_end + Duration::days(30)).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let row = subscription_row(&app, &subscription_id)
+        .await
+        .expect("row still exists");
+    let pro = detag_core::repos::plans::by_code(&app.pool, "pro")
+        .await
+        .expect("load plan")
+        .expect("plan is seeded");
+    assert_eq!(row.plan_id, pro.id, "the row is on Pro after the roll");
+    assert_eq!(row.status, "active");
+    assert_eq!(
+        change_status(&app, &subscription_id).await.as_deref(),
+        Some("applied")
+    );
+    let audit = audit_rows(&app, row.id).await;
+    assert_eq!(audit.len(), 1, "exactly one audit row");
+    assert_eq!(audit[0].action, "billing.subscription.plan_changed");
+    let after = audit[0].after.as_ref().expect("audit after");
+    assert_eq!(after["plan_code"], "pro");
+    // Postgres TIMESTAMPTZ is microsecond-precise: the stored
+    // `effective_at` loses the test clock's nanoseconds, so
+    // compare at microsecond precision, not by string.
+    let stored_at: DateTime<Utc> =
+        serde_json::from_value(after["effective_at"].clone()).expect("effective_at parses");
+    assert_eq!(stored_at.timestamp_micros(), period_end.timestamp_micros());
+
+    // The user now resolves to Pro.
+    let resolved = effective_plan(&app.state.plans, &app.pool, user.id)
+        .await
+        .expect("resolve plan");
+    assert_eq!(resolved.plan.code, "pro");
+}
+
+#[tokio::test]
+async fn scheduled_downgrade_to_free_cancels_at_period_end() {
+    let frozen = Utc::now();
+    let (app, clock, _provider) = handler_app(frozen).await;
+    let user = app.seed_user_unique().await;
+    let subscription_id = seed_subscription(&app, user.id, "pro", "active").await;
+    let period_end = frozen + Duration::days(15);
+    set_period_end(&app, &subscription_id, period_end).await;
+    schedule_change(&app, user.id, &subscription_id, "pro", "free", period_end).await;
+
+    // The period rolls: the row is canceled (there is no Free
+    // subscription row to move to) and the user falls back to
+    // Free.
+    clock.advance(Duration::days(16));
+    let res =
+        post_subscription_updated(&app, &subscription_id, period_end + Duration::days(30)).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let row = subscription_row(&app, &subscription_id)
+        .await
+        .expect("row still exists");
+    assert_eq!(row.status, "canceled");
+    assert_eq!(
+        change_status(&app, &subscription_id).await.as_deref(),
+        Some("applied")
+    );
+    let audit = audit_rows(&app, row.id).await;
+    assert_eq!(audit.len(), 1, "exactly one audit row");
+    assert_eq!(audit[0].action, "billing.subscription.plan_changed");
+    let after = audit[0].after.as_ref().expect("audit after");
+    assert_eq!(after["plan_code"], "free");
+    // Postgres TIMESTAMPTZ is microsecond-precise: compare
+    // at microsecond precision, not by string (see the
+    // Business→Pro test above).
+    let stored_at: DateTime<Utc> =
+        serde_json::from_value(after["effective_at"].clone()).expect("effective_at parses");
+    assert_eq!(stored_at.timestamp_micros(), period_end.timestamp_micros());
+    let resolved = effective_plan(&app.state.plans, &app.pool, user.id)
+        .await
+        .expect("resolve plan");
+    assert_eq!(resolved.plan.code, "free");
 }

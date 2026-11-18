@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE scheduled_plan_changes\n         SET status = $2, updated_at = now()\n         WHERE id = $1 AND status = 'scheduled'",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d7ed593798646a62f39e422db24ee5f1ce5699edd5cfd44120f5b00634c1a392"
+}

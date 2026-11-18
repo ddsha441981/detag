@@ -24,7 +24,8 @@ use crate::{
     problem::ProblemResponse,
     services::{
         checkout::{
-            create_checkout as create_checkout_service, CheckoutError, CheckoutRequestBody,
+            create_checkout as create_checkout_service, CheckoutError, CheckoutOutcome,
+            CheckoutRequestBody, CheckoutResponse, ScheduledChangeResponse,
         },
         entitlements::require_feature,
         invoices::{list_invoices as list_invoices_service, InvoicesError},
@@ -44,7 +45,7 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
-use detag_billing::{CheckoutSession, Invoice, PortalSession};
+use detag_billing::{Invoice, PortalSession};
 use detag_core::error::{AppError, FieldError, Problem, Profile};
 use detag_validator::ValidationErrors;
 
@@ -84,26 +85,32 @@ async fn create_webhook_endpoint(
         .into_response()
 }
 
-/// Create a checkout session (P1-062, FR-P-03): the buyer
-/// is redirected to the provider-hosted page at the returned
-/// `url`. JWT only — the route is not in the extractor's
-/// scope table, so an API key is 403 `PF-1002` before this
-/// handler runs (P1-040's "no billing for keys"); no
-/// credential is 401 `PF-1001` from the extractor. The
+/// Create a checkout session (P1-062, FR-P-03; proration
+/// P1-069): the buyer is redirected to the provider-hosted
+/// page at the returned `url`. JWT only — the route is not in
+/// the extractor's scope table, so an API key is 403 `PF-1002`
+/// before this handler runs (P1-040's "no billing for keys");
+/// no credential is 401 `PF-1001` from the extractor. The
 /// `Idempotency-Key` header is honored (a replay returns the
 /// stored session, a reuse with a different request is 409
 /// `PF-2011`); without the header every call is a fresh
-/// checkout. Billing not configured is 503 `PF-5005`.
+/// checkout. Billing not configured is 503 `PF-5005`. A buyer
+/// who already holds a live subscription gets the P1-069
+/// treatment: the same plan is 422, an upgrade returns the
+/// session with a proration preview (200), and a downgrade
+/// returns 202 with the scheduled change — no session, no
+/// provider call.
 #[utoipa::path(
     post,
     path = "/v1/billing/checkout",
     request_body = CheckoutRequestBody,
     responses(
-        (status = 200, description = "The hosted checkout session — redirect the buyer to `url`", body = CheckoutSession),
+        (status = 200, description = "The hosted checkout session — redirect the buyer to `url`", body = CheckoutResponse),
+        (status = 202, description = "Downgrade scheduled — the change applies at `effective_at`, no session to open", body = ScheduledChangeResponse),
         (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
         (status = 403, description = "An API key cannot check out (PF-1002)", body = Problem),
         (status = 404, description = "Unknown plan code (PF-2010)", body = Problem),
-        (status = 409, description = "Idempotency key reused with a different request (PF-2011)", body = Problem),
+        (status = 409, description = "Idempotency key reused with a different request, or a plan change is already scheduled (PF-2011)", body = Problem),
         (status = 422, description = "Invalid body, or the plan cannot be bought (PF-2002)", body = Problem),
         (status = 500, description = "The provider call failed", body = Problem),
         (status = 503, description = "Billing is not configured (no Stripe secret key)", body = Problem)
@@ -135,7 +142,10 @@ pub async fn create_checkout(
         .and_then(|value| value.to_str().ok())
         .filter(|value| !value.is_empty());
     match create_checkout_service(&state, user, &body, idempotency_key).await {
-        Ok(session) => (StatusCode::OK, Json(session)).into_response(),
+        Ok(CheckoutOutcome::Session(session)) => (StatusCode::OK, Json(session)).into_response(),
+        Ok(CheckoutOutcome::Scheduled(change)) => {
+            (StatusCode::ACCEPTED, Json(change)).into_response()
+        }
         Err(CheckoutError::NotConfigured) => ProblemResponse(
             AppError::BillingNotConfigured.to_problem(Profile::Production, request_id, None),
         )
@@ -149,7 +159,7 @@ pub async fn create_checkout(
             errors.push(FieldError::new("plan_code", "not_purchasable", reason));
             ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
         }
-        Err(CheckoutError::IdempotencyConflict) => {
+        Err(CheckoutError::IdempotencyConflict | CheckoutError::ChangeAlreadyScheduled) => {
             ProblemResponse(AppError::Conflict.to_problem(Profile::Production, request_id, None))
                 .into_response()
         }

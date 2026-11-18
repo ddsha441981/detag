@@ -202,6 +202,35 @@ check that the id exists in Stripe.
   product (e.g. cancel must be period-end-only), that is an
   owner decision, not a ticket — see ASSUMPTION-030.
 
+## Upgrade/downgrade proration (P1-069)
+
+- An upgrade is effective **now** and a downgrade at the
+  **period end** — the entitlement switch timing, not the
+  money timing. The preview on an upgrade (`credit` /
+  `charge` / `net`, paise) is our computation for display:
+  each leg is the plan amount times the unused fraction of
+  the current period (whole seconds, truncated toward zero
+  — at most one paise per leg). The period start is derived
+  as one calendar month before the period end (all catalog
+  plans are monthly — ASSUMPTION-032); Stripe's invoice is
+  authoritative, not our preview.
+- A downgrade charges nothing now (all proration legs zero)
+  and makes no provider call: the promise is the
+  `scheduled_plan_changes` row, applied by the webhook
+  handler when the provider's period rolls. One pending
+  change per subscription — a second downgrade while one is
+  pending is 409. A downgrade to Free cancels the row at
+  the period end (there is no Free subscription row) and the
+  user falls back to Free.
+- Two honest gaps, both follow-ups (ASSUMPTION-032): the
+  provider-side price switch for a downgrade is not built
+  yet (Stripe keeps billing the old price past the switch
+  until a subscription-schedule lands), and an upgrade
+  leaves the old subscription row live-but-stale until the
+  webhook supersede lands (the checkout already writes
+  `detag_upgrade_from` metadata for it; the newest-live-wins
+  rule makes the upgrade effective meanwhile).
+
 ## Related docs
 
 - Open question #2 — `docs/02-REQUIREMENTS/06-open-questions.md`

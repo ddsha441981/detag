@@ -267,3 +267,29 @@ pub async fn set_status_guarded(
     .map_err(RepoError::from_sqlx)?;
     Ok(done.rows_affected() == 1)
 }
+
+/// Move a row to another plan, guarded on it still granting
+/// one (P1-069, FR-P-03): the downgrade applier's write — the
+/// plan switch lands exactly when the scheduled change comes
+/// due, in the same transaction that closes the change row.
+/// Returns `true` when exactly one row moved; `false` when
+/// the row no longer grants a plan (already `past_due` or
+/// `canceled` — the change is moot, and the applier closes
+/// it as `canceled` instead).
+pub async fn set_plan_guarded(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+    plan_id: Uuid,
+) -> Result<bool, RepoError> {
+    let done = sqlx::query!(
+        "UPDATE subscriptions
+         SET plan_id = $2, updated_at = now()
+         WHERE id = $1 AND status IN ('trialing', 'active')",
+        id,
+        plan_id,
+    )
+    .execute(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(done.rows_affected() == 1)
+}
