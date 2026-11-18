@@ -400,6 +400,9 @@ impl BillingProvider for StripeAdapter {
                     })?
                 },
                 hosted_url: inv.hosted_invoice_url,
+                // The Stripe-hosted PDF: the download URL the
+                // invoices endpoint returns alongside the page.
+                download_url: inv.invoice_pdf,
             });
         }
         Ok(out)
