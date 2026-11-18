@@ -39,6 +39,13 @@
 //! The payload is `{user_id, plan_code}` (ids only, NFR-42);
 //! the address is the user's address on record, hashed.
 //!
+//! **Dunning state** — the same guarded write stamps the
+//! row's `past_due_since` / `dunning_step` (P1-070,
+//! ADR-0035): into `past_due` stamps the entry time and
+//! resets the step to 0; out of `past_due` clears both, so
+//! recovery resets the dunning sequence the policy job
+//! reads.
+//!
 //! **Audit** — `billing.subscription.status_changed` in the
 //! same transaction, `before` / `after` the two statuses, the
 //! plan code in `after`, `reason` the caller's trigger (a
@@ -247,6 +254,22 @@ async fn apply_validated(
         .await
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::Internal)?;
+    // Dunning state (P1-070, ADR-0035) rides the same guarded
+    // write as the status, so the two can never disagree: a
+    // move INTO `past_due` stamps the entry time (app clock)
+    // and resets the step to 0 — the day-0 mail this move
+    // sends; a move OUT of `past_due` clears both, so recovery
+    // resets the sequence; any other move carries the row's
+    // own values (NULL/0 in practice — only a past_due row
+    // carries dunning state).
+    let now = state.clock.now();
+    let (past_due_since, dunning_step) = if to == SubscriptionStatus::PastDue {
+        (Some(now), 0)
+    } else if from == SubscriptionStatus::PastDue {
+        (None, 0)
+    } else {
+        (row.past_due_since, row.dunning_step)
+    };
     let timeout = PoolConfig::default().transaction_timeout;
     let from_str = from.as_db_str().to_string();
     let to_str = to.as_db_str().to_string();
@@ -269,6 +292,8 @@ async fn apply_validated(
                 &to_str,
                 period_end,
                 cancel_at_period_end,
+                past_due_since,
+                dunning_step,
             )
             .await
             .map_err(TransitionTxError::Db)?;

@@ -54,14 +54,23 @@ async fn seed_subscription(
         .await
         .expect("load plan")
         .expect("plan is seeded");
+    // The dunning CHECK (P1-070) requires a `past_due` row to
+    // carry `past_due_since`: stamp it from the row's
+    // `created_at` (the move into past_due happened then).
+    let since = if status == "past_due" {
+        Some(created_at)
+    } else {
+        None
+    };
     sqlx::query(
-        "INSERT INTO subscriptions (user_id, plan_id, provider, status, created_at) \
-         VALUES ($1, $2, 'stripe', $3, $4)",
+        "INSERT INTO subscriptions (user_id, plan_id, provider, status, created_at, past_due_since) \
+         VALUES ($1, $2, 'stripe', $3, $4, $5)",
     )
     .bind(user_id)
     .bind(plan.id)
     .bind(status)
     .bind(created_at)
+    .bind(since)
     .execute(&app.pool)
     .await
     .expect("seed subscription");

@@ -6,7 +6,8 @@ use super::error::RepoError;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-/// A row of `subscriptions` (migration 20261112065140).
+/// A row of `subscriptions` (migration 20261112065140; the
+/// dunning columns are migration 20261118043000, P1-070).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Subscription {
     pub id: Uuid,
@@ -18,6 +19,17 @@ pub struct Subscription {
     pub status: String,
     pub current_period_end: Option<DateTime<Utc>>,
     pub cancel_at_period_end: bool,
+    /// When the row entered `past_due` (P1-070, ADR-0035): the
+    /// dunning clock starts here, from the FIRST failure — a
+    /// second failed invoice while already past due is a
+    /// same-state no-op and never re-stamps it. `None` exactly
+    /// when the row is not `past_due` (a DB CHECK enforces it).
+    pub past_due_since: Option<DateTime<Utc>>,
+    /// The last dunning step mailed (P1-070): 0 = the day-0
+    /// mail (the move itself), 3 = the day-3 reminder, 7 =
+    /// the day-7 reminder. The job sends a step only when the
+    /// row's step is below it, so a re-run sends nothing twice.
+    pub dunning_step: i16,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -37,7 +49,8 @@ pub async fn active_for_user(
         Subscription,
         "SELECT id, user_id, plan_id, provider, provider_customer_id,
                 provider_subscription_id, status, current_period_end,
-                cancel_at_period_end, created_at, updated_at
+                cancel_at_period_end, past_due_since, dunning_step,
+                created_at, updated_at
          FROM subscriptions
          WHERE user_id = $1 AND status IN ('trialing', 'active')
          ORDER BY created_at DESC LIMIT 1",
@@ -145,7 +158,8 @@ pub async fn by_id(
         Subscription,
         "SELECT id, user_id, plan_id, provider, provider_customer_id,
                 provider_subscription_id, status, current_period_end,
-                cancel_at_period_end, created_at, updated_at
+                cancel_at_period_end, past_due_since, dunning_step,
+                created_at, updated_at
          FROM subscriptions WHERE id = $1",
         id,
     )
@@ -165,10 +179,14 @@ pub async fn by_id(
 /// ledger's UNIQUE event id guarantees one dispatch per
 /// delivery, so a second insert for the same provider
 /// subscription cannot arrive through the receiver.
-/// Eight arguments, like the P1-064 state service it pairs
+/// Nine arguments, like the P1-064 state service it pairs
 /// with (`apps/api/src/services/subscription_state.rs`):
 /// a params struct would hide which column each value lands
 /// in, and the call sites pass them in column order.
+/// `past_due_since` is `Some` exactly when `status` is
+/// `past_due` (a checkout whose provider-reported status is
+/// already past due — the DB CHECK enforces the pair): the
+/// caller stamps it from the app clock, never from `now()`.
 #[allow(clippy::too_many_arguments)]
 pub async fn create(
     pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
@@ -180,17 +198,19 @@ pub async fn create(
     status: &str,
     current_period_end: Option<DateTime<Utc>>,
     cancel_at_period_end: bool,
+    past_due_since: Option<DateTime<Utc>>,
 ) -> Result<Subscription, RepoError> {
     sqlx::query_as!(
         Subscription,
         "INSERT INTO subscriptions
              (user_id, plan_id, provider, provider_customer_id,
               provider_subscription_id, status, current_period_end,
-              cancel_at_period_end)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+              cancel_at_period_end, past_due_since)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING id, user_id, plan_id, provider, provider_customer_id,
                    provider_subscription_id, status, current_period_end,
-                   cancel_at_period_end, created_at, updated_at",
+                   cancel_at_period_end, past_due_since, dunning_step,
+                   created_at, updated_at",
         user_id,
         plan_id,
         provider,
@@ -199,6 +219,7 @@ pub async fn create(
         status,
         current_period_end,
         cancel_at_period_end,
+        past_due_since,
     )
     .fetch_one(pool)
     .await
@@ -221,7 +242,8 @@ pub async fn by_provider_id(
         Subscription,
         "SELECT id, user_id, plan_id, provider, provider_customer_id,
                 provider_subscription_id, status, current_period_end,
-                cancel_at_period_end, created_at, updated_at
+                cancel_at_period_end, past_due_since, dunning_step,
+                created_at, updated_at
          FROM subscriptions
          WHERE provider = $1 AND provider_subscription_id = $2",
         provider,
@@ -243,6 +265,13 @@ pub async fn by_provider_id(
 /// `current_period_end` / `cancel_at_period_end` are the
 /// provider-reported values the caller carries (P1-065 passes
 /// the event's; a caller with none passes the row's own).
+/// `past_due_since` / `dunning_step` are the dunning state
+/// (P1-070, ADR-0035) the caller carries: `Some(now)` + 0 on
+/// a move INTO `past_due`, `None` + 0 on any move OUT of it,
+/// the row's own values otherwise — the guarded write is the
+/// one place the columns move, so the status and its dunning
+/// state can never disagree (the DB CHECK enforces the pair).
+#[allow(clippy::too_many_arguments)]
 pub async fn set_status_guarded(
     pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     id: Uuid,
@@ -250,17 +279,71 @@ pub async fn set_status_guarded(
     to_status: &str,
     current_period_end: Option<DateTime<Utc>>,
     cancel_at_period_end: bool,
+    past_due_since: Option<DateTime<Utc>>,
+    dunning_step: i16,
 ) -> Result<bool, RepoError> {
     let done = sqlx::query!(
         "UPDATE subscriptions
          SET status = $2, current_period_end = $3,
-             cancel_at_period_end = $4, updated_at = now()
-         WHERE id = $1 AND status = $5",
+             cancel_at_period_end = $4, past_due_since = $5,
+             dunning_step = $6, updated_at = now()
+         WHERE id = $1 AND status = $7",
         id,
         to_status,
         current_period_end,
         cancel_at_period_end,
+        past_due_since,
+        dunning_step,
         from_status,
+    )
+    .execute(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(done.rows_affected() == 1)
+}
+
+/// Every `past_due` row, oldest failure first (P1-070): the
+/// dunning job's scan. The `past_due_since IS NOT NULL`
+/// filter is defense in depth — the DB CHECK already
+/// guarantees it — so a hypothetical violation is skipped,
+/// never crashed on.
+pub async fn past_due(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+) -> Result<Vec<Subscription>, RepoError> {
+    sqlx::query_as!(
+        Subscription,
+        "SELECT id, user_id, plan_id, provider, provider_customer_id,
+                provider_subscription_id, status, current_period_end,
+                cancel_at_period_end, past_due_since, dunning_step,
+                created_at, updated_at
+         FROM subscriptions
+         WHERE status = 'past_due' AND past_due_since IS NOT NULL
+         ORDER BY past_due_since ASC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
+/// Advance a row's dunning step, guarded on its current step
+/// (P1-070): the job's exactly-once write — a reminder lands
+/// in the same transaction as this bump, so a concurrent job
+/// run (or a re-run) sees the new step and skips the mail.
+/// Returns `true` when exactly one row moved; `false` when
+/// another run already advanced it (the caller re-reads).
+pub async fn set_dunning_step_guarded(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+    from_step: i16,
+    to_step: i16,
+) -> Result<bool, RepoError> {
+    let done = sqlx::query!(
+        "UPDATE subscriptions
+         SET dunning_step = $2, updated_at = now()
+         WHERE id = $1 AND status = 'past_due' AND dunning_step = $3",
+        id,
+        to_step,
+        from_step,
     )
     .execute(pool)
     .await

@@ -1,0 +1,7 @@
+Hi,
+
+Your {{ app_name }} {{ plan_code }} plan payment failed 7 days ago, and your subscription is still past due. Your plan's paid limits stay paused until the payment succeeds.
+
+Update your payment method at {{ base_url }}/billing — if the payment keeps failing, your subscription will be canceled.
+
+— The {{ app_name }} team

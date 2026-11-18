@@ -54,6 +54,12 @@ pub enum JobKind {
     /// same sync engine; the handler here is a stub until the
     /// worker gains a provider + pool to run it with.
     CatalogSync,
+    /// Dunning policy job (P1-070): the day-3/7 reminders + the
+    /// day-14 subscription cancel (`services/dunning.rs` in the
+    /// api crate is the real engine). The nightly schedule that
+    /// enqueues it is P1-082's; the handler here is a stub until
+    /// the worker gains a pool + clock + settings to run it with.
+    Dunning,
     /// A kind this build does not know — quarantined, never run.
     /// Carries the raw string for the log line.
     Unknown(String),
@@ -69,6 +75,7 @@ impl JobKind {
             JobKind::Email => "email",
             JobKind::Reconciliation => "reconciliation",
             JobKind::CatalogSync => "catalog_sync",
+            JobKind::Dunning => "dunning",
             JobKind::Unknown(raw) => raw,
         }
     }
@@ -83,6 +90,7 @@ impl JobKind {
             "email" => JobKind::Email,
             "reconciliation" => JobKind::Reconciliation,
             "catalog_sync" => JobKind::CatalogSync,
+            "dunning" => JobKind::Dunning,
             other => JobKind::Unknown(other.to_string()),
         }
     }
@@ -150,6 +158,10 @@ impl JobRegistry {
             }
             JobKind::CatalogSync => {
                 handle_catalog_sync(envelope, ctx).await?;
+                Ok(DispatchOutcome::Handled { kind })
+            }
+            JobKind::Dunning => {
+                handle_dunning(envelope, ctx).await?;
                 Ok(DispatchOutcome::Handled { kind })
             }
             JobKind::Unknown(raw) => {
@@ -261,6 +273,21 @@ async fn handle_catalog_sync(envelope: &JobEnvelope, ctx: &WorkerContext) -> Res
     Ok(())
 }
 
+/// P1-070 stub: the dunning engine (`detag-api::services
+/// ::dunning::run_dunning`) is real, but the worker has no
+/// pool + clock + settings in its context to run it with —
+/// and no nightly scheduler exists yet (P1-082). Until both
+/// land, an enqueued `dunning` job logs and acks instead of
+/// claiming a pass ran.
+async fn handle_dunning(envelope: &JobEnvelope, ctx: &WorkerContext) -> Result<(), Error> {
+    tracing::info!(
+        job_id = %envelope.job_id,
+        queue = ctx.queue,
+        "dunning handled (stub — real handler lands with P1-082's nightly schedule)"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,6 +324,7 @@ mod tests {
             ("email", JobKind::Email),
             ("reconciliation", JobKind::Reconciliation),
             ("catalog_sync", JobKind::CatalogSync),
+            ("dunning", JobKind::Dunning),
         ] {
             assert_eq!(JobKind::parse(raw), kind, "parse {raw}");
             assert_eq!(kind.as_str(), raw, "as_str {raw:?}");
@@ -327,6 +355,7 @@ mod tests {
             "email",
             "reconciliation",
             "catalog_sync",
+            "dunning",
         ] {
             let outcome = JobRegistry::new()
                 .dispatch(&envelope(kind), &ctx)

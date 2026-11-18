@@ -9,6 +9,7 @@ pub mod api_keys;
 pub mod catalog_sync;
 pub mod checkout;
 pub mod deletion;
+pub mod dunning;
 pub mod entitlements;
 pub mod invoices;
 pub mod login;

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, plan_id, provider, provider_customer_id,\n                provider_subscription_id, status, current_period_end,\n                cancel_at_period_end, created_at, updated_at\n         FROM subscriptions\n         WHERE provider = $1 AND provider_subscription_id = $2",
+  "query": "INSERT INTO subscriptions\n             (user_id, plan_id, provider, provider_customer_id,\n              provider_subscription_id, status, current_period_end,\n              cancel_at_period_end, past_due_since)\n         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\n         RETURNING id, user_id, plan_id, provider, provider_customer_id,\n                   provider_subscription_id, status, current_period_end,\n                   cancel_at_period_end, past_due_since, dunning_step,\n                   created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -104,6 +104,28 @@
       },
       {
         "ordinal": 9,
+        "name": "past_due_since",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "subscriptions",
+            "name": "past_due_since"
+          }
+        }
+      },
+      {
+        "ordinal": 10,
+        "name": "dunning_step",
+        "type_info": "Int2",
+        "origin": {
+          "Table": {
+            "table": "subscriptions",
+            "name": "dunning_step"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -114,7 +136,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 12,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -127,8 +149,15 @@
     ],
     "parameters": {
       "Left": [
+        "Uuid",
+        "Uuid",
         "Text",
-        "Text"
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Bool",
+        "Timestamptz"
       ]
     },
     "nullable": [
@@ -141,9 +170,11 @@
       false,
       true,
       false,
+      true,
+      false,
       false,
       false
     ]
   },
-  "hash": "2bad037a3990d5e1086b02e20eb2b5f150ca8eb8bbe3d7baa07af001bdb65914"
+  "hash": "24a9f590925f7f3bf3faa73a58abc0da37b456fd9c4eb590c6f3bc5dc0e78afa"
 }

@@ -15,7 +15,7 @@ marketing template without an owner decision: it changes the
 deliverability posture (bulk-sender rules, unsubscribe handling,
 a separate sending subdomain) and the abuse surface.
 
-The 11 templates the api actually enqueues (`crates/mailer`,
+The 13 templates the api actually enqueues (`crates/mailer`,
 `TEMPLATES` — subjects + text + HTML, snapshot-tested, P1-029):
 
 | Template | Sent when | Class / hourly cap per recipient |
@@ -30,6 +30,8 @@ The 11 templates the api actually enqueues (`crates/mailer`,
 | `account-deletion` | account-deletion request | transactional / never capped |
 | `subscription-welcome` | subscription moves `trialing → active` | transactional / never capped |
 | `subscription-dunning` | subscription moves to `past_due` | transactional / never capped |
+| `subscription-dunning-day3` | dunning job: 3 days past due (P1-070) | transactional / never capped |
+| `subscription-dunning-day7` | dunning job: 7 days past due (P1-070) | transactional / never capped |
 | `subscription-canceled` | subscription moves to `canceled` | transactional / never capped |
 
 Caps are enforced in the drain, the single choke point every

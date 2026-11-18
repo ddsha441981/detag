@@ -46,11 +46,15 @@
 //! subscription" — is [`AppError::Internal`], which the receiver
 //! answers 500 so Stripe retries.
 //!
-//! Creation sends no lifecycle mail: the welcome mail fires on
+//! Creation sends no welcome mail: the welcome mail fires on
 //! the `trialing → active` transition (P1-064), and a row created
 //! already-`active` is a purchase, not a conversion — a purchase
 //! welcome is a product decision, not this ticket's (see
-//! ASSUMPTION-028).
+//! ASSUMPTION-028). The one exception (P1-070, ADR-0035): a row
+//! created already-`past_due` DOES mail the day-0 dunning mail
+//! in its creation transaction — a past-due creation IS a failed
+//! payment, and saying nothing for three days would be the hole
+//! in "day 0 IS that mail".
 
 use crate::AppState;
 use detag_billing::{BillingError, DomainEvent, DynBillingProvider};
@@ -59,6 +63,7 @@ use detag_core::{
     error::AppError,
     repos::{
         audit_logs::{self, NewAuditLog},
+        email_outbox::{self, NewOutboxMail},
         plans, subscriptions, users,
     },
     tx::{self, TxError},
@@ -282,17 +287,16 @@ async fn create_subscription(
             return Err(AppError::Internal);
         }
     };
-    let user_exists = users::by_id(&state.pool, user_id)
+    let user = users::by_id(&state.pool, user_id)
         .await
-        .map_err(|_| AppError::Internal)?
-        .is_some();
-    if !user_exists {
+        .map_err(|_| AppError::Internal)?;
+    let Some(user) = user else {
         tracing::info!(
             event_id = event_id,
             "webhook handler: checkout user no longer exists"
         );
         return Ok(noop("checkout user no longer exists"));
-    }
+    };
     let mut plan = None;
     for price_id in &fetched.price_ids {
         if let Some(found) = plans::by_stripe_price_id(&state.pool, price_id)
@@ -325,6 +329,11 @@ async fn create_subscription(
     // One transaction: the row and its audit trail land
     // together — a subscription is never recorded without the
     // `billing.subscription.created` row that explains it.
+    // A row created already-`past_due` also mails the day-0
+    // dunning mail here (P1-070, ADR-0035): the payment
+    // already failed, and the dunning clock starts at this
+    // creation time — the row's `past_due_since` is stamped
+    // from the app clock, never from `now()`.
     let timeout = PoolConfig::default().transaction_timeout;
     let status = fetched.status.as_db_str().to_string();
     let period_end = fetched.current_period_end;
@@ -335,6 +344,12 @@ async fn create_subscription(
     let customer_id_owned = customer_id.to_string();
     let provider_name = provider.provider_name().to_string();
     let provider_subscription_id_owned = provider_subscription_id.to_string();
+    let user_email = user.email.clone();
+    let past_due_since = if fetched.status == detag_billing::SubscriptionStatus::PastDue {
+        Some(state.clock.now())
+    } else {
+        None
+    };
     let created_id = tx::with_tx(&state.pool, timeout, |conn| {
         let status = status.clone();
         let reason = reason.clone();
@@ -342,6 +357,7 @@ async fn create_subscription(
         let customer_id_owned = customer_id_owned.clone();
         let provider_name = provider_name.clone();
         let provider_subscription_id_owned = provider_subscription_id_owned.clone();
+        let user_email = user_email.clone();
         Box::pin(async move {
             let row = subscriptions::create(
                 &mut *conn,
@@ -353,6 +369,7 @@ async fn create_subscription(
                 &status,
                 period_end,
                 cancel_at_end,
+                past_due_since,
             )
             .await
             .map_err(CreateTxError::Db)?;
@@ -374,6 +391,24 @@ async fn create_subscription(
             )
             .await
             .map_err(CreateTxError::Db)?;
+            if past_due_since.is_some() {
+                email_outbox::enqueue(
+                    &mut *conn,
+                    &NewOutboxMail {
+                        to_hash: detag_core::checksum::sha256_hex(user_email.as_bytes()),
+                        template:
+                            crate::services::subscription_state::SUBSCRIPTION_DUNNING_TEMPLATE
+                                .to_string(),
+                        payload: serde_json::json!({
+                            "user_id": user_id,
+                            "plan_code": plan_code,
+                        }),
+                        scheduled_at: None,
+                    },
+                )
+                .await
+                .map_err(CreateTxError::Db)?;
+            }
             Ok(row.id)
         })
     })

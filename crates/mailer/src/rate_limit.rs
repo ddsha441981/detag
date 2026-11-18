@@ -192,6 +192,8 @@ mod tests {
             "account-deletion",
             "subscription-welcome",
             "subscription-dunning",
+            "subscription-dunning-day3",
+            "subscription-dunning-day7",
             "subscription-canceled",
         ] {
             assert_eq!(template_class(template), MailClass::Transactional);
