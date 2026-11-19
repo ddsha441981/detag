@@ -43,6 +43,9 @@
 //!    way (JWT only), as does P1-067 `POST /v1/billing/portal`.
 //!    P1-071 `POST /v1/admin/billing/subscriptions/{id}/cancel`
 //!    answers 401 PF-1001 the same way (admin only).
+//!    P1-080 `GET /v1/usage` answers 401 PF-1001 the same
+//!    way (JWT or a `jobs:read` key — no credential at all
+//!    is 401 either way).
 //!    P1-063 `POST /v1/webhooks/stripe` answers
 //!    503 PF-5005 (billing not configured in the probe app —
 //!    the signature check needs a provider first). P1-073
@@ -238,7 +241,8 @@ async fn every_table_entry_resolves_to_the_stub() {
         // POST /v1/billing/checkout, and P1-067 POST
         // /v1/billing/portal, and P1-068 GET
         // /v1/billing/invoices, and P1-071 POST
-        // /v1/admin/billing/subscriptions/{id}/cancel: real
+        // /v1/admin/billing/subscriptions/{id}/cancel, and
+        // P1-080 GET /v1/usage: real
         // handlers behind an
         // auth extractor — the probe sends no credential, so
         // the extractor rejects with 401 PF-1001 (not 501)
@@ -257,6 +261,7 @@ async fn every_table_entry_resolves_to_the_stub() {
             || (*method == "GET" && *path == "/v1/admin/users")
             || (*method == "GET" && *path == "/v1/admin/jobs")
             || (*method == "GET" && *path == "/v1/billing/invoices")
+            || (*method == "GET" && *path == "/v1/usage")
             || path.starts_with("/v1/admin/")
             || (*method == "GET" && *path == "/v1/me/sessions")
             || (*method == "DELETE" && *path == "/v1/me/sessions/{id}")

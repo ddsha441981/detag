@@ -38,6 +38,32 @@ pub async fn for_user_day(
     .map_err(RepoError::from_sqlx)
 }
 
+/// A user's rows for a UTC-day window, oldest first (P1-080,
+/// the usage API's 30-day buckets): one query for the whole
+/// window, so the endpoint does not fire thirty point
+/// lookups. Days with no row are absent — the caller fills
+/// them with zeros (a missing row means no usage that day,
+/// not a missing day).
+pub async fn for_user_range(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> Result<Vec<UsageCounter>, RepoError> {
+    sqlx::query_as!(
+        UsageCounter,
+        "SELECT user_id, day, images_used, video_seconds_used, updated_at
+         FROM usage_counters WHERE user_id = $1 AND day >= $2 AND day <= $3
+         ORDER BY day ASC",
+        user_id,
+        start,
+        end,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
 /// Add to a user's counters for a UTC day (P1-050, the
 /// write-through leg of metering): insert the row when the
 /// user has used nothing that day, else add to the existing

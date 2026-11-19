@@ -7,9 +7,11 @@
 //!
 //! - `Allowed(scope)` — a key carrying `scope` reaches the
 //!   handler (501 `PF-5004` on the stubs — auth passed, the
-//!   handler has not landed); no credential is 401 `PF-1001`.
-//!   Today only the jobs nest (9 routes) and the
-//!   webhook-endpoints nest (4) are gated this way.
+//!   handler has not landed; 200 on the one live handler,
+//!   `GET /v1/usage`, P1-080); no credential is 401
+//!   `PF-1001`. Today only the jobs nest (9 routes), the
+//!   webhook-endpoints nest (4), and the usage read (1) are
+//!   gated this way.
 //! - `Forbidden` — any key is 403 `PF-1002` (the route is not
 //!   in the extractor's scope table — fail closed); no
 //!   credential is 401. This covers the live authed routes
@@ -46,7 +48,10 @@
 //! is `Forbidden` since P1-062 (JWT only), the portal
 //! endpoint, which is `Forbidden` since P1-067 (JWT only),
 //! the invoices endpoint, which is `Forbidden` since P1-068
-//! (JWT only), and the provider webhooks, which are `Ignored`
+//! (JWT only), the usage endpoint, which is `Allowed` with
+//! `jobs:read` since P1-080 (a read of the key owner's own
+//! metering — the billing exception, ADR-0044), and the
+//! provider webhooks, which are `Ignored`
 //! since P1-063 (Stripe) and P1-073 (Razorpay) — live
 //! handlers, signature-verified, no Bearer credential — a
 //! key changes nothing. An admin user's
@@ -146,7 +151,7 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow { method: "POST", path: "/v1/billing/checkout", outcome: KeyOutcome::Forbidden, note: "JWT only — the route is not in the extractor's scope table, so any key is 403 (P1-062)" },
     MatrixRow { method: "POST", path: "/v1/billing/portal", outcome: KeyOutcome::Forbidden, note: "JWT only — the route is not in the extractor's scope table, so any key is 403 (P1-067)" },
     MatrixRow { method: "GET", path: "/v1/billing/invoices", outcome: KeyOutcome::Forbidden, note: "JWT only — the route is not in the extractor's scope table, so any key is 403 (P1-068)" },
-    MatrixRow { method: "GET", path: "/v1/usage", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the extractor (no billing for keys)" },
+    MatrixRow { method: "GET", path: "/v1/usage", outcome: KeyOutcome::Allowed("jobs:read"), note: "live handler (P1-080) — usage is a read of the key owner's own metering, the billing exception to no-billing-for-keys (ADR-0044); a key with jobs:read gets 200, not the stub's 501" },
     MatrixRow { method: "POST", path: "/v1/webhooks/stripe", outcome: KeyOutcome::Ignored, note: "public by design — provider webhook, signature-verified, no Bearer credential; a key changes nothing (both probes 503 here: billing unconfigured in the matrix app, P1-063)" },
     MatrixRow { method: "POST", path: "/v1/webhooks/razorpay", outcome: KeyOutcome::Ignored, note: "public by design — provider webhook, signature-verified, no Bearer credential; a key changes nothing (both probes 404 here: the flag is off in the matrix app, P1-073)" },
     MatrixRow { method: "GET", path: "/v1/webhook-endpoints", outcome: KeyOutcome::Allowed("webhooks:manage"), note: "stub_authed; the user's own webhook endpoints are key-managed" },
@@ -420,13 +425,34 @@ async fn api_key_matrix() {
             KeyOutcome::Allowed(_scope) => {
                 assert_eq!(anon.status, StatusCode::UNAUTHORIZED, "{label}: anonymous");
                 assert_eq!(problem_code(&anon), "PF-1001", "{label}: anonymous code");
-                assert_eq!(
-                    keyed.status,
-                    StatusCode::NOT_IMPLEMENTED,
-                    "{label}: key with the scope reaches the stub — {}",
-                    keyed.text()
-                );
-                assert_eq!(problem_code(&keyed), "PF-5004", "{label}: keyed code");
+                if row.method == "GET" && row.path == "/v1/usage" {
+                    // P1-080: the usage handler is live — a
+                    // scoped key gets 200 with the usage shape
+                    // (today + 30-day buckets + the per-key
+                    // breakdown), not the stub's 501.
+                    assert_eq!(
+                        keyed.status,
+                        StatusCode::OK,
+                        "{label}: key with the scope reaches the live handler — {}",
+                        keyed.text()
+                    );
+                    let body = keyed.json();
+                    assert!(body["today"].is_object(), "{label}: today: {body}");
+                    assert_eq!(
+                        body["days"].as_array().map(|days| days.len()),
+                        Some(30),
+                        "{label}: 30 buckets: {body}"
+                    );
+                    assert!(body["by_key"].is_array(), "{label}: by_key: {body}");
+                } else {
+                    assert_eq!(
+                        keyed.status,
+                        StatusCode::NOT_IMPLEMENTED,
+                        "{label}: key with the scope reaches the stub — {}",
+                        keyed.text()
+                    );
+                    assert_eq!(problem_code(&keyed), "PF-5004", "{label}: keyed code");
+                }
             }
             KeyOutcome::Forbidden => {
                 assert_eq!(anon.status, StatusCode::UNAUTHORIZED, "{label}: anonymous");
