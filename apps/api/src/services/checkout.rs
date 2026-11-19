@@ -531,6 +531,11 @@ async fn checkout_with_provider(
             success_url,
             cancel_url,
             upgrade_from_provider_subscription_id: upgrade_from.map(str::to_owned),
+            // Detag's GSTIN rides the request when configured
+            // (P1-076): the adapter passes it through to the
+            // provider so invoices carry it. Unset means no
+            // GSTIN is sent.
+            gstin: state.settings.billing_gstin().map(str::to_owned),
         })
         .await
         .map_err(|err| {
