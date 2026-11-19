@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COALESCE(SUM(images_used), 0) AS \"images!: i64\",\n                COALESCE(SUM(video_seconds_used), 0) AS \"video_seconds!: i64\"\n         FROM usage_counters WHERE user_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "images!: i64",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "video_seconds!: i64",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "03afd2da76324b02deecd8402c8f076a6a14337a508bd9b59133f9da759467d3"
+}

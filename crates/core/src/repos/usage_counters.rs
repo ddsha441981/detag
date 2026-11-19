@@ -64,6 +64,32 @@ pub async fn for_user_range(
     .map_err(RepoError::from_sqlx)
 }
 
+/// A user's all-time totals (P1-081, the admin usage view):
+/// the sums over every `usage_counters` row the user has,
+/// not just the 30-day window — the window shows recent
+/// use, the totals answer "how much has this user ever
+/// used?" for a billing dispute. `COALESCE` keeps a user
+/// with no rows at (0, 0) instead of NULLs; `SUM` over
+/// `int` widens to `bigint`, so the cast back to `i64`
+/// cannot overflow a realistic counter (a day's row is
+/// `i32`-bounded, and a user would need ~2 billion days
+/// to overflow the sum).
+pub async fn totals_for_user(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+) -> Result<(i64, i64), RepoError> {
+    let row = sqlx::query!(
+        "SELECT COALESCE(SUM(images_used), 0) AS \"images!: i64\",
+                COALESCE(SUM(video_seconds_used), 0) AS \"video_seconds!: i64\"
+         FROM usage_counters WHERE user_id = $1",
+        user_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok((row.images, row.video_seconds))
+}
+
 /// Add to a user's counters for a UTC day (P1-050, the
 /// write-through leg of metering): insert the row when the
 /// user has used nothing that day, else add to the existing

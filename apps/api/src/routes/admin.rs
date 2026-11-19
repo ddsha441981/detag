@@ -16,7 +16,10 @@
 //! this file), and `POST /v1/admin/billing/catalog-sync`,
 //! real since P1-061 (in this file), and `POST
 //! /v1/admin/billing/subscriptions/{id}/cancel`, real since
-//! P1-071 (in this file).
+//! P1-071 (in this file), and `GET
+//! /v1/admin/usage/{id}` + `GET
+//! /v1/admin/usage/{id}/export`, real since P1-081 (in
+//! this file).
 //! Every route — live or stub — sits behind the matrix guard
 //! (P1-043): the stubs take `admin_stub` / `admin_read_stub`
 //! below, so an unauthenticated or wrong-role caller is
@@ -52,6 +55,7 @@ use crate::{
         admin_plans::{
             list_plans, update_plans, PlanEditorError, PlanView, PlansResponse, UpdatePlansRequest,
         },
+        admin_usage::{export_usage_csv, get_admin_usage, AdminUsageError, AdminUsageResponse},
         catalog_sync::{run_catalog_sync, CatalogSyncError},
         register::UserResponse,
         support_cancel::{
@@ -62,6 +66,7 @@ use crate::{
 };
 use axum::{
     extract::{Extension, Path, Query, State},
+    http::StatusCode,
     middleware,
     response::{IntoResponse, Json, Response},
     routing::{get, post},
@@ -658,6 +663,116 @@ pub async fn cancel_subscription(
     }
 }
 
+/// GET /v1/admin/usage/{id} (P1-081): the admin usage
+/// view — the P1-080 shape for an arbitrary user (today +
+/// the 30-day window ending today from the durable
+/// `usage_counters` rows) plus the all-time totals and
+/// today's per-key breakdown (always present here — an
+/// admin sees everything). Admin + support (the read-only
+/// role) may call it; a verified plain user gets 403
+/// `PF-1002` from the extractor, no credential gets 401
+/// `PF-1001`, an API key gets 403. A user who does not
+/// exist is 404 `PF-2010`; a user who exists but used
+/// nothing gets zeros, not a 404. No audit row (a read
+/// creates nothing).
+#[utoipa::path(
+    get,
+    path = "/v1/admin/usage/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Whose usage to view")
+    ),
+    responses(
+        (status = 200, description = "The user's usage: today, the 30-day window, the all-time totals, and today's per-key breakdown", body = AdminUsageResponse),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified plain user, or an API key)", body = Problem),
+        (status = 404, description = "No such user", body = Problem),
+        (status = 500, description = "The usage read failed", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn admin_usage_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    _admin: AdminReadContext,
+    Path(user_id): Path<Uuid>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    match get_admin_usage(&state, user_id).await {
+        Ok(usage) => Json(usage).into_response(),
+        Err(AdminUsageError::NotFound) => {
+            ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(err) => {
+            if let AdminUsageError::Db(db_err) = &err {
+                tracing::error!(error = %db_err, "admin usage: read failed");
+            }
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
+/// GET /v1/admin/usage/{id}/export (P1-081): the same
+/// 30-day window as CSV, for billing disputes — one header
+/// row (`date,images,video_seconds`) plus one row per day,
+/// oldest first. Admin + support may call it; a verified
+/// plain user gets 403 `PF-1002` from the extractor, no
+/// credential gets 401 `PF-1001`, an API key gets 403. A
+/// user who does not exist is 404 `PF-2010`; a user who
+/// exists but used nothing gets the header plus 30 zero
+/// rows, not a 404. The response is `text/csv` with a
+/// `Content-Disposition: attachment` filename, so a browser
+/// downloads it instead of rendering it. No audit row (a
+/// read creates nothing).
+#[utoipa::path(
+    get,
+    path = "/v1/admin/usage/{id}/export",
+    params(
+        ("id" = Uuid, Path, description = "Whose usage to export")
+    ),
+    responses(
+        (status = 200, description = "The user's 30-day usage as CSV: header date,images,video_seconds plus one row per day, oldest first", body = String, content_type = "text/csv"),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified plain user, or an API key)", body = Problem),
+        (status = 404, description = "No such user", body = Problem),
+        (status = 500, description = "The usage read failed", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn admin_usage_export_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    _admin: AdminReadContext,
+    Path(user_id): Path<Uuid>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    match export_usage_csv(&state, user_id).await {
+        Ok(csv) => axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header(axum::http::header::CONTENT_TYPE, "text/csv; charset=utf-8")
+            .header(
+                axum::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"usage-{user_id}.csv\""),
+            )
+            .body(axum::body::Body::from(csv))
+            .expect("the CSV response builds"),
+        Err(AdminUsageError::NotFound) => {
+            ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(err) => {
+            if let AdminUsageError::Db(db_err) = &err {
+                tracing::error!(error = %db_err, "admin usage export: read failed");
+            }
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// The guarded 501 stubs (P1-043): the same 501 `PF-5004` as
 /// the shared [`stub`](super::stub), but behind the matrix
 /// guard — so a route whose handler has not landed yet still
@@ -724,6 +839,8 @@ pub fn router(state: AppState) -> Router<AppState> {
                     "/billing/subscriptions/{id}/cancel",
                     post(cancel_subscription),
                 )
+                .route("/usage/{id}", get(admin_usage_handler))
+                .route("/usage/{id}/export", get(admin_usage_export_handler))
                 .route("/audit", get(admin_read_stub))
                 .route("/abuse-reports", get(admin_read_stub))
                 .route("/abuse-reports/{id}/resolve", post(admin_stub))

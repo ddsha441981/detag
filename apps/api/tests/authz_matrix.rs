@@ -14,7 +14,7 @@
 //!   `Capability::for_route`, and the role table behind it
 //!   admits exactly admin + support on read rows and admin
 //!   only on write/impersonate rows.
-//! - `admin_matrix_live` — the live walk: the 9 live routes
+//! - `admin_matrix_live` — the live walk: the 11 live routes
 //!   × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key), asserting the status
 //!   the matrix predicts — 401 `PF-1001` with no credential,
@@ -63,11 +63,11 @@ struct MatrixRow {
     live: bool,
 }
 
-/// The matrix: all 21 `/v1/admin/*` routes. The public
+/// The matrix: all 23 `/v1/admin/*` routes. The public
 /// `POST /v1/abuse` intake lives in the admin module but is
 /// not an admin route — it has no row (and no capability).
 const MATRIX: &[MatrixRow] = &[
-    // Live (7)
+    // Live (9)
     MatrixRow {
         method: "GET",
         path: "/v1/admin/users",
@@ -108,6 +108,18 @@ const MATRIX: &[MatrixRow] = &[
         method: "POST",
         path: "/v1/admin/billing/subscriptions/{id}/cancel",
         capability: Capability::AdminBillingWrite,
+        live: true,
+    },
+    MatrixRow {
+        method: "GET",
+        path: "/v1/admin/usage/{id}",
+        capability: Capability::AdminUsageRead,
+        live: true,
+    },
+    MatrixRow {
+        method: "GET",
+        path: "/v1/admin/usage/{id}/export",
+        capability: Capability::AdminUsageRead,
         live: true,
     },
     // Stubs (14) — guard lands with the handler ticket (P1-043)
@@ -211,12 +223,12 @@ fn matrix_covers_every_admin_route() {
         .collect();
     assert_eq!(
         admin_routes.len(),
-        21,
-        "ROUTE_TABLE must hold the 21 /v1/admin/* routes (the public POST /v1/abuse intake is not one)"
+        23,
+        "ROUTE_TABLE must hold the 23 /v1/admin/* routes (the public POST /v1/abuse intake is not one)"
     );
     assert_eq!(
         MATRIX.len(),
-        21,
+        23,
         "the matrix must hold one row per admin route ({} rows today)",
         MATRIX.len()
     );
@@ -461,7 +473,7 @@ fn problem_code(res: &common::TestResponse) -> String {
 
 #[tokio::test]
 async fn admin_matrix_live() {
-    // The live walk: the 9 live rows × 5 caller kinds.
+    // The live walk: the 11 live rows × 5 caller kinds.
     // Order per row is anonymous → user → support → admin
     // → key, so the mutating admin call (suspend,
     // impersonate) runs last and cannot affect the earlier
@@ -485,6 +497,9 @@ async fn admin_matrix_live() {
     // user.
     let (cancel_target_user, _) = make_role(&app, &unique_email("target-c"), "user").await;
     let cancel_target = seed_subscription(&app, cancel_target_user).await;
+    // The usage rows need a real user id to reach 200 (an
+    // unknown id is 404): any registered user works.
+    let (usage_target, _) = make_role(&app, &unique_email("target-u"), "user").await;
 
     for row in MATRIX.iter().filter(|row| row.live) {
         let is_read = row.capability.code().ends_with(".read");
@@ -506,6 +521,10 @@ async fn admin_matrix_live() {
                 Some(cancel_target),
                 Some(json!({ "reason": "authz matrix probe" })),
             ),
+            // The usage rows need a real user id for the
+            // admitted caller to reach 200 (an unknown id
+            // is 404, not 200).
+            "/v1/admin/usage/{id}" | "/v1/admin/usage/{id}/export" => (Some(usage_target), None),
             // The plans PUT needs a valid body for the
             // admitted caller to reach 200: the empty edit
             // is a no-op 200 on the shared harness DB (P1-056).

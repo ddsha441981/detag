@@ -24,8 +24,8 @@
 //!
 //! # Routes vs stubs
 //!
-//! The matrix covers all 21 admin routes in the route table,
-//! live or stub. The 9 live routes are enforced by the guards
+//! The matrix covers all 23 admin routes in the route table,
+//! live or stub. The 11 live routes are enforced by the guards
 //! today and walked live by the test registry
 //! (`apps/api/tests/authz_matrix.rs`). The 12 stub routes
 //! take the guard too since P1-043 (`admin_stub` /
@@ -81,6 +81,9 @@ pub enum Capability {
     AdminPlansWrite,
     /// `POST /v1/admin/billing/catalog-sync` (P1-061).
     AdminBillingWrite,
+    /// `GET /v1/admin/usage/{id}` + `GET
+    /// /v1/admin/usage/{id}/export` (P1-081).
+    AdminUsageRead,
     /// `GET /v1/admin/audit`.
     AdminAuditRead,
     /// `GET /v1/admin/abuse-reports`.
@@ -109,6 +112,7 @@ impl Capability {
             Capability::AdminPlansRead => "admin.plans.read",
             Capability::AdminPlansWrite => "admin.plans.write",
             Capability::AdminBillingWrite => "admin.billing.write",
+            Capability::AdminUsageRead => "admin.usage.read",
             Capability::AdminAuditRead => "admin.audit.read",
             Capability::AdminAbuseRead => "admin.abuse.read",
             Capability::AdminAbuseWrite => "admin.abuse.write",
@@ -128,6 +132,7 @@ impl Capability {
             | Capability::AdminDlqRead
             | Capability::AdminFlagsRead
             | Capability::AdminPlansRead
+            | Capability::AdminUsageRead
             | Capability::AdminAuditRead
             | Capability::AdminAbuseRead
             | Capability::AdminAttestationsRead
@@ -157,6 +162,7 @@ impl Capability {
             Capability::AdminPlansRead,
             Capability::AdminPlansWrite,
             Capability::AdminBillingWrite,
+            Capability::AdminUsageRead,
             Capability::AdminAuditRead,
             Capability::AdminAbuseRead,
             Capability::AdminAbuseWrite,
@@ -191,6 +197,8 @@ impl Capability {
             ("PUT", "/v1/admin/plans") => Some(AdminPlansWrite),
             ("POST", "/v1/admin/billing/catalog-sync") => Some(AdminBillingWrite),
             ("POST", "/v1/admin/billing/subscriptions/{id}/cancel") => Some(AdminBillingWrite),
+            ("GET", "/v1/admin/usage/{id}") => Some(AdminUsageRead),
+            ("GET", "/v1/admin/usage/{id}/export") => Some(AdminUsageRead),
             ("GET", "/v1/admin/audit") => Some(AdminAuditRead),
             ("GET", "/v1/admin/abuse-reports") => Some(AdminAbuseRead),
             ("POST", "/v1/admin/abuse-reports/{id}/resolve") => Some(AdminAbuseWrite),
@@ -368,12 +376,12 @@ mod tests {
             );
             assert!(codes.insert(cap.code()), "{}: duplicate code", cap.code());
         }
-        assert_eq!(codes.len(), 17, "one code per capability");
+        assert_eq!(codes.len(), 18, "one code per capability");
     }
 
     #[test]
     fn for_route_names_every_admin_route_and_nothing_else() {
-        // The route table: 21 admin routes, each with exactly
+        // The route table: 23 admin routes, each with exactly
         // one capability; non-admin routes map to None.
         use axum::http::Method;
         let admin_routes: &[(&str, &str)] = &[
@@ -393,6 +401,8 @@ mod tests {
             ("PUT", "/v1/admin/plans"),
             ("POST", "/v1/admin/billing/catalog-sync"),
             ("POST", "/v1/admin/billing/subscriptions/{id}/cancel"),
+            ("GET", "/v1/admin/usage/{id}"),
+            ("GET", "/v1/admin/usage/{id}/export"),
             ("GET", "/v1/admin/audit"),
             ("GET", "/v1/admin/abuse-reports"),
             ("POST", "/v1/admin/abuse-reports/{id}/resolve"),
@@ -401,8 +411,8 @@ mod tests {
         ];
         assert_eq!(
             admin_routes.len(),
-            21,
-            "21 admin (method, path) pairs in the route table"
+            23,
+            "23 admin (method, path) pairs in the route table"
         );
         for (method, path) in admin_routes {
             let m = Method::from_bytes(method.as_bytes()).unwrap();
@@ -476,7 +486,7 @@ mod tests {
             }
         }
         assert_eq!(writes, 11, "11 admin write routes");
-        assert_eq!(reads, 10, "10 admin read routes");
+        assert_eq!(reads, 12, "12 admin read routes");
     }
 
     #[test]
