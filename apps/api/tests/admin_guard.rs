@@ -9,14 +9,15 @@
 //! more routes went live since (P1-056: `GET` / `PUT
 //! /v1/admin/plans`; P1-061: `POST
 //! /v1/admin/billing/catalog-sync`; P1-071: `POST
-//! /v1/admin/billing/subscriptions/{id}/cancel`), so the walk
-//! now covers 9 live routes and 12 stubs. The three tests:
+//! /v1/admin/billing/subscriptions/{id}/cancel`; P1-081:
+//! `GET /v1/admin/usage/{id}` + `/export`), so the walk
+//! now covers 11 live routes and 12 stubs. The three tests:
 //!
-//! - `admin_guard_on_every_route` — the walk: all 21 admin
+//! - `admin_guard_on_every_route` — the walk: all 23 admin
 //!   routes × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key). Anonymous is 401
 //!   `PF-1001`, a wrong role or a key is 403 `PF-1002`, an
-//!   admitted role is 200 on the 9 live routes and 501
+//!   admitted role is 200 on the 11 live routes and 501
 //!   `PF-5004` on the 12 stubs — except the catalog sync,
 //!   whose admitted admin gets 503 `PF-5005` (billing is
 //!   unconfigured in the test environment: no Stripe key).
@@ -273,7 +274,7 @@ struct GuardRow {
     read: bool,
 }
 
-/// All 21 `/v1/admin/*` routes. The read flag comes from the
+/// All 23 `/v1/admin/*` routes. The read flag comes from the
 /// matrix: a capability whose code ends in `.read`.
 const GUARD_ROWS: &[GuardRow] = &[
     GuardRow {
@@ -374,6 +375,18 @@ const GUARD_ROWS: &[GuardRow] = &[
     },
     GuardRow {
         method: "GET",
+        path: "/v1/admin/usage/{id}",
+        live: true,
+        read: true,
+    },
+    GuardRow {
+        method: "GET",
+        path: "/v1/admin/usage/{id}/export",
+        live: true,
+        read: true,
+    },
+    GuardRow {
+        method: "GET",
         path: "/v1/admin/audit",
         live: false,
         read: true,
@@ -406,7 +419,7 @@ const GUARD_ROWS: &[GuardRow] = &[
 
 #[tokio::test]
 async fn admin_guard_on_every_route() {
-    // The walk: all 21 admin routes × 5 caller kinds. The
+    // The walk: all 23 admin routes × 5 caller kinds. The
     // read/write flag must agree with the matrix — a row
     // whose flag disagrees with its capability fails here,
     // so the walk cannot drift from the P1-042 table.
@@ -422,7 +435,7 @@ async fn admin_guard_on_every_route() {
             row.path
         );
     }
-    assert_eq!(GUARD_ROWS.len(), 21, "one row per admin route");
+    assert_eq!(GUARD_ROWS.len(), 23, "one row per admin route");
 
     let app = guard_app().await;
     let (user_token, support_token, admin_token, admin_key, _admin_id) = callers(&app).await;
@@ -436,6 +449,9 @@ async fn admin_guard_on_every_route() {
     // user.
     let (cancel_target_user, _) = make_role(&app, &unique_email("target-c"), "user").await;
     let cancel_target = seed_subscription(&app, cancel_target_user).await;
+    // The usage rows need a real user id to reach 200 (an
+    // unknown id is 404): any registered user works.
+    let (usage_target, _) = make_role(&app, &unique_email("target-u"), "user").await;
 
     for row in GUARD_ROWS {
         // The target + body the row needs when the caller
@@ -456,6 +472,10 @@ async fn admin_guard_on_every_route() {
                 Some(cancel_target),
                 Some(json!({ "reason": "guard probe" })),
             ),
+            // The usage rows need a real user id for the
+            // admitted caller to reach 200 (an unknown id
+            // is 404, not 200).
+            "/v1/admin/usage/{id}" | "/v1/admin/usage/{id}/export" => (Some(usage_target), None),
             // The plans PUT needs a valid body for the
             // admitted caller to reach 200: the empty edit
             // is a no-op 200 on the shared harness DB (P1-056).

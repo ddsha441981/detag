@@ -5,6 +5,7 @@
 
 pub mod admin;
 pub mod admin_plans;
+pub mod admin_usage;
 pub mod api_keys;
 pub mod catalog_sync;
 pub mod checkout;
