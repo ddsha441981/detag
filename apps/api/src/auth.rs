@@ -50,7 +50,8 @@
 //! `MatchedPath`) names the scope it needs
 //! ([`required_scope_for`]) — jobs writes need `jobs:write`,
 //! jobs reads `jobs:read`, webhook endpoints
-//! `webhooks:manage` — and a key without it is 403 `PF-1002`.
+//! `webhooks:manage`, the usage read `jobs:read` (P1-080)
+//! — and a key without it is 403 `PF-1002`.
 //! A route the table does not name rejects EVERY key with
 //! 403 `PF-1002` (fail closed — P1-040's ACL matrix owns the
 //! full table; routes that do not take `AuthContext` yet run
@@ -445,12 +446,12 @@ pub(crate) fn parse_session_cookie(headers: &HeaderMap) -> Option<Credential> {
 ///
 /// The table is deliberately small: only the routes whose
 /// handler takes `AuthContext` today (jobs + webhook
-/// endpoints). P1-040's ACL matrix owns the full table — when
-/// a new handler lands with a scope, its row goes here AND in
-/// the matrix. Routes that do not take `AuthContext` yet
-/// (uploads, plans, billing stubs) run no extractor at all,
-/// so a key reaching them is that handler ticket's gap to
-/// close, not this table's.
+/// endpoints + the usage read). P1-040's ACL matrix owns
+/// the full table — when a new handler lands with a scope,
+/// its row goes here AND in the matrix. Routes that do not
+/// take `AuthContext` yet (uploads, plans, billing stubs)
+/// run no extractor at all, so a key reaching them is that
+/// handler ticket's gap to close, not this table's.
 fn required_scope_for(method: &Method, path: &str) -> Option<&'static str> {
     match (method.as_str(), path) {
         // Jobs: writes create/cancel/retry/attest, reads list/get.
@@ -463,13 +464,21 @@ fn required_scope_for(method: &Method, path: &str) -> Option<&'static str> {
         ("GET", "/v1/jobs/{id}/events")
         | ("GET", "/v1/jobs/{id}/result")
         | ("GET", "/v1/jobs/{id}/report") => Some("jobs:read"),
+        // Usage is a read of the caller's own metering
+        // (P1-080, ADR-0044): the billing exception to
+        // "no billing for keys" — a key with `jobs:read`
+        // reads its owner's counters + today's per-key
+        // breakdown. Money-moving billing routes stay
+        // closed to keys.
+        ("GET", "/v1/usage") => Some("jobs:read"),
         // The user's own webhook endpoints are managed by key.
         ("GET", "/v1/webhook-endpoints")
         | ("POST", "/v1/webhook-endpoints")
         | ("DELETE", "/v1/webhook-endpoints/{id}")
         | ("GET", "/v1/webhook-endpoints/{id}/deliveries") => Some("webhooks:manage"),
         // Everything else — /v1/me, /v1/api-keys, /v1/admin/*,
-        // uploads, billing, auth — rejects every key.
+        // uploads, billing (except GET /v1/usage, P1-080),
+        // auth — rejects every key.
         _ => None,
     }
 }
@@ -978,8 +987,9 @@ mod tests {
     fn scope_table_names_the_route_scopes_and_nothing_else() {
         // P1-034: the table is the extractor's enforcement —
         // jobs writes need jobs:write, jobs reads jobs:read,
-        // webhook endpoints webhooks:manage; every other route
-        // (and every wrong method) is None, i.e. keys denied.
+        // webhook endpoints webhooks:manage, the usage read
+        // jobs:read (P1-080); every other route (and every
+        // wrong method) is None, i.e. keys denied.
         use axum::http::Method;
         for (method, path, want) in [
             (Method::POST, "/v1/jobs", Some("jobs:write")),
@@ -995,6 +1005,7 @@ mod tests {
             (Method::GET, "/v1/jobs/{id}/events", Some("jobs:read")),
             (Method::GET, "/v1/jobs/{id}/result", Some("jobs:read")),
             (Method::GET, "/v1/jobs/{id}/report", Some("jobs:read")),
+            (Method::GET, "/v1/usage", Some("jobs:read")),
             (
                 Method::GET,
                 "/v1/webhook-endpoints",

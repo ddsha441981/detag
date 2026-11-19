@@ -4,11 +4,12 @@
 //! User webhook endpoints live here: they are gated by plan
 //! entitlement, so they belong with billing, not with jobs.
 //! The checkout endpoint is live (P1-062), the portal is
-//! live (P1-067), the invoices list is live (P1-068), and the
-//! Stripe provider webhook is live (P1-063) and the Razorpay
-//! provider webhook is live (P1-074); the rest are the
-//! shared 501 stub until their Phase 1 tickets land — except
-//! the webhook-endpoints nest, which uses the authenticated
+//! live (P1-067), the invoices list is live (P1-068), the
+//! usage read is live (P1-080), and the Stripe provider
+//! webhook is live (P1-063) and the Razorpay provider
+//! webhook is live (P1-074); the rest are the shared 501
+//! stub until their Phase 1 tickets land — except the
+//! webhook-endpoints nest, which uses the authenticated
 //! stub (`stub_authed`, P1-034): an API key needs
 //! `webhooks:manage` there, a caller without a credential is
 //! 401. P1-055: `POST /v1/webhook-endpoints` runs the
@@ -31,6 +32,7 @@ use crate::{
         entitlements::require_feature,
         invoices::{list_invoices as list_invoices_service, InvoicesError},
         portal::{create_portal as create_portal_service, PortalError},
+        usage::{get_usage as get_usage_service, UsageError, UsageResponse},
         webhook::{
             razorpay_signature_header,
             receive_razorpay_webhook as receive_razorpay_webhook_service,
@@ -50,6 +52,7 @@ use axum::{
 };
 use detag_billing::{Invoice, PortalSession};
 use detag_core::error::{AppError, FieldError, Problem, Profile};
+use detag_core::repos::api_keys;
 use detag_validator::ValidationErrors;
 
 /// Create a webhook endpoint (P1-055, FR-P-01): the plan
@@ -276,6 +279,98 @@ pub async fn list_invoices(
     }
 }
 
+/// Read the caller's usage (P1-080, FR-P-07): today's
+/// bucket + the 30-day window ending today, from the
+/// durable `usage_counters` rows. JWT callers read their
+/// own usage; API-key callers read their key owner's
+/// usage (the key row carries the owner id — the
+/// extractor's `VerifiedApiKey` holds id + scopes + tier
+/// only) and additionally get today's per-key breakdown
+/// (`by_key`) — a JWT caller gets no `by_key` field at
+/// all. A key needs the `jobs:read` scope (usage is read
+/// data about the caller's own jobs, the same data
+/// `jobs:read` already gates — ADR-0044); a key without
+/// it is 403 `PF-1002` from the extractor before this
+/// handler runs. No credential is 401 `PF-1001` from the
+/// extractor. A user who used nothing gets zeros, not a
+/// 404; no audit row (a read creates nothing).
+#[utoipa::path(
+    get,
+    path = "/v1/usage",
+    responses(
+        (status = 200, description = "The caller's usage: today's bucket, the 30-day window ending today, and — for an API-key caller — today's per-key breakdown", body = UsageResponse),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "An API key without the jobs:read scope (PF-1002)", body = Problem),
+        (status = 500, description = "The usage read failed", body = Problem)
+    ),
+    tag = "billing",
+    security(("bearer_auth" = []))
+)]
+pub async fn get_usage(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    auth: AuthContext,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    // Resolve whose usage this is: a JWT caller is their
+    // own user; a key caller is the key's owner (looked
+    // up from the row the extractor just verified — a
+    // missing row means the DB moved under us, a 500).
+    // The key branch comes FIRST: the extractor loads
+    // the key's owner into `user` too, so a key caller
+    // has BOTH `user` and `api_key` set — matching on
+    // `user` first would read every key caller as a JWT
+    // caller and never return the breakdown (the
+    // 106th's fix: the 105th's tree matched `user`
+    // first, and all three key-caller tests failed on
+    // the missing `by_key`).
+    // The extractor guarantees a verified credential, so
+    // neither field being `Some` is unreachable — the
+    // 401 there is defensive, never expected.
+    let (user_id, with_breakdown) = match (&auth.user, &auth.api_key) {
+        (_, Some(key)) => match api_keys::by_id(&state.pool, key.id).await {
+            Ok(Some(row)) => (row.user_id, true),
+            Ok(None) => {
+                tracing::error!(key_id = %key.id, "usage: verified key has no row");
+                return ProblemResponse(AppError::Internal.to_problem(
+                    Profile::Production,
+                    request_id,
+                    None,
+                ))
+                .into_response();
+            }
+            Err(err) => {
+                tracing::error!(error = %err, "usage: key owner lookup failed");
+                return ProblemResponse(AppError::Internal.to_problem(
+                    Profile::Production,
+                    request_id,
+                    None,
+                ))
+                .into_response();
+            }
+        },
+        (Some(user), None) => (user.id, false),
+        (None, None) => {
+            return ProblemResponse(AppError::Unauthenticated.to_problem(
+                Profile::Production,
+                request_id,
+                None,
+            ))
+            .into_response();
+        }
+    };
+    match get_usage_service(&state, user_id, with_breakdown).await {
+        Ok(usage) => (StatusCode::OK, Json(usage)).into_response(),
+        Err(err) => {
+            if let UsageError::Db(db_err) = &err {
+                tracing::error!(error = %db_err, "usage: read failed");
+            }
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// Receive a Stripe webhook delivery (P1-063, FR-P-04).
 /// No auth extractor runs here by design — the provider's
 /// signature IS the credential (the matrix row is `Ignored`).
@@ -409,7 +504,7 @@ pub fn router() -> Router<AppState> {
                 .route("/portal", post(create_portal))
                 .route("/invoices", get(list_invoices)),
         )
-        .nest("/v1/usage", Router::new().route("/", get(stub)))
+        .nest("/v1/usage", Router::new().route("/", get(get_usage)))
         .nest(
             "/v1/webhooks",
             Router::new()
