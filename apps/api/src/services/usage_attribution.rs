@@ -14,9 +14,12 @@
 //!
 //! Video seconds are NOT here yet: a job row carries no
 //! duration, so the only honest per-key video number today is
-//! the video-job count. P1-079's estimator (video-seconds at
-//! job create, true-up on completion) supplies the seconds;
-//! until then `video_seconds` reads 0 and the count is in
+//! the video-job count. P1-079 delivered the estimator +
+//! true-up mechanism (`detag_core::usage::estimate_video_seconds`
+//! at create, `UsageMeter::true_up` on completion), but no
+//! production caller records anything yet — job creation is
+//! the 501 stub and completion lands in Phase 2 — so until
+//! then `video_seconds` reads 0 and the count is in
 //! `video_jobs` — a caller that needs seconds must not
 //! mistake the count for them.
 
@@ -41,7 +44,8 @@ pub struct KeyUsage {
     /// Video jobs created that day by the key.
     pub video_jobs: i64,
     /// Video seconds used that day by the key — 0 until
-    /// P1-079's estimator lands (see the module docs).
+    /// Phase 2 records usage at job create/completion (see
+    /// the module docs).
     pub video_seconds: i64,
 }
 

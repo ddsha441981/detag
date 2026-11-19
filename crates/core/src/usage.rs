@@ -37,7 +37,9 @@
 //! is the reservation at job-create time: the upload's
 //! known duration, rounded up. An unknown duration
 //! reserves nothing (ASSUMPTION-016) — the completion
-//! true-up (P1-079) charges the real seconds.
+//! true-up ([`true_up_delta`] + [`UsageMeter::true_up`],
+//! P1-079) charges the real seconds on the job's create
+//! day, floored at 0 (ASSUMPTION-040).
 
 use crate::clock::Clock;
 use crate::db::DbPool;
@@ -95,8 +97,28 @@ pub struct ReconcileOutcome {
     pub corrected: bool,
 }
 
-/// The usage meter: Redis atomic counters + DB
-/// write-through, on the injected clock's UTC day.
+/// The outcome of one completion true-up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrueUpOutcome {
+    /// The UTC day the true-up landed on — the job's
+    /// CREATE day, not necessarily today (see
+    /// [`UsageMeter::true_up`]).
+    pub day: NaiveDate,
+    /// The seconds reserved at job create.
+    pub estimated_seconds: i64,
+    /// The seconds the video actually ran.
+    pub actual_seconds: i64,
+    /// The delta the DB actually applied (`actual -
+    /// estimated`, floored so the day total never goes
+    /// below 0). Redis receives exactly this delta.
+    pub delta_applied: i64,
+    /// The day's video-seconds total after the true-up
+    /// (the durable row).
+    pub video_seconds_used: i64,
+    /// The day's video-seconds total in Redis after the
+    /// true-up (the hot-path mirror).
+    pub redis_video_seconds: i64,
+}
 #[derive(Debug, Clone)]
 pub struct UsageMeter {
     pool: DbPool,
@@ -156,6 +178,101 @@ impl UsageMeter {
         )
         .await?;
         Ok(row)
+    }
+
+    /// True-up one job's video seconds on completion
+    /// (P1-079, FR-P-07): the estimate reserved at job
+    /// create is replaced by the real duration. The delta
+    /// is [`true_up_delta`] — positive when the video ran
+    /// longer than estimated (charge the extra), negative
+    /// when it ran shorter (refund the over-estimate).
+    ///
+    /// The true-up lands on `day` — the job's CREATE day,
+    /// passed explicitly — NOT on the clock's today: a job
+    /// that finishes after UTC midnight still corrects the
+    /// day its estimate was reserved on, so the day's
+    /// accounting stays whole (ASSUMPTION-040). The caller
+    /// owns the day: it is the day `record` was called on
+    /// at create time.
+    ///
+    /// Order is DB-first here, the reverse of `record` —
+    /// deliberately: the DB decides how much of the delta
+    /// actually applies (the day total floors at 0 — a
+    /// refund can never drive a counter negative), and
+    /// Redis then receives exactly the applied delta, so
+    /// the two stores agree by construction. A Redis hash
+    /// that already sits below the DB row (drift) is
+    /// clamped the same way, so the hash never goes
+    /// negative either; any residual drift is what
+    /// `reconcile_day` repairs (DB wins). A Redis failure
+    /// after the DB write leaves drift behind and returns
+    /// the error — the same shape as `record`'s failure
+    /// mode, in the other direction.
+    pub async fn true_up(
+        &self,
+        user_id: Uuid,
+        day: NaiveDate,
+        estimated_seconds: i64,
+        actual_seconds: i64,
+    ) -> Result<TrueUpOutcome, UsageError> {
+        let estimated_seconds = estimated_seconds.max(0);
+        let actual_seconds = actual_seconds.max(0);
+        let delta = true_up_delta(estimated_seconds, actual_seconds);
+        // The DB decides the applied delta: read the day's
+        // row first so the refund is floored at the current
+        // total (a concurrent record landing between this
+        // read and the upsert can shift Redis by that
+        // record's amount at most — the DB row itself is
+        // always exact, and reconcile repairs the hash).
+        let current = usage_counters::for_user_day(&self.pool, user_id, day)
+            .await?
+            .map(|row| i64::from(row.video_seconds_used))
+            .unwrap_or(0);
+        let applied = (current + delta).max(0) - current;
+        // The durable column is i32: cap the applied delta
+        // at the headroom to `i32::MAX` so the DB add can
+        // never overflow — and so the reported
+        // `delta_applied` is the delta the DB actually
+        // applied, not a larger wish.
+        let applied = applied.min(i64::from(i32::MAX) - current);
+        let row = usage_counters::adjust(
+            &self.pool,
+            user_id,
+            day,
+            0,
+            i32::try_from(applied).unwrap_or(i32::MAX),
+        )
+        .await?;
+        // Mirror exactly the applied delta into Redis —
+        // never the raw delta, or a floored refund would
+        // drive the hash below the DB row. Clamp against
+        // the hash's own current value for the same reason:
+        // a hash already behind the DB must not go negative.
+        let key = usage_key(&user_id, day);
+        let mut conn = self.redis.get().await?;
+        let redis_before: (Option<i64>, Option<i64>) = cmd("HMGET")
+            .arg(&key)
+            .arg("images")
+            .arg("video_seconds")
+            .query_async(&mut conn)
+            .await?;
+        let redis_video = redis_before.1.unwrap_or(0);
+        let redis_delta = applied.max(-redis_video);
+        let (_redis_images, redis_video_seconds): (i64, i64) = Script::new(USAGE_RECORD_LUA)
+            .key(&key)
+            .arg(0)
+            .arg(redis_delta)
+            .arg(TTL_USAGE_COUNTER.as_secs() as i64)
+            .invoke_async(&mut conn)
+            .await?;
+        Ok(TrueUpOutcome {
+            day,
+            estimated_seconds,
+            actual_seconds,
+            delta_applied: applied,
+            video_seconds_used: i64::from(row.video_seconds_used),
+            redis_video_seconds,
+        })
     }
 
     /// Reconcile one user-day: the DB row is the source of
@@ -236,12 +353,32 @@ impl UsageMeter {
 /// duration reserves nothing — there is no bitrate data
 /// in the kit to invent an estimate from, and a made-up
 /// number would be fake precision (ASSUMPTION-016). The
-/// completion true-up (P1-079) charges the real seconds.
+/// completion true-up (P1-079, [`UsageMeter::true_up`])
+/// charges the real seconds.
 pub fn estimate_video_seconds(duration_s: Option<f32>) -> i64 {
     match duration_s {
         Some(seconds) if seconds.is_finite() && seconds > 0.0 => seconds.ceil() as i64,
         _ => 0,
     }
+}
+
+/// The completion true-up delta (P1-079, the ticket's AC):
+/// the seconds a finished job still owes after its
+/// estimate — `actual - estimated`. Positive when the
+/// video ran longer than estimated (charge the extra),
+/// negative when it ran shorter (refund the over-estimate),
+/// zero when the estimate was exact or when nothing was
+/// estimated and nothing ran. Negative inputs are clamped
+/// to 0 first (a duration is never negative); the
+/// subtraction saturates, so no input pair can overflow.
+/// The delta is a *difference*, not a new total: the
+/// caller floors the day total at 0 (see
+/// [`UsageMeter::true_up`]) — a refund larger than the
+/// day's recorded seconds applies only up to the floor.
+pub fn true_up_delta(estimated_seconds: i64, actual_seconds: i64) -> i64 {
+    actual_seconds
+        .max(0)
+        .saturating_sub(estimated_seconds.max(0))
 }
 
 /// The UTC day for an instant (the counter day). Pure, so
@@ -271,6 +408,41 @@ mod tests {
         assert_eq!(estimate_video_seconds(Some(-5.0)), 0);
         assert_eq!(estimate_video_seconds(Some(f32::NAN)), 0);
         assert_eq!(estimate_video_seconds(Some(f32::INFINITY)), 0);
+    }
+
+    #[test]
+    fn true_up_delta_is_actual_minus_estimate() {
+        // Ran longer: charge the extra.
+        assert_eq!(true_up_delta(90, 150), 60);
+        // Ran shorter: refund the over-estimate.
+        assert_eq!(true_up_delta(90, 30), -60);
+        // Exact estimate: nothing owed.
+        assert_eq!(true_up_delta(90, 90), 0);
+        // Nothing estimated, nothing ran: nothing owed.
+        assert_eq!(true_up_delta(0, 0), 0);
+        // Unknown duration at create (estimate 0), real
+        // seconds at completion: charge them all.
+        assert_eq!(true_up_delta(0, 45), 45);
+        // Ran zero seconds after an estimate: full refund.
+        assert_eq!(true_up_delta(90, 0), -90);
+    }
+
+    #[test]
+    fn true_up_delta_clamps_negative_inputs_to_zero() {
+        // A negative estimate is nonsense input, not a
+        // credit: it reserves 0.
+        assert_eq!(true_up_delta(-5, 30), 30);
+        // A negative actual is nonsense input, not a
+        // negative duration: it ran 0.
+        assert_eq!(true_up_delta(90, -5), -90);
+        assert_eq!(true_up_delta(-5, -5), 0);
+    }
+
+    #[test]
+    fn true_up_delta_saturates_instead_of_overflowing() {
+        assert_eq!(true_up_delta(0, i64::MAX), i64::MAX);
+        assert_eq!(true_up_delta(i64::MAX, 0), -i64::MAX);
+        assert_eq!(true_up_delta(i64::MIN, i64::MAX), i64::MAX);
     }
 
     #[test]

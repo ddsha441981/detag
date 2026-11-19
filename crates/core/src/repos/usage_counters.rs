@@ -105,3 +105,49 @@ pub async fn overwrite(
     .await
     .map_err(RepoError::from_sqlx)
 }
+
+/// Adjust a user's counters for a UTC day by signed deltas
+/// (P1-079, the completion true-up): a video that ran
+/// shorter than its estimate refunds seconds, a longer one
+/// charges the extra. Either delta may be negative — the
+/// row is floored at 0 in SQL on BOTH paths, so the
+/// `usage_counters` CHECK (`images_used >= 0`,
+/// `video_seconds_used >= 0`) can never trip: a missing row
+/// inserts the clamped values, an existing row adds the
+/// delta and floors the sum. One statement, so concurrent
+/// adjustments cannot lose a count (the row lock
+/// serializes the upserts). The caller is responsible for
+/// the Redis leg — see `UsageMeter::true_up`, which
+/// computes the delta the DB actually applied and mirrors
+/// exactly that.
+pub async fn adjust(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+    day: NaiveDate,
+    images: i32,
+    video_seconds: i32,
+) -> Result<UsageCounter, RepoError> {
+    // The `VALUES` row is clamped (a missing row inserts
+    // 0, never a negative — the CHECK forbids it), but the
+    // `ON CONFLICT` leg MUST use the raw `$3`/`$4`
+    // parameters, not `EXCLUDED`: `EXCLUDED` carries the
+    // already-clamped insert row, so a negative delta
+    // would read as 0 and the refund would silently vanish.
+    sqlx::query_as!(
+        UsageCounter,
+        "INSERT INTO usage_counters (user_id, day, images_used, video_seconds_used)
+         VALUES ($1, $2, GREATEST(0, $3), GREATEST(0, $4))
+         ON CONFLICT (user_id, day) DO UPDATE SET
+           images_used = GREATEST(0, usage_counters.images_used + $3),
+           video_seconds_used = GREATEST(0, usage_counters.video_seconds_used + $4),
+           updated_at = now()
+         RETURNING user_id, day, images_used, video_seconds_used, updated_at",
+        user_id,
+        day,
+        images,
+        video_seconds,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}

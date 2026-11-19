@@ -21,6 +21,23 @@
 //! - `concurrent_records_do_not_lose_counts` — ten
 //!   concurrent single-image records land as exactly 10 in
 //!   Redis and in the DB (the Lua increment is atomic).
+//!
+//! P1-079 (FR-P-07) adds the completion true-up
+//! ([`detag_core::usage::UsageMeter::true_up`]): the
+//! estimate reserved at create is replaced by the real
+//! duration on the job's CREATE day.
+//!
+//! - `true_up_charges_the_extra_seconds` — estimate 90,
+//!   actual 150: +60 in Redis AND in the DB.
+//! - `true_up_refunds_the_over_estimate` — estimate 90,
+//!   actual 30: −60 in both stores.
+//! - `true_up_never_drives_the_counter_negative` — a
+//!   refund larger than the day's total floors at 0 in
+//!   both stores; a second true-up is a no-op.
+//! - `true_up_lands_on_the_create_day` — the clock crosses
+//!   UTC midnight between create and completion, but the
+//!   true-up corrects the create day and leaves the new
+//!   day untouched.
 
 use chrono::{NaiveDate, TimeZone, Utc};
 use deadpool_redis::redis::cmd;
@@ -67,6 +84,14 @@ fn drop_db_sql(db: &str) -> &'static str {
         "detag_p050_usage_reconcile" => "DROP DATABASE IF EXISTS detag_p050_usage_reconcile",
         "detag_p050_usage_concurrent" => "DROP DATABASE IF EXISTS detag_p050_usage_concurrent",
         "detag_p050_usage_dead_redis" => "DROP DATABASE IF EXISTS detag_p050_usage_dead_redis",
+        "detag_p079_usage_true_up_over" => "DROP DATABASE IF EXISTS detag_p079_usage_true_up_over",
+        "detag_p079_usage_true_up_under" => {
+            "DROP DATABASE IF EXISTS detag_p079_usage_true_up_under"
+        }
+        "detag_p079_usage_true_up_floor" => {
+            "DROP DATABASE IF EXISTS detag_p079_usage_true_up_floor"
+        }
+        "detag_p079_usage_true_up_day" => "DROP DATABASE IF EXISTS detag_p079_usage_true_up_day",
         _ => panic!("unknown P1-050 test db {db}"),
     }
 }
@@ -77,6 +102,10 @@ fn create_db_sql(db: &str) -> &'static str {
         "detag_p050_usage_reconcile" => "CREATE DATABASE detag_p050_usage_reconcile",
         "detag_p050_usage_concurrent" => "CREATE DATABASE detag_p050_usage_concurrent",
         "detag_p050_usage_dead_redis" => "CREATE DATABASE detag_p050_usage_dead_redis",
+        "detag_p079_usage_true_up_over" => "CREATE DATABASE detag_p079_usage_true_up_over",
+        "detag_p079_usage_true_up_under" => "CREATE DATABASE detag_p079_usage_true_up_under",
+        "detag_p079_usage_true_up_floor" => "CREATE DATABASE detag_p079_usage_true_up_floor",
+        "detag_p079_usage_true_up_day" => "CREATE DATABASE detag_p079_usage_true_up_day",
         _ => panic!("unknown P1-050 test db {db}"),
     }
 }
@@ -326,5 +355,150 @@ async fn record_fails_closed_when_redis_is_down() {
     .await
     .expect("read the row");
     assert!(row.is_none(), "no DB row when Redis failed");
+    teardown(pool, db).await;
+}
+
+/// P1-079, the ticket's AC (over-estimate case): a video
+/// estimated at 90 s runs 150 s — the true-up charges
+/// the extra 60 s, in Redis AND in the DB.
+#[tokio::test]
+async fn true_up_charges_the_extra_seconds() {
+    let db = "detag_p079_usage_true_up_over";
+    let pool = setup(db).await;
+    let redis = redis_pool();
+    let user_id = seed_user(&pool).await;
+    let clock = ManualClock::new(Utc.with_ymd_and_hms(2026, 11, 15, 12, 0, 0).unwrap());
+    let meter = UsageMeter::new(pool.clone(), redis.clone(), Arc::new(clock));
+    let day = NaiveDate::from_ymd_opt(2026, 11, 15).unwrap();
+
+    meter.record(user_id, 0, 90).await.expect("reserve 90 s");
+    let outcome = meter.true_up(user_id, day, 90, 150).await.expect("true up");
+    assert_eq!(outcome.day, day);
+    assert_eq!(outcome.estimated_seconds, 90);
+    assert_eq!(outcome.actual_seconds, 150);
+    assert_eq!(outcome.delta_applied, 60);
+    assert_eq!(outcome.video_seconds_used, 150);
+    assert_eq!(outcome.redis_video_seconds, 150);
+    assert_eq!(redis_totals(&redis, user_id, day).await, (0, 150));
+    let row = usage_counters::for_user_day(&pool, user_id, day)
+        .await
+        .expect("read the row")
+        .expect("the row exists");
+    assert_eq!(row.video_seconds_used, 150);
+
+    delete_key(&redis, user_id, day).await;
+    teardown(pool, db).await;
+}
+
+/// P1-079, the ticket's AC (under-estimate case): a video
+/// estimated at 90 s runs 30 s — the true-up refunds 60 s,
+/// in Redis AND in the DB.
+#[tokio::test]
+async fn true_up_refunds_the_over_estimate() {
+    let db = "detag_p079_usage_true_up_under";
+    let pool = setup(db).await;
+    let redis = redis_pool();
+    let user_id = seed_user(&pool).await;
+    let clock = ManualClock::new(Utc.with_ymd_and_hms(2026, 11, 15, 12, 0, 0).unwrap());
+    let meter = UsageMeter::new(pool.clone(), redis.clone(), Arc::new(clock));
+    let day = NaiveDate::from_ymd_opt(2026, 11, 15).unwrap();
+
+    meter.record(user_id, 0, 90).await.expect("reserve 90 s");
+    let outcome = meter.true_up(user_id, day, 90, 30).await.expect("true up");
+    assert_eq!(outcome.delta_applied, -60);
+    assert_eq!(outcome.video_seconds_used, 30);
+    assert_eq!(outcome.redis_video_seconds, 30);
+    assert_eq!(redis_totals(&redis, user_id, day).await, (0, 30));
+    let row = usage_counters::for_user_day(&pool, user_id, day)
+        .await
+        .expect("read the row")
+        .expect("the row exists");
+    assert_eq!(row.video_seconds_used, 30);
+
+    delete_key(&redis, user_id, day).await;
+    teardown(pool, db).await;
+}
+
+/// P1-079: a refund larger than the day's total floors at
+/// 0 — neither store ever goes negative, and a second
+/// true-up for the same (already settled) job is a no-op.
+#[tokio::test]
+async fn true_up_never_drives_the_counter_negative() {
+    let db = "detag_p079_usage_true_up_floor";
+    let pool = setup(db).await;
+    let redis = redis_pool();
+    let user_id = seed_user(&pool).await;
+    let clock = ManualClock::new(Utc.with_ymd_and_hms(2026, 11, 15, 12, 0, 0).unwrap());
+    let meter = UsageMeter::new(pool.clone(), redis.clone(), Arc::new(clock));
+    let day = NaiveDate::from_ymd_opt(2026, 11, 15).unwrap();
+
+    // Only 10 s were ever reserved; the video ran 0 s,
+    // so the refund is the whole 10 — no further.
+    meter.record(user_id, 0, 10).await.expect("reserve 10 s");
+    let outcome = meter.true_up(user_id, day, 10, 0).await.expect("true up");
+    assert_eq!(outcome.delta_applied, -10);
+    assert_eq!(outcome.video_seconds_used, 0);
+    assert_eq!(outcome.redis_video_seconds, 0);
+    assert_eq!(redis_totals(&redis, user_id, day).await, (0, 0));
+
+    // The same job true-up'd again (a retried completion):
+    // estimated 10, actual 0 against a 0 total — the floor
+    // eats the whole refund, nothing moves.
+    let outcome = meter
+        .true_up(user_id, day, 10, 0)
+        .await
+        .expect("true up again");
+    assert_eq!(outcome.delta_applied, 0);
+    assert_eq!(outcome.video_seconds_used, 0);
+    assert_eq!(outcome.redis_video_seconds, 0);
+    assert_eq!(redis_totals(&redis, user_id, day).await, (0, 0));
+    let row = usage_counters::for_user_day(&pool, user_id, day)
+        .await
+        .expect("read the row")
+        .expect("the row exists");
+    assert_eq!(row.video_seconds_used, 0);
+
+    delete_key(&redis, user_id, day).await;
+    teardown(pool, db).await;
+}
+
+/// P1-079 (ASSUMPTION-040): the true-up lands on the
+/// job's CREATE day even when completion crosses UTC
+/// midnight — the new day's counters are untouched.
+#[tokio::test]
+async fn true_up_lands_on_the_create_day() {
+    let db = "detag_p079_usage_true_up_day";
+    let pool = setup(db).await;
+    let redis = redis_pool();
+    let user_id = seed_user(&pool).await;
+    let clock = ManualClock::new(Utc.with_ymd_and_hms(2026, 11, 15, 23, 59, 59).unwrap());
+    let meter = UsageMeter::new(pool.clone(), redis.clone(), Arc::new(clock.clone()));
+    let day_15 = NaiveDate::from_ymd_opt(2026, 11, 15).unwrap();
+    let day_16 = NaiveDate::from_ymd_opt(2026, 11, 16).unwrap();
+
+    // 23:59:59 UTC on the 15th: 60 s reserved on the 15th.
+    meter.record(user_id, 0, 60).await.expect("reserve 60 s");
+
+    // Two seconds later — past UTC midnight — the job
+    // completes at 120 s. The true-up names the 15th.
+    clock.advance(chrono::Duration::seconds(2));
+    let outcome = meter
+        .true_up(user_id, day_15, 60, 120)
+        .await
+        .expect("true up");
+    assert_eq!(outcome.day, day_15);
+    assert_eq!(outcome.delta_applied, 60);
+    assert_eq!(outcome.video_seconds_used, 120);
+    assert_eq!(redis_totals(&redis, user_id, day_15).await, (0, 120));
+
+    // The 16th is untouched — no row, no hash.
+    let row_16 = usage_counters::for_user_day(&pool, user_id, day_16)
+        .await
+        .expect("read the 16th's row");
+    assert!(row_16.is_none(), "no 16th row from a 15th true-up");
+    assert_eq!(redis_totals(&redis, user_id, day_16).await, (0, 0));
+
+    delete_key(&redis, user_id, day_15).await;
+    delete_key(&redis, user_id, day_16).await;
     teardown(pool, db).await;
 }
