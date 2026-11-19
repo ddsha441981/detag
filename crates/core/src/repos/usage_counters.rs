@@ -90,6 +90,28 @@ pub async fn totals_for_user(
     Ok((row.images, row.video_seconds))
 }
 
+/// Every (user, day) with a durable row on or after `since`
+/// (P1-082, the nightly reconciliation's enumeration): the
+/// DB side of the candidate set — one row per user-day, so
+/// the job reconciles exactly the days that have durable
+/// usage. Ordered by user then day so the report reads
+/// deterministically; a day whose Redis hash drifted but
+/// whose DB row is missing is NOT here — the Redis SCAN leg
+/// (see `reconciliation::redis_user_days`) finds those.
+pub async fn user_days_since(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    since: NaiveDate,
+) -> Result<Vec<(Uuid, NaiveDate)>, RepoError> {
+    let rows = sqlx::query!(
+        "SELECT user_id, day FROM usage_counters WHERE day >= $1 ORDER BY user_id ASC, day ASC",
+        since,
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(rows.into_iter().map(|row| (row.user_id, row.day)).collect())
+}
+
 /// Add to a user's counters for a UTC day (P1-050, the
 /// write-through leg of metering): insert the row when the
 /// user has used nothing that day, else add to the existing

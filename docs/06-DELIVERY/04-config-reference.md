@@ -25,6 +25,9 @@
 | `PF_BILLING_DUNNING_ENABLED` | `true` | billing |
 | `PF_BILLING_DUNNING_SUSPEND_DAYS` | `14` | billing |
 | `PF_BILLING_GSTIN` | (empty) | billing |
+| `PF_BILLING_RECONCILE_AUDIT_THRESHOLD_IMAGES` | `10` | billing |
+| `PF_BILLING_RECONCILE_AUDIT_THRESHOLD_VIDEO_SECONDS` | `60` | billing |
+| `PF_BILLING_RECONCILE_ENABLED` | `true` | billing |
 | `PF_DATABASE_URL` | `postgres://pf:pf@localhost:5432/pf` | api, worker |
 | `PF_DISPOSABLE_EMAIL_DOMAINS` | `mailinator.com,guerrillamail.com,10minutemail.com,tempmail.com,yopmail.com` | api |
 | `PF_DOMAIN` | `localhost` | caddy (compose) |
@@ -95,4 +98,5 @@
 | `PF_WORKER_DRAIN_TIMEOUT_SECS` | `30` | worker |
 | `PF_WORKER_HEARTBEAT_INTERVAL_SECS` | `15` | worker |
 | `PF_WORKER_METRICS_PORT` | `9092` | worker |
+| `PF_WORKER_NIGHTLY_HOUR_UTC` | `2` | worker |
 | `PF_WORKER_QUEUE_NAMESPACE` | `pf:queue` | worker |

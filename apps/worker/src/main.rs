@@ -13,15 +13,18 @@
 //! drains the `email_outbox` every `PF_MAILER_DRAIN_INTERVAL_SECS`
 //! (P1-028) and serves its metrics on an internal `/metrics` port.
 
+use detag_core::clock::SystemClock;
 use detag_core::config::{warn_unknown_feature_flags, Settings};
 use detag_core::db::{connect_lazy, db_health, PoolConfig};
 use detag_core::metrics::Metrics;
+use detag_core::reconciliation::ReconcileConfig;
+use detag_core::redis::{create_pool, RedisPoolConfig};
 use detag_core::shutdown::{shutdown_signal, SHUTDOWN_TIMEOUT};
 use detag_core::telemetry::{init_tracing, shutdown_telemetry};
 use detag_worker::heartbeat::{run_heartbeat, WorkerIdentity};
 use detag_worker::metrics_server::serve_metrics;
 use detag_worker::queue_hooks::{QueueHooks, QUEUES};
-use detag_worker::workers::{build_monitor, WorkerConfig};
+use detag_worker::workers::{build_monitor, WorkerConfig, WorkerServices};
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -83,8 +86,24 @@ async fn main() {
     // The workers (P0-075): one Redis-backed apalis worker per
     // queue. A dead Redis is a boot error — the worker cannot do
     // its job without the queue — so fail fast naming the var.
+    // The handler services (P1-082): the pool + a Redis pool +
+    // the system clock + the reconciliation policy — the real
+    // `reconciliation` handler runs on these; a dead Redis pool
+    // here is the same boot error (the queue connect above
+    // already proved Redis is reachable).
     let worker_config = WorkerConfig::from_settings(&settings);
-    let (monitor, inflight) = build_monitor(&worker_config, hooks, &pool)
+    let services = Arc::new(WorkerServices {
+        pool: pool.clone(),
+        redis: create_pool(&settings.redis_url, &RedisPoolConfig::default()).unwrap_or_else(
+            |err| {
+                eprintln!("detag-worker: cannot build the Redis pool (PF_REDIS_URL): {err}");
+                std::process::exit(1);
+            },
+        ),
+        clock: Arc::new(SystemClock),
+        reconcile_config: ReconcileConfig::from_settings(&settings),
+    });
+    let (monitor, inflight) = build_monitor(&worker_config, hooks, &pool, Some(services))
         .await
         .unwrap_or_else(|err| {
             eprintln!("detag-worker: {err}");
@@ -150,6 +169,16 @@ async fn main() {
         Arc::new(mail_transport),
         Arc::new(mail_engine),
         detag_mailer::DrainConfig::from_settings(&settings),
+        Arc::clone(&shutdown),
+    ));
+    // Nightly schedule (P1-082): one enqueue per day at
+    // PF_WORKER_NIGHTLY_HOUR_UTC (default 02:00 UTC) — the
+    // `reconciliation` job. Its own Redis connection (the
+    // smoke-ping precedent); a dead Redis at startup ends
+    // this task with an error log, not the process.
+    let nightly_task = tokio::spawn(detag_worker::nightly::run_nightly_schedule(
+        worker_config.clone(),
+        settings.nightly_hour_utc,
         Arc::clone(&shutdown),
     ));
     tracing::info!(
@@ -242,17 +271,20 @@ async fn main() {
             false
         }
     };
-    // The heartbeat loop, the metrics server and the mail drain
-    // got the same signal: give them the drain window to finish
-    // (the heartbeat deletes its row), then stop waiting — a
-    // stuck task must not hang the deploy.
+    // The heartbeat loop, the metrics server, the mail drain
+    // and the nightly schedule got the same signal: give them
+    // the drain window to finish (the heartbeat deletes its
+    // row), then stop waiting — a stuck task must not hang
+    // the deploy.
     if tokio::time::timeout(SHUTDOWN_TIMEOUT, async {
-        let _ = tokio::join!(metrics_task, heartbeat_task, mail_drain_task);
+        let _ = tokio::join!(metrics_task, heartbeat_task, mail_drain_task, nightly_task);
     })
     .await
     .is_err()
     {
-        tracing::error!("metrics/heartbeat/mail-drain tasks did not stop within the drain window");
+        tracing::error!(
+            "metrics/heartbeat/mail-drain/nightly tasks did not stop within the drain window"
+        );
     }
     pool.close().await;
     shutdown_telemetry();

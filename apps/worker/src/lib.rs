@@ -10,6 +10,7 @@ pub mod envelope;
 pub mod heartbeat;
 pub mod mail_drain;
 pub mod metrics_server;
+pub mod nightly;
 pub mod queue_hooks;
 pub mod registry;
 pub mod requeue;

@@ -50,9 +50,11 @@ use crate::registry::{DispatchOutcome, JobRegistry};
 use crate::retry::{PostgresRetryEventSink, RetryLayer, RetryPolicy};
 use apalis::prelude::*;
 use apalis_redis::{Config as RedisConfig, RedisStorage};
+use detag_core::clock::Clock;
 use detag_core::config::Settings;
 use detag_core::db::DbPool;
-use detag_core::redis::{create_pool, RedisPoolConfig};
+use detag_core::reconciliation::ReconcileConfig;
+use detag_core::redis::{create_pool, RedisPool, RedisPoolConfig};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -119,6 +121,35 @@ pub fn apalis_config(config: &WorkerConfig, queue: &str) -> RedisConfig {
         .set_reenqueue_orphaned_after(config.visibility_timeout)
 }
 
+/// What the real (non-stub) handlers need (P1-082): the
+/// Postgres pool, the Redis pool, the clock, and the
+/// reconciliation policy. Built once in `main.rs` from the
+/// loaded settings and shared by every worker replica
+/// (`Arc`). `None` in a context means the handlers stay
+/// Phase-0 stubs (unit-test contexts, and any caller that
+/// builds a monitor without services) — a context without
+/// services never claims a real handler ran. The pools do
+/// not print usefully, so `Debug` is manual.
+#[derive(Clone)]
+pub struct WorkerServices {
+    /// The Postgres pool (retry-event sink + handlers).
+    pub pool: DbPool,
+    /// The Redis pool (usage hashes + queues).
+    pub redis: RedisPool,
+    /// The clock (`SystemClock` in production).
+    pub clock: Arc<dyn Clock>,
+    /// The reconciliation policy from `Settings`.
+    pub reconcile_config: ReconcileConfig,
+}
+
+impl std::fmt::Debug for WorkerServices {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorkerServices")
+            .field("reconcile_config", &self.reconcile_config)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Per-worker context, injected into every handler call: which
 /// queue this worker serves, the metrics hooks, the kind
 /// registry that dispatches the envelope, and the dead-letter
@@ -137,6 +168,9 @@ pub struct WorkerContext {
     /// this process (P0-080): the heartbeat row and the
     /// `detag_worker_inflight_jobs` gauge read this counter.
     pub inflight: Arc<AtomicUsize>,
+    /// The services the real handlers run with (P1-082).
+    /// `None` keeps the handlers as Phase-0 stubs.
+    pub services: Option<Arc<WorkerServices>>,
 }
 
 /// RAII guard: counts one job in flight while it lives.
@@ -198,6 +232,7 @@ pub async fn build_monitor(
     config: &WorkerConfig,
     hooks: QueueHooks,
     pool: &DbPool,
+    services: Option<Arc<WorkerServices>>,
 ) -> Result<(Monitor, Arc<AtomicUsize>), WorkerError> {
     let conn = apalis_redis::connect(config.redis_url.as_str()).await?;
     let sink = PostgresRetryEventSink::new(pool.clone());
@@ -217,6 +252,7 @@ pub async fn build_monitor(
                 registry: JobRegistry::new(),
                 dlq: dlq.clone(),
                 inflight: inflight.clone(),
+                services: services.clone(),
             };
             let worker = WorkerBuilder::new(format!("{queue}-{replica}"))
                 .data(ctx)
