@@ -179,6 +179,17 @@ pub struct Settings {
     /// "suspend" is the subscription cancel, never the user
     /// account). Default 14.
     pub dunning_suspend_days: u32,
+    /// Env: PF_BILLING_GSTIN — Detag's own GSTIN (P1-076),
+    /// passed through to the billing provider so invoices
+    /// carry it (Stripe `subscription_data.metadata`
+    /// `detag_gstin`, Razorpay subscription `notes`
+    /// `detag_gstin`). Empty (default) means unset: no GSTIN
+    /// is sent and invoices carry none — the owner has not
+    /// supplied one yet. A set value must be a 15-char GSTIN
+    /// (validated at boot). This is the SELLER's GSTIN, not
+    /// the buyer's: collecting a customer's GSTIN at checkout
+    /// is a follow-up, not this ticket.
+    pub billing_gstin: String,
     /// Env: PF_SMTP_HOST
     pub smtp_host: String,
     /// Env: PF_SMTP_PORT
@@ -481,6 +492,7 @@ impl Default for Settings {
             dunning_day3_days: 3,
             dunning_day7_days: 7,
             dunning_suspend_days: 14,
+            billing_gstin: String::new(),
             smtp_host: "localhost".to_string(),
             smtp_port: 1025,
             smtp_user: String::new(),
@@ -569,6 +581,7 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("dunning_day3_days", "PF_BILLING_DUNNING_DAY3_DAYS"),
     ("dunning_day7_days", "PF_BILLING_DUNNING_DAY7_DAYS"),
     ("dunning_suspend_days", "PF_BILLING_DUNNING_SUSPEND_DAYS"),
+    ("billing_gstin", "PF_BILLING_GSTIN"),
     ("smtp_host", "PF_SMTP_HOST"),
     ("smtp_port", "PF_SMTP_PORT"),
     ("smtp_user", "PF_SMTP_USER"),
@@ -682,6 +695,30 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("queue_keep_alive_secs", "PF_QUEUE_KEEP_ALIVE_SECS"),
 ];
 
+/// A GSTIN is valid when it has the GST format (P1-076):
+/// 15 characters — 2-digit state code, 10-character PAN
+/// (5 letters + 4 digits + 1 letter), 1 entity digit, the
+/// literal `Z`, 1 check character. Hand-rolled on purpose:
+/// one more dependency for a 15-char shape is not worth it.
+/// The check digit itself is NOT verified (that needs the
+/// GSTN checksum algorithm) — the shape is the guard against
+/// a typo'd or placeholder value reaching an invoice.
+fn is_valid_gstin(value: &str) -> bool {
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() != 15 {
+        return false;
+    }
+    let digit = |c: char| c.is_ascii_digit();
+    let letter = |c: char| c.is_ascii_uppercase();
+    chars[0..2].iter().all(|&c| digit(c))
+        && chars[2..7].iter().all(|&c| letter(c))
+        && chars[7..11].iter().all(|&c| digit(c))
+        && letter(chars[11])
+        && digit(chars[12])
+        && chars[13] == 'Z'
+        && (chars[14].is_ascii_digit() || chars[14].is_ascii_uppercase())
+}
+
 impl Settings {
     /// Load settings: defaults < `PF_*` env < `detag.toml` if it exists
     /// in the working directory. Fails with the offending `PF_*` var name.
@@ -761,6 +798,7 @@ impl Settings {
             dunning_day3_days: field!(dunning_day3_days, u32),
             dunning_day7_days: field!(dunning_day7_days, u32),
             dunning_suspend_days: field!(dunning_suspend_days, u32),
+            billing_gstin: field!(billing_gstin, String),
             smtp_host: field!(smtp_host, String),
             smtp_port: field!(smtp_port, u16),
             smtp_user: field!(smtp_user, String),
@@ -936,6 +974,15 @@ impl Settings {
             invalid(
                 "PF_BILLING_DUNNING_SUSPEND_DAYS",
                 "must be > PF_BILLING_DUNNING_DAY7_DAYS".to_string(),
+            );
+        }
+        // A set GSTIN must be a 15-char GSTIN (P1-076): a
+        // typo'd value must fail boot, not reach an invoice.
+        // Empty is unset — the owner has not supplied one yet.
+        if !self.billing_gstin.is_empty() && !is_valid_gstin(&self.billing_gstin) {
+            invalid(
+                "PF_BILLING_GSTIN",
+                "must be a 15-character GSTIN (2-digit state code + 10-char PAN + entity digit + Z + check character)".to_string(),
             );
         }
         if self.mailer_backoff_base_secs == 0 {
@@ -1140,6 +1187,20 @@ impl Settings {
         !self.razorpay_key.is_empty() && self.razorpay_key != "rzp_test_placeholder"
     }
 
+    /// The configured GSTIN, when the owner supplied one
+    /// (P1-076). `None` is unset (the default): the checkout
+    /// service passes nothing through and invoices carry no
+    /// GSTIN. A GSTIN is public business information — it is
+    /// printed on invoices — so it is NOT redacted anywhere.
+    pub fn billing_gstin(&self) -> Option<&str> {
+        let gstin = self.billing_gstin.trim();
+        if gstin.is_empty() {
+            None
+        } else {
+            Some(gstin)
+        }
+    }
+
     /// Typed view over the feature flags in these settings.
     pub fn feature_flags(&self) -> FeatureFlags {
         FeatureFlags::from_settings(self)
@@ -1267,7 +1328,7 @@ mod tests {
         }
     }
 
-    /// All 63 vars, so a test can start from a clean env.
+    /// All 69 vars, so a test can start from a clean env.
     /// Keep this in sync with FIELD_VARS: a var missing here
     /// leaks between tests (P0-081 — a test that leaves an
     /// invalid value behind breaks the next test's defaults).
@@ -1311,6 +1372,7 @@ mod tests {
         "PF_BILLING_DUNNING_DAY3_DAYS",
         "PF_BILLING_DUNNING_DAY7_DAYS",
         "PF_BILLING_DUNNING_SUSPEND_DAYS",
+        "PF_BILLING_GSTIN",
         "PF_SMTP_HOST",
         "PF_SMTP_PORT",
         "PF_SMTP_USER",
@@ -2072,6 +2134,49 @@ mod tests {
         env::set_var("PF_RAZORPAY_KEY", "rzp_test_00000000000000");
         let settings = Settings::load_from(None).expect("env load must work");
         assert!(settings.razorpay_configured());
+    }
+
+    /// GSTIN (P1-076): unset by default; a valid 15-char
+    /// GSTIN loads and surfaces through `billing_gstin()`.
+    #[test]
+    fn gstin_defaults_unset_and_valid_loads() {
+        let _env = clean_env();
+        let settings = Settings::load_from(None).expect("defaults must load");
+        assert_eq!(settings.billing_gstin, "");
+        assert_eq!(settings.billing_gstin(), None);
+        env::set_var("PF_BILLING_GSTIN", "29ABCDE1234F1Z5");
+        let settings = Settings::load_from(None).expect("a valid GSTIN must load");
+        assert_eq!(settings.billing_gstin(), Some("29ABCDE1234F1Z5"));
+        // The loader trims surrounding whitespace (figment):
+        // a trailing space still loads as the valid GSTIN,
+        // so it is not a malformed value.
+        env::set_var("PF_BILLING_GSTIN", "29ABCDE1234F1Z5 ");
+        let settings = Settings::load_from(None).expect("a trailing space must not fail boot");
+        assert_eq!(settings.billing_gstin(), Some("29ABCDE1234F1Z5"));
+    }
+
+    /// GSTIN (P1-076): a malformed value fails boot naming
+    /// the var — a typo'd GSTIN must never reach an invoice.
+    #[test]
+    fn gstin_rejects_malformed_values() {
+        let _env = clean_env();
+        for bad in [
+            "29ABCDE1234F1Z",   // 14 chars — too short
+            "29ABCDE1234F1Z55", // 16 chars — too long
+            "29abcde1234f1z5",  // lowercase — GSTINs are uppercase
+            "29ABCDE1234F1X5",  // 14th char must be Z
+            "ABABCDE1234F1Z5",  // state code must be digits
+        ] {
+            env::set_var("PF_BILLING_GSTIN", bad);
+            let err = Settings::load_from(None).expect_err("a malformed GSTIN must fail boot");
+            match &err {
+                ConfigError::Invalid { var, .. } => {
+                    assert_eq!(var, "PF_BILLING_GSTIN")
+                }
+                other => panic!("expected Invalid, got: {other}"),
+            }
+            env::remove_var("PF_BILLING_GSTIN");
+        }
     }
 
     /// AC: unknown flag warns — detection returns the unknown names,

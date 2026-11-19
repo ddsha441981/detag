@@ -286,6 +286,15 @@ support-cancel response and quoted verbatim here:
 - **Two-step cancel, until the provider leg lands** — the endpoint cancels OUR row only (no provider call, ASSUMPTION-034): access stops at once, but Stripe keeps billing until the subscription is canceled in the dashboard. The provider-side cancel leg is a follow-up; until then the dashboard step is mandatory, not optional.
 - **Customer self-cancel** stays portal-side (above): the customer cancels in the Stripe portal; the webhook lands the `canceled` move. The portal's cancel timing (immediate vs period end) is the dashboard's default portal configuration, not code.
 
+## Tax (GST) (P1-076)
+
+- **Seller GSTIN only, passthrough only** — `PF_BILLING_GSTIN` carries Detag's own GSTIN to the billing provider at checkout: Stripe subscription metadata `detag_gstin`, Razorpay subscription notes `detag_gstin` (ADR-0041). The provider's invoice carries it; we do no tax math in code — the provider's invoice is authoritative, the same rule as proration (ASSUMPTION-032).
+- **Empty means unset** — no GSTIN configured, none is sent, invoices carry none. A set value must be a 15-char GSTIN (shape-validated at boot; a malformed value fails boot, it never reaches an invoice).
+- **The buyer's GSTIN is not collected** — checkout takes no customer GSTIN today; collecting one (and passing it to the provider as the customer tax id) is a follow-up, not this ticket (ASSUMPTION-038).
+- **ToS tax clause (STUB — owner/counsel review before launch; ToS pages ship in Phase 4, text derived from the compliance doc):**
+
+> Prices are shown exclusive of applicable taxes. Where Detag is registered for Goods and Services Tax (GST) in India, GST is charged at the rate in force on the invoice date and is shown on the invoice; Detag's GSTIN, when configured, appears on the invoice. The customer is responsible for any taxes, duties, or levies imposed by their own jurisdiction on their purchase. No tax advice is given here — the invoice from the payment provider is the tax record.
+
 ## Related docs
 
 - Open question #2 — `docs/02-REQUIREMENTS/06-open-questions.md`

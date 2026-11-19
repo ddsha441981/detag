@@ -142,6 +142,12 @@ const NOTES_USER_ID_KEY: &str = "detag_user_id";
 /// it yet, ASSUMPTION-032).
 const NOTES_UPGRADE_FROM_KEY: &str = "detag_upgrade_from";
 
+/// The subscription `notes` key carrying Detag's own GSTIN
+/// (P1-076): the seller's GSTIN, so the provider's invoices
+/// carry it. The webhook does not read it — it is passthrough
+/// metadata, not a link.
+const NOTES_GSTIN_KEY: &str = "detag_gstin";
+
 /// Fallback customer name when the email local part cannot
 /// stand as one (Razorpay requires a 3–50 char name).
 const FALLBACK_CUSTOMER_NAME: &str = "Detag Customer";
@@ -476,7 +482,9 @@ fn invoice_from_object(object: &Value) -> Result<Invoice, BillingError> {
 /// id so the `subscription.authenticated` webhook can link
 /// the subscription back to the user, and the superseded
 /// subscription id for an upgrade (the Stripe metadata
-/// precedent — the webhook does not read it yet).
+/// precedent — the webhook does not read it yet), plus
+/// Detag's GSTIN when configured (P1-076 — passthrough, the
+/// webhook does not read it either).
 fn subscription_create_body(req: &CheckoutRequest) -> Value {
     let mut notes = serde_json::Map::new();
     notes.insert(
@@ -488,6 +496,9 @@ fn subscription_create_body(req: &CheckoutRequest) -> Value {
             NOTES_UPGRADE_FROM_KEY.to_owned(),
             Value::String(from.clone()),
         );
+    }
+    if let Some(gstin) = &req.gstin {
+        notes.insert(NOTES_GSTIN_KEY.to_owned(), Value::String(gstin.clone()));
     }
     let mut body = json!({
         "plan_id": req.price_id,
@@ -1109,6 +1120,7 @@ mod tests {
             success_url: "https://app.example/success".to_owned(),
             cancel_url: "https://app.example/cancel".to_owned(),
             upgrade_from_provider_subscription_id: Some("sub_old_123".to_owned()),
+            gstin: Some(TEST_GSTIN.to_owned()),
         });
         assert_eq!(body["plan_id"], "plan_pro");
         assert_eq!(body["total_count"], TOTAL_COUNT_MAX);
@@ -1117,6 +1129,7 @@ mod tests {
         assert_eq!(body["customer_id"], "cust_123");
         assert_eq!(body["notes"]["detag_user_id"], user_id.to_string());
         assert_eq!(body["notes"]["detag_upgrade_from"], "sub_old_123");
+        assert_eq!(body["notes"]["detag_gstin"], TEST_GSTIN);
         // A first purchase carries no customer and no upgrade
         // note — only the user link.
         let first = subscription_create_body(&CheckoutRequest {
@@ -1126,9 +1139,11 @@ mod tests {
             success_url: "https://app.example/success".to_owned(),
             cancel_url: "https://app.example/cancel".to_owned(),
             upgrade_from_provider_subscription_id: None,
+            gstin: None,
         });
         assert!(first.get("customer_id").is_none());
         assert!(first["notes"].get("detag_upgrade_from").is_none());
+        assert!(first["notes"].get("detag_gstin").is_none());
         assert_eq!(first["notes"]["detag_user_id"], user_id.to_string());
     }
 
@@ -1523,6 +1538,10 @@ mod tests {
     const TEST_BASIC_AUTH: &str =
         "Basic cnpwX3Rlc3RfMDAwMDAwMDAwMDAwMDA6dGVzdF9zZWNyZXRfMDAwMDAwMDAwMDAwMDAwMDAwMDA=";
 
+    /// A valid GSTIN for the passthrough tests (P1-076) —
+    /// the same shape the config validator accepts.
+    const TEST_GSTIN: &str = "29ABCDE1234F1Z5";
+
     fn checkout_request(user_id: Uuid) -> CheckoutRequest {
         CheckoutRequest {
             user_id,
@@ -1531,6 +1550,7 @@ mod tests {
             success_url: "https://app.example/success".to_owned(),
             cancel_url: "https://app.example/cancel".to_owned(),
             upgrade_from_provider_subscription_id: Some("sub_old_123".to_owned()),
+            gstin: Some(TEST_GSTIN.to_owned()),
         }
     }
 
@@ -1582,6 +1602,7 @@ mod tests {
         assert_eq!(body["customer_id"], "cust_123");
         assert_eq!(body["notes"]["detag_user_id"], user_id.to_string());
         assert_eq!(body["notes"]["detag_upgrade_from"], "sub_old_123");
+        assert_eq!(body["notes"]["detag_gstin"], TEST_GSTIN);
     }
 
     #[tokio::test]

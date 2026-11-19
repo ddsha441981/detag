@@ -264,10 +264,14 @@ impl BillingProvider for StripeAdapter {
                 // subscription metadata so the webhook can
                 // supersede the old row when the new checkout
                 // completes (ASSUMPTION-032 — the webhook does
-                // not read it yet). A first purchase sends no
-                // `subscription_data` at all.
-                subscription_data: upgrade_subscription_data(
+                // not read it yet). Detag's GSTIN rides the
+                // same metadata when configured (P1-076), so
+                // invoices carry it. A plain first purchase
+                // with no GSTIN sends no `subscription_data`
+                // at all.
+                subscription_data: checkout_subscription_data(
                     req.upgrade_from_provider_subscription_id.as_deref(),
+                    req.gstin.as_deref(),
                 ),
                 ..Default::default()
             },
@@ -564,24 +568,37 @@ impl BillingProvider for StripeAdapter {
 /// id (`sub_...`), never a secret.
 const UPGRADE_FROM_METADATA_KEY: &str = "detag_upgrade_from";
 
-/// The `subscription_data` for a checkout: `None` for a
+/// The subscription-metadata key carrying Detag's own GSTIN
+/// (P1-076): the seller's GSTIN, so the provider's invoices
+/// carry it. Passthrough metadata — the webhook does not read
+/// it.
+const GSTIN_METADATA_KEY: &str = "detag_gstin";
+
+/// The `subscription_data` for a checkout: `None` for a plain
 /// first purchase, metadata carrying the superseded
-/// subscription for an upgrade. Pure, so the mapping is a
-/// unit test even though the checkout call itself needs the
-/// network (ASSUMPTION-023).
-fn upgrade_subscription_data(
+/// subscription for an upgrade and/or Detag's GSTIN when
+/// configured (P1-076). Pure, so the mapping is a unit test
+/// even though the checkout call itself needs the network
+/// (ASSUMPTION-023).
+fn checkout_subscription_data(
     upgrade_from_provider_subscription_id: Option<&str>,
+    gstin: Option<&str>,
 ) -> Option<stripe::CreateCheckoutSessionSubscriptionData> {
-    upgrade_from_provider_subscription_id.map(|from| {
-        stripe::CreateCheckoutSessionSubscriptionData {
-            metadata: Some(
-                [(UPGRADE_FROM_METADATA_KEY.to_owned(), from.to_owned())]
-                    .into_iter()
-                    .collect(),
-            ),
+    let mut metadata = std::collections::HashMap::new();
+    if let Some(from) = upgrade_from_provider_subscription_id {
+        metadata.insert(UPGRADE_FROM_METADATA_KEY.to_owned(), from.to_owned());
+    }
+    if let Some(gstin) = gstin {
+        metadata.insert(GSTIN_METADATA_KEY.to_owned(), gstin.to_owned());
+    }
+    if metadata.is_empty() {
+        None
+    } else {
+        Some(stripe::CreateCheckoutSessionSubscriptionData {
+            metadata: Some(metadata),
             ..Default::default()
-        }
-    })
+        })
+    }
 }
 
 /// The plan code for a Stripe product — the `detag_plan_code`
@@ -805,14 +822,15 @@ mod tests {
     }
 
     #[test]
-    fn upgrade_subscription_data_carries_the_superseded_id() {
-        // A first purchase sends no subscription_data at all.
-        assert!(upgrade_subscription_data(None).is_none());
+    fn checkout_subscription_data_carries_upgrade_id_and_gstin() {
+        // A plain first purchase sends no subscription_data
+        // at all.
+        assert!(checkout_subscription_data(None, None).is_none());
         // An upgrade carries exactly the superseded provider
         // subscription id, under the documented key — and
         // nothing else (no price, no proration behaviour:
         // Stripe's default `create_prorations` applies).
-        let data = upgrade_subscription_data(Some("sub_old_123"))
+        let data = checkout_subscription_data(Some("sub_old_123"), None)
             .expect("an upgrade has subscription_data");
         let metadata = data.metadata.expect("metadata is set");
         assert_eq!(
@@ -821,6 +839,29 @@ mod tests {
         );
         assert_eq!(metadata.len(), 1);
         assert!(data.proration_behavior.is_none());
+        // A GSTIN alone is metadata too (P1-076): the seller's
+        // GSTIN rides the subscription so invoices carry it.
+        let data = checkout_subscription_data(None, Some("29ABCDE1234F1Z5"))
+            .expect("a GSTIN has subscription_data");
+        let metadata = data.metadata.expect("metadata is set");
+        assert_eq!(
+            metadata.get(GSTIN_METADATA_KEY).map(String::as_str),
+            Some("29ABCDE1234F1Z5")
+        );
+        assert_eq!(metadata.len(), 1);
+        // Both together share one metadata map.
+        let data = checkout_subscription_data(Some("sub_old_123"), Some("29ABCDE1234F1Z5"))
+            .expect("upgrade + GSTIN has subscription_data");
+        let metadata = data.metadata.expect("metadata is set");
+        assert_eq!(metadata.len(), 2);
+        assert_eq!(
+            metadata.get(UPGRADE_FROM_METADATA_KEY).map(String::as_str),
+            Some("sub_old_123")
+        );
+        assert_eq!(
+            metadata.get(GSTIN_METADATA_KEY).map(String::as_str),
+            Some("29ABCDE1234F1Z5")
+        );
     }
 
     #[test]

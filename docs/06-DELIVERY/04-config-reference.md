@@ -24,6 +24,7 @@
 | `PF_BILLING_DUNNING_DAY7_DAYS` | `7` | billing |
 | `PF_BILLING_DUNNING_ENABLED` | `true` | billing |
 | `PF_BILLING_DUNNING_SUSPEND_DAYS` | `14` | billing |
+| `PF_BILLING_GSTIN` | (empty) | billing |
 | `PF_DATABASE_URL` | `postgres://pf:pf@localhost:5432/pf` | api, worker |
 | `PF_DISPOSABLE_EMAIL_DOMAINS` | `mailinator.com,guerrillamail.com,10minutemail.com,tempmail.com,yopmail.com` | api |
 | `PF_DOMAIN` | `localhost` | caddy (compose) |

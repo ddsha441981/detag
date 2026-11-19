@@ -556,6 +556,8 @@ async fn checkout_success_and_customer_reuse() {
     assert_eq!(first.customer_id, None);
     assert_eq!(first.price_id, "price_test_pro");
     assert_eq!(first.user_id, user_id);
+    // No GSTIN configured in this app: none is sent (P1-076).
+    assert_eq!(first.gstin, None);
     assert!(
         first
             .success_url
@@ -585,6 +587,43 @@ async fn checkout_success_and_customer_reuse() {
     let second = fake.last_request().expect("second checkout recorded");
     assert_eq!(second.customer_id.as_deref(), Some("cus_test_1"));
     assert_eq!(fake.calls(), 2);
+}
+
+/// GSTIN passthrough (P1-076, the AC): the configured GSTIN
+/// reaches the provider request — the adapter then writes it
+/// to the provider's metadata (Stripe) or notes (Razorpay).
+#[tokio::test]
+async fn checkout_passes_configured_gstin_to_the_provider() {
+    let _guard = PRICE_GUARD.lock().await;
+    let fixtures = TestFixtures::from_env().await;
+    let mut settings = fixtures.settings();
+    settings.disposable_email_domains = "mailinator.com".to_string();
+    settings.tos_current_version = "v1".to_string();
+    settings.api_key_rate_limit_burst = 1000;
+    settings.api_key_rate_limit_refill_per_min = 1000;
+    settings.billing_gstin = "29ABCDE1234F1Z5".to_string();
+    let clock = Arc::new(ManualClock::new(Utc::now()));
+    let fake = Arc::new(FakeProvider::new());
+    let provider: DynBillingProvider = Arc::clone(&fake) as DynBillingProvider;
+    let app = TestApp::spawn_with_fixtures_settings_clock_and_provider(
+        fixtures,
+        settings,
+        Arc::clone(&clock) as Arc<dyn Clock>,
+        provider,
+    )
+    .await;
+    let (user_id, user_token) = make_role(
+        &app,
+        &format!("user-{}@example.com", Uuid::now_v7()),
+        "user",
+    )
+    .await;
+    set_price(&app, "pro", "price_test_pro").await;
+    let res = probe(&app, Some(&user_token), json!({"plan_code": "pro"}), None).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let req = fake.last_request().expect("checkout recorded");
+    assert_eq!(req.user_id, user_id);
+    assert_eq!(req.gstin.as_deref(), Some("29ABCDE1234F1Z5"));
 }
 
 #[tokio::test]

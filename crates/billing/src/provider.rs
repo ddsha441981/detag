@@ -176,6 +176,14 @@ pub struct CheckoutRequest {
     /// (ASSUMPTION-032). `None` is a first purchase: no
     /// metadata, no supersede.
     pub upgrade_from_provider_subscription_id: Option<String>,
+    /// Detag's own GSTIN (P1-076), when configured: the
+    /// adapter passes it through to the provider so invoices
+    /// carry it (Stripe `subscription_data.metadata`
+    /// `detag_gstin`, Razorpay subscription `notes`
+    /// `detag_gstin`). `None` is unset — no GSTIN is sent.
+    /// This is the SELLER's GSTIN; the buyer's GSTIN is not
+    /// collected at checkout (a follow-up, not this ticket).
+    pub gstin: Option<String>,
 }
 
 /// What `create_checkout` returns: the hosted session to redirect the
@@ -576,6 +584,7 @@ mod tests {
                 success_url: "https://app.example/success".to_owned(),
                 cancel_url: "https://app.example/cancel".to_owned(),
                 upgrade_from_provider_subscription_id: None,
+                gstin: None,
             })
             .await
             .expect("fake checkout succeeds")
@@ -622,6 +631,7 @@ mod tests {
                 success_url: "https://app.example/success".to_owned(),
                 cancel_url: "https://app.example/cancel".to_owned(),
                 upgrade_from_provider_subscription_id: None,
+                gstin: None,
             })
             .await
             .expect_err("empty price must fail");
