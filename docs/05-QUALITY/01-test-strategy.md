@@ -424,6 +424,40 @@ nothing (ASSUMPTION-016 — no bitrate data exists to
 invent an estimate from; the completion true-up in
 P1-079 charges the real seconds).
 
+## Usage counters service (P1-079)
+
+The completion true-up (`crates/core/src/usage.rs`:
+`true_up_delta` + `UsageMeter::true_up`,
+`repos::usage_counters::adjust`, FR-P-07) + 3
+in-crate unit tests + 4 live tests in
+`crates/core/tests/usage_live.rs` (8 live tests total
+in that file). The math is pure and tested alone:
+`true_up_delta` is `actual - estimated`, saturating,
+negative inputs clamped to 0 — over-estimate refunds,
+under-estimate charges, exact estimate is a no-op.
+`true_up` takes the job's CREATE day explicitly and
+lands there even when completion crosses UTC midnight
+(the clock-crossing live test proves the new day is
+untouched); the day total floors at 0 in SQL
+(`adjust` clamps on both the INSERT and the
+`ON CONFLICT` leg — the conflict leg must use the raw
+`$3`/`$4` parameters, not `EXCLUDED`, because
+`EXCLUDED` carries the already-clamped insert row and
+would zero a negative delta; the refund tests failed
+before that fix and pass after it). Order is DB-first
+(the reverse of `record`): the DB decides the applied
+delta and Redis receives exactly that, additionally
+clamped against the hash's own value, so neither store
+ever goes negative; a concurrent record landing between
+the pre-read and the upsert can shift Redis by at most
+that record's amount, and `reconcile_day` repairs it
+(ASSUMPTION-040, ADR-0043). No production caller yet:
+job creation is the 501 stub and completion lands in
+Phase 2, which wires `record` at create and `true_up`
+at completion; the per-key `video_seconds` in usage
+attribution still reads 0 until then. No new route, no
+migration, no config.
+
 ## Quota middleware (P1-051)
 
 The pre-check on `POST /v1/jobs` (`apps/api/src/services/quota.rs` + `apps/api/tests/quota_middleware.rs`, 9 live tests, FR-P-02 / FR-P-06 / FR-P-07): the gate reads the durable snapshot (`effective_plan` + `quota_snapshot_for_plan` — the same two sources as `/v1/me`, so the decision agrees with the profile snapshot by construction; the agreement is proven, not assumed, by `quota_headers_agree_with_profile_snapshot`). Image uploads need 1 image remaining (`PF-3001`), video uploads need the P1-050 estimate (at least 1 video-second, even for an unknown duration — a 0-limit plan grants no video at all) against the remaining video-seconds (`PF-3002`), and `running >= plan.concurrency` is `PF-3008` (ADR-0026). Check order is quota dimensions first, then concurrency, so the code is deterministic when several limits trip. Every denial is 429 problem+json with the FR-P-06 upgrade hint in the detail and the `X-Quota-*` headers; an allowed request reaches the stub's 501 with the same headers. A `queued` job occupies a slot, a `held` job does not (proven by the two-user concurrency test). A missing or foreign `upload_id` is 404 `PF-2010` (the P1-045 IDOR rule); no body, or no `upload_id`, reaches the stub — with the caller's quota headers since P1-052 (the P1-051 no-headers carve-out is gone). The check records nothing and acquires no slot — job creation is still the 501 stub, so recording would burn quota for a job that never exists (ASSUMPTION-017); the atomic check-and-record lands with real job creation in Phase 2, and the crash-safe slot acquire/release is P1-053's.
