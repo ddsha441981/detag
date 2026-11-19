@@ -536,6 +536,10 @@ The ticket spec names config fields for GSTIN passthrough (provider metadata), a
 
 The suite: config unit tests (unset by default, a valid GSTIN loads and surfaces, a trailing space trims, five malformed shapes fail boot naming the var) + the Stripe metadata-map unit test (none / upgrade-only / GSTIN-only / both) + the Razorpay body unit test (notes carry `detag_gstin`, absent when unset) + two checkout live tests (no GSTIN configured → `None` recorded on the fake; configured → the exact value reaches the provider request). No new route, no migration, no new table — the route table, the API-key matrix, and the counts do not move. Honesty: the Stripe/Razorpay HTTP legs are STILL untested live (no test-mode key on this VM, ASSUMPTION-023/035) — no test here calls the provider.
 
+## Provider parity doc (P1-077)
+
+Docs-only ticket, no code and no new tests: the parity doc (`docs/06-DELIVERY/11-provider-parity.md`) compares Stripe and Razorpay leg by leg with verdicts (PARITY / PARTIAL / STUBBED / NOT BUILT) and the evidence behind each — including the honest asymmetry that Razorpay's HTTP legs are mock-proven (P1-075) while Stripe's are unit-shape only (P1-060), and that neither provider has had a live run. The stubbed/not-built list (no Razorpay portal, no Razorpay catalog sync, no provider-side cancel, no provider-side price switch, upgrade supersede unwired, single active provider, buyer's GSTIN not collected, Razorpay success/cancel URLs unused) is the gap list for launch. ADR-0042 sequences the launch (Stripe default, flag OFF, test-mode pilot first, P1-078 runbook, owner decision #3 for live keys, owner acceptance of the portal gap). The full `just verify` still runs per the standing rule and must come back at 1043 passed, 0 failed — same total, no behaviour change.
+
 ## Property testing (P0-096)
 
 Property tests live in `crates/core/tests/prop/` (cursor codec,
