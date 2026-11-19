@@ -5,7 +5,8 @@
 //! entitlement, so they belong with billing, not with jobs.
 //! The checkout endpoint is live (P1-062), the portal is
 //! live (P1-067), the invoices list is live (P1-068), and the
-//! Stripe provider webhook is live (P1-063); the rest are the
+//! Stripe provider webhook is live (P1-063) and the Razorpay
+//! provider webhook is live (P1-074); the rest are the
 //! shared 501 stub until their Phase 1 tickets land — except
 //! the webhook-endpoints nest, which uses the authenticated
 //! stub (`stub_authed`, P1-034): an API key needs
@@ -31,6 +32,8 @@ use crate::{
         invoices::{list_invoices as list_invoices_service, InvoicesError},
         portal::{create_portal as create_portal_service, PortalError},
         webhook::{
+            razorpay_signature_header,
+            receive_razorpay_webhook as receive_razorpay_webhook_service,
             receive_stripe_webhook as receive_stripe_webhook_service, signature_header,
             WebhookError, WebhookReceipt,
         },
@@ -328,14 +331,18 @@ pub async fn receive_stripe_webhook(
     }
 }
 
-/// The Razorpay webhook receiver (P1-073, FR-P-03): flag
-/// only — the full receiver (HMAC verify + event mapping)
-/// lands in P1-074. While `PF_FEATURE_RAZORPAY` is off the
-/// endpoint does not exist: 404 `PF-2010`, the ticket's AC
-/// (flag-off endpoints 404). Flag on, the route answers the
-/// shared stub's 501 `PF-5004` until P1-074 wires the
-/// receiver — a 501 that says "not implemented yet" is the
-/// honest answer for a route the flag just turned on.
+/// The Razorpay webhook receiver (P1-074, FR-P-04): the
+/// mirror of the Stripe receiver, over the Razorpay envelope
+/// (`X-Razorpay-Signature`, `hex(hmac_sha256(webhook_secret,
+/// raw_body))`). While `PF_FEATURE_RAZORPAY` is off the
+/// endpoint does not exist: 404 `PF-2010`. Flag on, a bad
+/// signature is 400 `PF-2013` (the endpoint's only 4xx);
+/// Razorpay not configured (or Stripe active instead) is 503
+/// `PF-5005`; every verified delivery — stored, replayed, or
+/// ignored — is 200 with a receipt, unless the handler itself
+/// fails (the database, or a provider call — P1-065): then it
+/// is 500 `PF-5000` so Razorpay retries, and the redelivery
+/// re-dispatches the still-undispatched event.
 #[utoipa::path(
     post,
     path = "/v1/webhooks/razorpay",
@@ -346,14 +353,18 @@ pub async fn receive_stripe_webhook(
     ),
     responses(
         (status = 200, description = "Received (stored, replayed, or ignored)", body = WebhookReceipt),
+        (status = 400, description = "The webhook signature does not verify (PF-2013)", body = Problem),
         (status = 404, description = "The Razorpay flag is off — the endpoint does not exist (PF-2010)", body = Problem),
-        (status = 501, description = "The flag is on but the receiver is not wired yet (PF-5004; P1-074)", body = Problem)
+        (status = 500, description = "The handler failed (database or provider call — PF-5000); Razorpay retries", body = Problem),
+        (status = 503, description = "Billing is not configured (no Razorpay key, or Stripe is the active provider)", body = Problem)
     ),
     tag = "billing"
 )]
 pub async fn receive_razorpay_webhook(
     State(state): State<AppState>,
     Extension(id): Extension<RequestId>,
+    headers: HeaderMap,
+    body: Bytes,
 ) -> Response {
     let request_id = Some(id.0.as_str());
     if !state.settings.feature_flags().razorpay {
@@ -364,7 +375,24 @@ pub async fn receive_razorpay_webhook(
         ))
         .into_response();
     }
-    stub(Extension(id)).await.into_response()
+    let signature = headers
+        .get(razorpay_signature_header())
+        .and_then(|value| value.to_str().ok());
+    match receive_razorpay_webhook_service(&state, &body, signature).await {
+        Ok(_) => (StatusCode::OK, Json(WebhookReceipt { received: true })).into_response(),
+        Err(WebhookError::NotConfigured) => ProblemResponse(
+            AppError::BillingNotConfigured.to_problem(Profile::Production, request_id, None),
+        )
+        .into_response(),
+        Err(WebhookError::SignatureInvalid) => ProblemResponse(
+            AppError::WebhookSignatureInvalid.to_problem(Profile::Production, request_id, None),
+        )
+        .into_response(),
+        Err(WebhookError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
 }
 
 /// The billing nests: public plans, the subscription / checkout /

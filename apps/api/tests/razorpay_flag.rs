@@ -1,10 +1,10 @@
 //! The Razorpay webhook flag gate (P1-073, FR-P-03): the
 //! ticket's AC is that flag-off endpoints 404. The receiver
-//! itself lands in P1-074 — until then the flag-on answer is
-//! the shared stub's 501 `PF-5004`, which says "not
-//! implemented yet" instead of pretending the receiver
-//! exists. The bodies below are a real Razorpay envelope
-//! shape (`subscription.authenticated`) so the flag-on test
+//! landed in P1-074 — flag on, the route is live: with no
+//! provider configured it answers 503 `PF-5005` (the receiver
+//! tests in `razorpay_webhook.rs` prove the live path). The
+//! bodies below are a real Razorpay envelope shape
+//! (`subscription.authenticated`) so the flag-on test
 //! exercises the route a real delivery would hit, not an
 //! empty probe.
 
@@ -91,10 +91,12 @@ async fn flag_off_answers_404_with_junk_key() {
     assert_eq!(json["request_id"], REQUEST_ID, "flag off: {json}");
 }
 
-/// Flag on — the route exists, but the receiver has not
-/// landed yet (P1-074): 501 `PF-5004`, not a silent 200.
+/// Flag on — the route exists and the receiver is live
+/// (P1-074): with no provider configured (the default
+/// settings carry no Razorpay keys) it answers 503 `PF-5005`,
+/// not a silent 200 and no longer the P1-073 stub's 501.
 #[tokio::test]
-async fn flag_on_answers_501_until_receiver_lands() {
+async fn flag_on_without_provider_answers_503() {
     let settings = Settings {
         feature_razorpay: true,
         ..Settings::default()
@@ -103,11 +105,11 @@ async fn flag_on_answers_501_until_receiver_lands() {
     let res = post_razorpay(&app, None).await;
     assert_eq!(
         res.status,
-        StatusCode::NOT_IMPLEMENTED,
+        StatusCode::SERVICE_UNAVAILABLE,
         "flag on: {}",
         res.text()
     );
     let json = res.json();
-    assert_eq!(json["code"], "PF-5004", "flag on: {json}");
+    assert_eq!(json["code"], "PF-5005", "flag on: {json}");
     assert_eq!(json["request_id"], REQUEST_ID, "flag on: {json}");
 }

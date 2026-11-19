@@ -7,12 +7,14 @@
 //! # What each event does
 //!
 //! * `CheckoutCompleted` — creates the subscription row. The user
-//!   comes off the event (`client_reference_id`, P1-060); the
-//!   status, period end, and price ids come off a fresh
-//!   `fetch_subscription` (the provider-reported state, ADR-0032);
-//!   the plan is the catalog row whose `stripe_price_id` matches
-//!   one of those prices. The insert and the `billing.subscription
-//!   .created` audit row land in one transaction.
+//!   comes off the event (`client_reference_id`, P1-060; Razorpay:
+//!   `notes.detag_user_id`, P1-073); the status, period end, and
+//!   price ids come off a fresh `fetch_subscription` (the
+//!   provider-reported state, ADR-0032); the plan is the catalog
+//!   row whose `stripe_price_id` — or, for Razorpay, whose
+//!   `razorpay_plan_id` (P1-074) — matches one of those prices.
+//!   The insert and the `billing.subscription.created` audit row
+//!   land in one transaction.
 //! * `SubscriptionStatusChanged` / `SubscriptionDeleted` — resolve
 //!   the row by provider subscription id and apply the move through
 //!   [`subscription_state::apply_domain_event`](crate::services::subscription_state::apply_domain_event)
@@ -299,9 +301,19 @@ async fn create_subscription(
     };
     let mut plan = None;
     for price_id in &fetched.price_ids {
+        // A price id is provider-shaped: a Stripe price
+        // (`price_...`) or a Razorpay plan id (`plan_...`).
+        // Try both catalog lookups (P1-074): the Razorpay
+        // adapter reports the plan id in `price_ids`
+        // (P1-073), and the Stripe lookup can never match it
+        // — without the second lookup a Razorpay checkout
+        // would log "no plan carries this price" forever.
         if let Some(found) = plans::by_stripe_price_id(&state.pool, price_id)
             .await
             .map_err(|_| AppError::Internal)?
+            .or(plans::by_razorpay_plan_id(&state.pool, price_id)
+                .await
+                .map_err(|_| AppError::Internal)?)
         {
             plan = Some(found);
             break;
