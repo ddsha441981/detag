@@ -300,6 +300,9 @@ support-cancel response and quoted verbatim here:
 - Provider parity — `docs/06-DELIVERY/11-provider-parity.md` (P1-077:
   Stripe vs Razorpay, what works vs what is stubbed; ADR-0042 launch
   sequencing)
+- Razorpay enable runbook — `docs/06-DELIVERY/12-razorpay-enable-runbook.md` (P1-078:
+  test-mode pilot, owner gates, risks, rollback; the executable
+  checklist for flipping `PF_FEATURE_RAZORPAY`)
 - Open question #2 — `docs/02-REQUIREMENTS/06-open-questions.md`
 - Plan editor — `docs/06-DELIVERY/07-admin-guide.md` (plans editor),
   api-spec admin-plans row
