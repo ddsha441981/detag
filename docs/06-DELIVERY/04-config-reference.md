@@ -8,6 +8,10 @@
 
 | Name | Default (dev) | Used by |
 | --- | --- | --- |
+| `PF_ABUSE_AUTO_SUSPEND` | `false` | billing |
+| `PF_ABUSE_SPIKE_ENABLED` | `true` | billing |
+| `PF_ABUSE_SPIKE_JOBS_PER_MINUTE` | `30` | billing |
+| `PF_ABUSE_SPIKE_WINDOW_SECONDS` | `60` | billing |
 | `PF_API_HOST` | `127.0.0.1` | api |
 | `PF_API_KEY_RATE_LIMIT_ABUSE_THRESHOLD` | `5` | api |
 | `PF_API_KEY_RATE_LIMIT_ABUSE_WINDOW_SECS` | `3600` | api |

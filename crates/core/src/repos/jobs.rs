@@ -375,6 +375,30 @@ pub async fn count_running_for_user(
     Ok(row.count)
 }
 
+/// How many jobs a user created at or after `since` (P1-083):
+/// the velocity detector's count. Every status counts — a
+/// spike is about creation velocity, not about how far the
+/// jobs got (a spammer's jobs fail fast, and failed jobs must
+/// still trip the rule). The count is a point-in-time read:
+/// a job created between this read and the report insert is
+/// caught by the next check, not this one.
+pub async fn count_created_since(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+    since: DateTime<Utc>,
+) -> Result<i64, RepoError> {
+    let row = sqlx::query!(
+        "SELECT COUNT(*) AS \"count!\" FROM jobs \
+         WHERE user_id = $1 AND created_at >= $2",
+        user_id,
+        since,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(row.count)
+}
+
 /// Set the status (and bump `updated_at`). `NotFound` when the id
 /// does not exist. No transition validation here — see the module
 /// docs.

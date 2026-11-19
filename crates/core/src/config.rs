@@ -214,6 +214,34 @@ pub struct Settings {
     /// minute of video). Must be >= 0 (0 audits every
     /// correction).
     pub reconcile_audit_threshold_video_seconds: i64,
+    /// Env: PF_ABUSE_SPIKE_ENABLED — the abuse spike
+    /// detector's kill-switch (P1-083, ADR-0047). Default
+    /// true: a user creating at least `PF_ABUSE_SPIKE_JOBS_PER_MINUTE`
+    /// jobs inside `PF_ABUSE_SPIKE_WINDOW_SECONDS` files one
+    /// `abuse_reports` row + one `abuse.spike_detected` audit
+    /// row. False means the check runs but files nothing.
+    pub abuse_spike_enabled: bool,
+    /// Env: PF_ABUSE_SPIKE_JOBS_PER_MINUTE — the velocity
+    /// threshold (P1-083, ADR-0047): jobs created inside the
+    /// window that trip the rule. Default 30: no legitimate
+    /// interactive burst reaches it, but a Business batch
+    /// legitimately can — and that trip is the expected
+    /// signal (a report for a human to clear), not a false
+    /// positive to tune away. Must be >= 1.
+    pub abuse_spike_jobs_per_minute: u32,
+    /// Env: PF_ABUSE_SPIKE_WINDOW_SECONDS — the trailing
+    /// velocity window in seconds (P1-083, ADR-0047).
+    /// Default 60. Must be >= 1.
+    pub abuse_spike_window_seconds: u32,
+    /// Env: PF_ABUSE_AUTO_SUSPEND — when true, a detected
+    /// spike also suspends the account (P1-083, ADR-0047):
+    /// the full P1-008 sequence (status flip + sessions
+    /// revoked + queued jobs held, audited as
+    /// `user.suspended`). Default false: report + audit only,
+    /// no enforcement — a spike is a review tripwire, not a
+    /// block. The owner turns this on deliberately, never by
+    /// accident.
+    pub abuse_auto_suspend: bool,
     /// Env: PF_SMTP_HOST
     pub smtp_host: String,
     /// Env: PF_SMTP_PORT
@@ -527,6 +555,10 @@ impl Default for Settings {
             reconcile_enabled: true,
             reconcile_audit_threshold_images: 10,
             reconcile_audit_threshold_video_seconds: 60,
+            abuse_spike_enabled: true,
+            abuse_spike_jobs_per_minute: 30,
+            abuse_spike_window_seconds: 60,
+            abuse_auto_suspend: false,
             smtp_host: "localhost".to_string(),
             smtp_port: 1025,
             smtp_user: String::new(),
@@ -626,6 +658,16 @@ const FIELD_VARS: &[(&str, &str)] = &[
         "reconcile_audit_threshold_video_seconds",
         "PF_BILLING_RECONCILE_AUDIT_THRESHOLD_VIDEO_SECONDS",
     ),
+    ("abuse_spike_enabled", "PF_ABUSE_SPIKE_ENABLED"),
+    (
+        "abuse_spike_jobs_per_minute",
+        "PF_ABUSE_SPIKE_JOBS_PER_MINUTE",
+    ),
+    (
+        "abuse_spike_window_seconds",
+        "PF_ABUSE_SPIKE_WINDOW_SECONDS",
+    ),
+    ("abuse_auto_suspend", "PF_ABUSE_AUTO_SUSPEND"),
     ("smtp_host", "PF_SMTP_HOST"),
     ("smtp_port", "PF_SMTP_PORT"),
     ("smtp_user", "PF_SMTP_USER"),
@@ -850,6 +892,10 @@ impl Settings {
                 reconcile_audit_threshold_video_seconds,
                 i64
             ),
+            abuse_spike_enabled: field!(abuse_spike_enabled, bool),
+            abuse_spike_jobs_per_minute: field!(abuse_spike_jobs_per_minute, u32),
+            abuse_spike_window_seconds: field!(abuse_spike_window_seconds, u32),
+            abuse_auto_suspend: field!(abuse_auto_suspend, bool),
             smtp_host: field!(smtp_host, String),
             smtp_port: field!(smtp_port, u16),
             smtp_user: field!(smtp_user, String),
@@ -1052,6 +1098,15 @@ impl Settings {
                 "PF_BILLING_RECONCILE_AUDIT_THRESHOLD_VIDEO_SECONDS",
                 "must be >= 0".to_string(),
             );
+        }
+        // The spike threshold/window are the velocity rule's
+        // shape (P1-083): 0 would trip on any count (or make
+        // the window empty) — fail boot instead.
+        if self.abuse_spike_jobs_per_minute == 0 {
+            invalid("PF_ABUSE_SPIKE_JOBS_PER_MINUTE", "must be >= 1".to_string());
+        }
+        if self.abuse_spike_window_seconds == 0 {
+            invalid("PF_ABUSE_SPIKE_WINDOW_SECONDS", "must be >= 1".to_string());
         }
         if self.mailer_backoff_base_secs == 0 {
             invalid("PF_MAILER_BACKOFF_BASE_SECS", "must be >= 1".to_string());
