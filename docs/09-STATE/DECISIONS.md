@@ -187,6 +187,8 @@
 | 6 | kit start | SynthID scope beyond research | research memo only | pending |
 | 7 | 2026-11-12 | Relation of ~/workspace/cleanupload skeleton to Detag (merge or fresh?) | Fresh repo, no reuse, no silent merge | pending |
 | 8 | 2026-11-12 | Admin invite: P0-043 seeds plans + flags only — who owns the runbook's `pf-admin-create` CLI (prints one-time setup link) and is there an invites table/flow? | Safe default: seed invents NO admin user/invite/credential (no table or flow defined in the kit); the CLI needs an owning ticket (Phase 1 admin epic) | owner-input-needed |
+| 9 | 2026-11-19 | Razorpay portal gap (P1-078, ADR-0042 §5): Razorpay has no self-serve customer portal — `POST /v1/billing/portal` 500s while Razorpay is active; subscribers cancel through support (P1-071) + the Razorpay dashboard. Accept that, or a portal-side flow must land before Razorpay takes real subscribers? | Safe default: NOT accepted — Razorpay takes no real subscribers until the owner accepts the gap | owner-input-needed |
+| 10 | 2026-11-19 | Shared money gaps (P1-078, ADR-0042 §6, parity doc gap list 3–5): provider-side cancel, provider-side price switch on downgrade, and upgrade supersede are NOT built for either provider (same gaps Stripe already carries). Accept them (with the dashboard workarounds in the enable runbook) or close them before Razorpay takes real subscribers? | Safe default: NOT accepted — Razorpay takes no real subscribers until the owner accepts or the gaps are closed | owner-input-needed |
 
 ## Research log (Phase 6)
 
