@@ -190,6 +190,30 @@ pub struct Settings {
     /// the buyer's: collecting a customer's GSTIN at checkout
     /// is a follow-up, not this ticket.
     pub billing_gstin: String,
+    /// Env: PF_BILLING_RECONCILE_ENABLED — the nightly
+    /// reconciliation job's kill-switch (P1-082, ADR-0046).
+    /// Default true: the worker reconciles yesterday's +
+    /// today's usage at the nightly hour (DB wins, audit on
+    /// corrections beyond the thresholds below). False means
+    /// the job runs but does nothing — the operator's pause
+    /// button while a metering incident is worked, without
+    /// touching the schedule.
+    pub reconcile_enabled: bool,
+    /// Env: PF_BILLING_RECONCILE_AUDIT_THRESHOLD_IMAGES —
+    /// the anomaly threshold for the nightly reconciliation
+    /// (P1-082, ADR-0046): a correction whose images delta
+    /// reaches this magnitude is audited
+    /// (`billing.usage.reconciled`). Default 10: a few
+    /// images of drift is race/clock noise, ten is real.
+    /// Must be >= 0 (0 audits every correction).
+    pub reconcile_audit_threshold_images: i64,
+    /// Env: PF_BILLING_RECONCILE_AUDIT_THRESHOLD_VIDEO_SECONDS —
+    /// the anomaly threshold for video-seconds (P1-082,
+    /// ADR-0046): a correction whose video-seconds delta
+    /// reaches this magnitude is audited. Default 60 (one
+    /// minute of video). Must be >= 0 (0 audits every
+    /// correction).
+    pub reconcile_audit_threshold_video_seconds: i64,
     /// Env: PF_SMTP_HOST
     pub smtp_host: String,
     /// Env: PF_SMTP_PORT
@@ -456,6 +480,13 @@ pub struct Settings {
     /// — the drain test spawns the real binary against a unique
     /// namespace. Default `pf:queue`. Must be non-empty.
     pub worker_queue_namespace: String,
+    /// Env: PF_WORKER_NIGHTLY_HOUR_UTC — the UTC hour the
+    /// worker's nightly schedule fires (P1-082): the
+    /// reconciliation job is enqueued at this hour every day.
+    /// Default 2 (02:00 UTC, the quiet hour — after the UTC
+    /// day has turned over and before the day's traffic).
+    /// Must be 0..=23.
+    pub nightly_hour_utc: u32,
 }
 
 impl Default for Settings {
@@ -493,6 +524,9 @@ impl Default for Settings {
             dunning_day7_days: 7,
             dunning_suspend_days: 14,
             billing_gstin: String::new(),
+            reconcile_enabled: true,
+            reconcile_audit_threshold_images: 10,
+            reconcile_audit_threshold_video_seconds: 60,
             smtp_host: "localhost".to_string(),
             smtp_port: 1025,
             smtp_user: String::new(),
@@ -542,6 +576,7 @@ impl Default for Settings {
             worker_heartbeat_interval_secs: 15,
             worker_drain_timeout_secs: 30,
             worker_queue_namespace: "pf:queue".to_string(),
+            nightly_hour_utc: 2,
             queue_visibility_timeout_secs: 300,
             queue_keep_alive_secs: 30,
         }
@@ -582,6 +617,15 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("dunning_day7_days", "PF_BILLING_DUNNING_DAY7_DAYS"),
     ("dunning_suspend_days", "PF_BILLING_DUNNING_SUSPEND_DAYS"),
     ("billing_gstin", "PF_BILLING_GSTIN"),
+    ("reconcile_enabled", "PF_BILLING_RECONCILE_ENABLED"),
+    (
+        "reconcile_audit_threshold_images",
+        "PF_BILLING_RECONCILE_AUDIT_THRESHOLD_IMAGES",
+    ),
+    (
+        "reconcile_audit_threshold_video_seconds",
+        "PF_BILLING_RECONCILE_AUDIT_THRESHOLD_VIDEO_SECONDS",
+    ),
     ("smtp_host", "PF_SMTP_HOST"),
     ("smtp_port", "PF_SMTP_PORT"),
     ("smtp_user", "PF_SMTP_USER"),
@@ -688,6 +732,7 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ),
     ("worker_drain_timeout_secs", "PF_WORKER_DRAIN_TIMEOUT_SECS"),
     ("worker_queue_namespace", "PF_WORKER_QUEUE_NAMESPACE"),
+    ("nightly_hour_utc", "PF_WORKER_NIGHTLY_HOUR_UTC"),
     (
         "queue_visibility_timeout_secs",
         "PF_QUEUE_VISIBILITY_TIMEOUT_SECS",
@@ -799,6 +844,12 @@ impl Settings {
             dunning_day7_days: field!(dunning_day7_days, u32),
             dunning_suspend_days: field!(dunning_suspend_days, u32),
             billing_gstin: field!(billing_gstin, String),
+            reconcile_enabled: field!(reconcile_enabled, bool),
+            reconcile_audit_threshold_images: field!(reconcile_audit_threshold_images, i64),
+            reconcile_audit_threshold_video_seconds: field!(
+                reconcile_audit_threshold_video_seconds,
+                i64
+            ),
             smtp_host: field!(smtp_host, String),
             smtp_port: field!(smtp_port, u16),
             smtp_user: field!(smtp_user, String),
@@ -860,6 +911,7 @@ impl Settings {
             worker_heartbeat_interval_secs: field!(worker_heartbeat_interval_secs, u64),
             worker_drain_timeout_secs: field!(worker_drain_timeout_secs, u64),
             worker_queue_namespace: field!(worker_queue_namespace, String),
+            nightly_hour_utc: field!(nightly_hour_utc, u32),
             queue_visibility_timeout_secs: field!(queue_visibility_timeout_secs, u64),
             queue_keep_alive_secs: field!(queue_keep_alive_secs, u64),
         };
@@ -985,6 +1037,22 @@ impl Settings {
                 "must be a 15-character GSTIN (2-digit state code + 10-char PAN + entity digit + Z + check character)".to_string(),
             );
         }
+        // The reconcile audit thresholds are magnitudes (P1-082):
+        // a negative threshold would audit nothing or
+        // everything depending on the comparison — fail boot
+        // instead. Zero is allowed: it audits every correction.
+        if self.reconcile_audit_threshold_images < 0 {
+            invalid(
+                "PF_BILLING_RECONCILE_AUDIT_THRESHOLD_IMAGES",
+                "must be >= 0".to_string(),
+            );
+        }
+        if self.reconcile_audit_threshold_video_seconds < 0 {
+            invalid(
+                "PF_BILLING_RECONCILE_AUDIT_THRESHOLD_VIDEO_SECONDS",
+                "must be >= 0".to_string(),
+            );
+        }
         if self.mailer_backoff_base_secs == 0 {
             invalid("PF_MAILER_BACKOFF_BASE_SECS", "must be >= 1".to_string());
         }
@@ -1077,6 +1145,11 @@ impl Settings {
         }
         if self.worker_queue_namespace.trim().is_empty() {
             invalid("PF_WORKER_QUEUE_NAMESPACE", "must be non-empty".to_string());
+        }
+        // The nightly hour is a UTC hour (P1-082): 24 would
+        // never fire, 25+ is nonsense — fail boot naming it.
+        if self.nightly_hour_utc > 23 {
+            invalid("PF_WORKER_NIGHTLY_HOUR_UTC", "must be 0..=23".to_string());
         }
         if self.queue_keep_alive_secs == 0 {
             invalid(

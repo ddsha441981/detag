@@ -140,7 +140,7 @@ async fn heartbeat_row_and_gauges_are_visible() {
     hooks.reset_depths();
     let identity = WorkerIdentity::current();
     metrics.worker().set_info(&identity.worker_id, identity.pid);
-    let (monitor, inflight) = build_monitor(&config, hooks, &pool)
+    let (monitor, inflight) = build_monitor(&config, hooks, &pool, None)
         .await
         .expect("monitor builds against the native Redis");
     let shutdown = Arc::new(Notify::new());
