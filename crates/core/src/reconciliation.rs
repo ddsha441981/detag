@@ -5,8 +5,10 @@
 //! row second — so a failure between the two legs leaves the
 //! stores disagreeing. This job is the nightly repair: for
 //! every user-day in the window it compares Redis against the
-//! DB, the DB wins (the P1-050 `reconcile_day` CAS, so a
-//! record landing mid-reconcile is never wiped), and the run
+//! DB, the DB wins (the P1-050 `reconcile_day` CAS — the
+//! durable row is never wiped, though a record's hash
+//! increment can be transiently set back and the next run
+//! repairs it; ADR-0048), and the run
 //! produces an anomaly report — the corrections whose drift
 //! reaches the audit thresholds are written to the audit trail
 //! (`billing.usage.reconciled`), one row per anomaly.
@@ -20,8 +22,10 @@
 //! the DB row for that day is already the only copy. A day
 //! inside the window is reconciled even when it is still in
 //! progress (today): the CAS re-reads on conflict, so a
-//! record landing mid-run is never lost, and tomorrow's run
-//! catches whatever drifts after this one.
+//! record landing mid-run is never lost from the durable
+//! row — its hash increment can be transiently set back
+//! (ADR-0048) and the next run repairs it — and tomorrow's
+//! run catches whatever drifts after this one.
 //!
 //! # The candidate set
 //!

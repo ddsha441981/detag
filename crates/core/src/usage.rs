@@ -354,7 +354,9 @@ impl UsageMeter {
             }
             // The hash moved under the read — loop and
             // re-read; a record landing mid-reconcile is
-            // never wiped.
+            // never wiped from the durable row (its hash
+            // increment can be transiently set back —
+            // ADR-0048, P1-086).
         }
         Err(UsageError::Conflict)
     }
