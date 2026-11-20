@@ -79,10 +79,13 @@ release-dry-run:
     cog bump --auto --dry-run
 
 # Regenerate CHANGELOG.md from conventional commits (P0-010).
-# cog 7 prints the changelog to stdout; the recipe writes it to the
-# path in cog.toml.
+# cog 7 prints the changelog to stdout. The recipe prepends the
+# hand-maintained head (docs/09-STATE/CHANGELOG-HEAD.md: status, what we
+# faced, known issues) and appends the generated commit list — never edit
+# the generated part by hand, re-run this recipe instead.
 changelog:
-    cog changelog > CHANGELOG.md
+    cog changelog > /tmp/cog-changelog.md
+    cat docs/09-STATE/CHANGELOG-HEAD.md /tmp/cog-changelog.md > CHANGELOG.md
 
 # Run the full unit + integration test suite.
 test:
