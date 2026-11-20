@@ -87,11 +87,11 @@
 
 use chrono::{DateTime, Duration, Utc};
 use detag_core::{
+    audit::{record, NewAuditLog},
     checksum::sha256_hex,
     db::DbPool,
     error::AppError,
     repos::{
-        audit_logs::{self, NewAuditLog},
         email_outbox::{self, NewOutboxMail},
         email_verification_tokens::{self},
         users::{self, User},
@@ -290,7 +290,7 @@ pub async fn verify_email(
             let user = users::set_email_verified(&mut *conn, user_id)
                 .await
                 .map_err(VerifyTxError::Db)?;
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: Some(user.id),
@@ -527,7 +527,7 @@ pub async fn confirm_email_change(
                     RepoError::UniqueViolation { .. } => ConfirmTxError::Duplicate,
                     other => ConfirmTxError::Db(other),
                 })?;
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: Some(user.id),
@@ -620,7 +620,7 @@ pub async fn resend_verification(
             let _raw = issue_verification(&mut *conn, &user, now)
                 .await
                 .map_err(VerifyTxError::Db)?;
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: Some(user.id),

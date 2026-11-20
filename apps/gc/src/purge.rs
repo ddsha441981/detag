@@ -38,9 +38,9 @@
 
 use chrono::{DateTime, Duration, Utc};
 use detag_core::{
+    audit::{record, NewAuditLog},
     db::{DbPool, PoolConfig},
     repos::{
-        audit_logs::{self, NewAuditLog},
         sessions,
         users::{self, DELETION_GRACE_DAYS},
         RepoError,
@@ -143,7 +143,7 @@ async fn purge_one(pool: &DbPool, user_id: Uuid, now: DateTime<Utc>) -> Result<b
     let timeout = PoolConfig::default().transaction_timeout;
     tx::with_tx(pool, timeout, |conn| {
         Box::pin(async move {
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: None,
@@ -269,7 +269,7 @@ mod tests {
         )
         .await
         .expect("mint token");
-        audit_logs::insert(
+        detag_core::audit::record(
             &ctx.pool,
             &NewAuditLog {
                 actor_user_id: Some(user.id),

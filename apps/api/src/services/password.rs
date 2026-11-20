@@ -56,10 +56,10 @@
 
 use crate::AppState;
 use detag_core::{
+    audit::{record, NewAuditLog},
     checksum::sha256_hex,
     db::PoolConfig,
     repos::{
-        audit_logs::{self, NewAuditLog},
         email_outbox::{self, NewOutboxMail},
         sessions::{self},
         users::{self},
@@ -133,7 +133,7 @@ pub async fn revoke_sessions_on_password_change(
                 .await
                 .map_err(PasswordSessionsTxError::Db)?;
             if revoked > 0 {
-                audit_logs::insert(
+                record(
                     &mut *conn,
                     &NewAuditLog {
                         actor_user_id: Some(user.id),

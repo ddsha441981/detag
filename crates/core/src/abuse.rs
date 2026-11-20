@@ -42,11 +42,12 @@
 //! false positive to tune away. The threshold is operator
 //! config, validated `>= 1` at boot.
 
+use crate::audit::{record, NewAuditLog};
 use crate::clock::Clock;
 use crate::config::Settings;
 use crate::db::{DbPool, PoolConfig};
 use crate::repos::RepoError;
-use crate::repos::{abuse_reports, audit_logs, jobs, sessions, users};
+use crate::repos::{abuse_reports, jobs, sessions, users};
 use crate::tx::{with_tx, TxError};
 use chrono::{DateTime, Duration, Utc};
 use std::sync::Arc;
@@ -260,9 +261,9 @@ pub async fn check_velocity(
                         let sessions_revoked =
                             sessions::revoke_all_for_user(&mut *conn, user_id).await?;
                         let jobs_held = jobs::hold_queued_for_user(&mut *conn, user_id).await?;
-                        audit_logs::insert(
+                        record(
                             &mut *conn,
-                            &audit_logs::NewAuditLog {
+                            &NewAuditLog {
                                 actor_user_id: None,
                                 actor_client: Some(SPIKE_CLIENT.to_string()),
                                 action: "user.suspended".to_string(),
@@ -289,9 +290,9 @@ pub async fn check_velocity(
             // the real suspension outcome — not the flag (an
             // already-suspended account reports `suspended:
             // false`: this check suspended nobody).
-            audit_logs::insert(
+            record(
                 &mut *conn,
-                &audit_logs::NewAuditLog {
+                &NewAuditLog {
                     actor_user_id: None,
                     actor_client: Some(SPIKE_CLIENT.to_string()),
                     action: SPIKE_AUDIT_ACTION.to_string(),

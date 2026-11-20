@@ -32,10 +32,10 @@
 use crate::AppState;
 use chrono::{DateTime, Utc};
 use detag_core::{
+    audit::{record, NewAuditLog},
     db::PoolConfig,
     pagination::{clamp_limit, Cursor, Page},
     repos::{
-        audit_logs::{self, NewAuditLog},
         jobs, sessions,
         users::{self, User, UserSearchRow},
         RepoError,
@@ -159,7 +159,7 @@ pub async fn suspend_user(
             let jobs_held = jobs::hold_queued_for_user(&mut *conn, target.id)
                 .await
                 .map_err(AdminTxError::Db)?;
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: Some(admin.id),
@@ -242,7 +242,7 @@ pub async fn restore_user(
             let jobs_released = jobs::release_held_for_user(&mut *conn, target.id)
                 .await
                 .map_err(AdminTxError::Db)?;
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: Some(admin.id),
@@ -543,7 +543,7 @@ pub async fn impersonate_user(
         tracing::error!(error = ?err, "admin impersonate: token issue failed");
         AdminError::Internal
     })?;
-    audit_logs::insert(
+    record(
         &state.pool,
         &NewAuditLog {
             actor_user_id: Some(admin.id),

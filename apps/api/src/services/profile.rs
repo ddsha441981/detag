@@ -28,11 +28,11 @@ use super::{entitlements, register::is_disposable};
 use crate::AppState;
 use chrono::{DateTime, Utc};
 use detag_core::{
+    audit::{record, NewAuditLog},
     checksum::sha256_hex,
     db::PoolConfig,
     error::FieldError,
     repos::{
-        audit_logs::{self, NewAuditLog},
         users::{self, User},
         RepoError,
     },
@@ -337,7 +337,7 @@ pub async fn patch_profile(
                     }
                 }
             }
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: Some(actor_user_id),

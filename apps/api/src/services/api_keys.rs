@@ -83,11 +83,11 @@ use crate::{
 use chrono::{DateTime, TimeDelta, Utc};
 use detag_core::{
     api_keys::{self, API_KEY_LAST_USED_THROTTLE_SECS, API_KEY_MAX_PER_USER},
+    audit::{record, NewAuditLog},
     db::PoolConfig,
     error::FieldError,
     repos::{
         api_keys::{self as api_keys_repo, ApiKey, NewApiKey},
-        audit_logs::{self, NewAuditLog},
         users::{self, User},
         RepoError,
     },
@@ -346,7 +346,7 @@ pub async fn create_api_key(
             )
             .await
             .map_err(CreateTxError::Db)?;
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: Some(actor_user_id),
@@ -476,7 +476,7 @@ pub async fn rotate_api_key(
             api_keys_repo::set_expires_at(&mut *conn, old.id, expires_at)
                 .await
                 .map_err(RotateTxError::Db)?;
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: Some(actor_user_id),
@@ -596,7 +596,7 @@ pub async fn revoke_api_key(
                 // no audit, no denylist write.
                 return Ok(None);
             }
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: Some(actor_user_id),

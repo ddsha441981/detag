@@ -76,8 +76,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use detag_core::{
+    audit::{record, NewAuditLog},
     error::{AppError, Profile},
-    repos::audit_logs::{self, NewAuditLog},
 };
 use serde_json::Value;
 
@@ -173,7 +173,7 @@ pub async fn audit_admin_writes(
         .get::<AuditDetail>()
         .cloned()
         .unwrap_or_default();
-    let insert = audit_logs::insert(
+    let insert = record(
         &state.pool,
         &NewAuditLog {
             actor_user_id: Some(actor_user_id),

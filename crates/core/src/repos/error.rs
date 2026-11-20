@@ -23,6 +23,18 @@ pub enum RepoError {
     #[error("row not found")]
     NotFound,
 
+    /// A caller-supplied value failed service-side validation
+    /// before any SQL ran (P1-087: the audit service rejects a
+    /// malformed event — empty or undotted action, empty target
+    /// type — with this instead of writing a bad row). The
+    /// `field` names the rejected field; `reason` is a static
+    /// explanation, never caller text.
+    #[error("invalid input: {field}: {reason}")]
+    InvalidInput {
+        field: &'static str,
+        reason: &'static str,
+    },
+
     #[error("database error: {0}")]
     Db(#[from] sqlx::Error),
 }

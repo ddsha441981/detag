@@ -119,6 +119,7 @@
 
 use chrono::Duration;
 use detag_core::{
+    audit::{record, NewAuditLog},
     checksum::sha256_hex,
     db::PoolConfig,
     error::FieldError,
@@ -127,7 +128,6 @@ use detag_core::{
     password::{hash_password, needs_rehash, verify_password, Argon2Params, PasswordError},
     redis::ratelimit::RateLimit,
     repos::{
-        audit_logs::{self, NewAuditLog},
         email_outbox::{self, NewOutboxMail},
         login_attempts::{self, LockScope},
         sessions::{self, NewSession},
@@ -394,7 +394,7 @@ pub async fn login_user(
 
     // The attempt is audited outside the transaction: it
     // survives a rollback, like register.attempt (P1-001).
-    audit_logs::insert(
+    record(
         &state.pool,
         &NewAuditLog {
             actor_user_id: None,
@@ -474,7 +474,7 @@ pub async fn login_user(
     // verify); a deletion-pending user is NOT blocked here —
     // their login cancels the deletion (P1-007) below.
     if user.status == "suspended" {
-        if let Err(err) = audit_logs::insert(
+        if let Err(err) = record(
             &state.pool,
             &NewAuditLog {
                 actor_user_id: Some(user.id),
@@ -582,7 +582,7 @@ pub async fn login_user(
             )
             .await
             .map_err(LoginTxError::Db)?;
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: Some(user.id),
@@ -666,7 +666,7 @@ async fn record_login_failure(
                     .await
                     .map_err(LoginTxError::Db)?;
             }
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: user_id,
@@ -705,7 +705,7 @@ async fn record_login_failure(
                     login_attempts::mark_notified(&mut *conn, LockScope::Account, &email_hash, now)
                         .await
                         .map_err(LoginTxError::Db)?;
-                    audit_logs::insert(
+                    record(
                         &mut *conn,
                         &NewAuditLog {
                             actor_user_id: Some(id),

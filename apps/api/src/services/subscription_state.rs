@@ -75,11 +75,11 @@ use crate::AppState;
 use chrono::{DateTime, Utc};
 use detag_billing::{target_for_event, transition, DomainEvent, SubscriptionStatus};
 use detag_core::{
+    audit::{record, NewAuditLog},
     checksum::sha256_hex,
     db::PoolConfig,
     error::AppError,
     repos::{
-        audit_logs::{self, NewAuditLog},
         email_outbox::{self, NewOutboxMail},
         subscriptions::{self, Subscription},
         users, RepoError,
@@ -384,7 +384,7 @@ async fn apply_validated(
             if !moved {
                 return Err(TransitionTxError::LostRace);
             }
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id,

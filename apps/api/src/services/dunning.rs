@@ -70,12 +70,12 @@
 
 use crate::AppState;
 use detag_core::{
+    audit::{record, NewAuditLog},
     checksum::sha256_hex,
     config::Settings,
     db::PoolConfig,
     error::AppError,
     repos::{
-        audit_logs::{self, NewAuditLog},
         email_outbox::{self, NewOutboxMail},
         subscriptions::{self, Subscription},
         users,
@@ -333,7 +333,7 @@ async fn remind(
             )
             .await
             .map_err(RemindTxError::Db)?;
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: None,

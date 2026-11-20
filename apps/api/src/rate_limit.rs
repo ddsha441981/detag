@@ -148,16 +148,14 @@ use detag_core::{
         API_KEY_RATE_LIMIT_TIER_DEFAULT, API_KEY_RATE_LIMIT_TIER_HIGH,
         API_KEY_RATE_LIMIT_TRIPPED_ACTION,
     },
+    audit::{record as record_audit, NewAuditLog},
     config::Settings,
     error::{AppError, Profile},
     redis::{
         keys::api_key_rate_limit_abuse_key,
         ratelimit::{RateLimit, RateLimitError, TokenBucket},
     },
-    repos::{
-        api_keys::ApiKey,
-        audit_logs::{insert as insert_audit, NewAuditLog},
-    },
+    repos::api_keys::ApiKey,
 };
 use serde_json::json;
 use std::{net::SocketAddr, time::SystemTime};
@@ -536,7 +534,7 @@ async fn record_api_key_rate_limit_trip(state: &crate::AppState, key: &ApiKey, t
         trips_in_window = trips,
         "api-key rate limit tripped — abuse audit written"
     );
-    if let Err(err) = insert_audit(
+    if let Err(err) = record_audit(
         &state.pool,
         &NewAuditLog {
             actor_user_id: Some(key.user_id),

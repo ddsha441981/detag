@@ -61,11 +61,12 @@
 //! precedent) — the report says `ran: false` and every count
 //! is 0.
 
+use crate::audit::{record, NewAuditLog};
 use crate::clock::Clock;
 use crate::config::Settings;
 use crate::db::DbPool;
 use crate::redis::RedisPool;
-use crate::repos::{audit_logs, usage_counters};
+use crate::repos::usage_counters;
 use crate::usage::{UsageError, UsageMeter};
 use chrono::NaiveDate;
 use deadpool_redis::redis::cmd;
@@ -291,9 +292,9 @@ pub async fn run_reconciliation(
                 if !correction.is_anomaly(config) {
                     continue;
                 }
-                match audit_logs::insert(
+                match record(
                     pool,
-                    &audit_logs::NewAuditLog {
+                    &NewAuditLog {
                         actor_user_id: None,
                         actor_client: Some("reconciliation".to_string()),
                         action: RECONCILE_AUDIT_ACTION.to_string(),

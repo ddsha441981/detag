@@ -4,6 +4,15 @@
 //! `register.success`, ...). The table is append-only by trigger
 //! (UPDATE/DELETE raise) — this module only inserts and reads.
 //!
+//! Writes go through the audit service ONLY
+//! ([`crate::audit::record`], P1-087, E1.10): `insert` is
+//! `pub(crate)` so no other crate can write an audit row
+//! directly, and every in-crate writer calls the service too —
+//! a unit test in `crate::audit` scans the workspace and fails
+//! the build if any other file calls this function. Readers
+//! (`list_for_target`, `list_for_action`) stay public: the
+//! P1-088 query API and the tests read through them.
+//!
 //! Privacy (NFR-42): no PII in the log. `target_id` carries a
 //! user id (UUID) once the user exists, never a raw email; the
 //! `after` payload of an anonymous attempt carries the email's
@@ -53,7 +62,11 @@ pub struct AuditLog {
 }
 
 /// Append an event. Returns the row's id.
-pub async fn insert(
+///
+/// Crate-internal: the audit service ([`crate::audit::record`])
+/// is the only caller. Anything else that needs an audit row
+/// goes through the service, which validates the event first.
+pub(crate) async fn insert(
     pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     log: &NewAuditLog,
 ) -> Result<Uuid, RepoError> {

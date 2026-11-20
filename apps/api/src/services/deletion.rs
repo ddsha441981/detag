@@ -24,10 +24,10 @@
 
 use crate::AppState;
 use detag_core::{
+    audit::{record, NewAuditLog},
     checksum::sha256_hex,
     db::PoolConfig,
     repos::{
-        audit_logs::{self, NewAuditLog},
         email_outbox::{self, NewOutboxMail},
         users::{self, User},
         RepoError,
@@ -80,7 +80,7 @@ pub async fn request_account_deletion(
             let updated = users::request_deletion(&mut *conn, user.id)
                 .await
                 .map_err(DeletionTxError::Db)?;
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: Some(actor_user_id),
@@ -138,7 +138,7 @@ pub async fn cancel_deletion_in_tx(
     let Some(_updated) = users::cancel_deletion(&mut *conn, user.id).await? else {
         return Ok(false);
     };
-    audit_logs::insert(
+    record(
         &mut *conn,
         &NewAuditLog {
             actor_user_id: Some(user.id),
