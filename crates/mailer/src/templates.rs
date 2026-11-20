@@ -47,7 +47,7 @@ use crate::error::MailError;
 /// ("reset-password" is `password-reset`, "new-login" is
 /// `new-login-digest`, "lockout" is `lockout-notice`); the
 /// spec's "password-changed" and "verification-thanks" have no
-/// template because no api service enqueues them — the fifteen
+/// template because no api service enqueues them — the sixteen
 /// names here are the contract, and the snapshots cover all of
 /// them. P1-064 adds the three subscription lifecycle mails
 /// (`subscription-welcome` / `subscription-dunning` /
@@ -58,7 +58,10 @@ use crate::error::MailError;
 /// policy job. P1-085 adds the two quota warnings
 /// (`quota-warning-80` / `quota-warning-100`), enqueued by
 /// the quota-warning service when daily usage crosses the
-/// configured thresholds — one mail per level per day.
+/// configured thresholds — one mail per level per day. P1-089
+/// adds the abuse-report ack (`abuse-report-ack`), enqueued
+/// by the abuse intake service when a report is filed — one
+/// mail per report, addressed to the reporter's contact.
 pub const TEMPLATES: &[&str] = &[
     "verify-email",
     "email-change-verify",
@@ -75,6 +78,7 @@ pub const TEMPLATES: &[&str] = &[
     "subscription-canceled",
     "quota-warning-80",
     "quota-warning-100",
+    "abuse-report-ack",
 ];
 
 /// A rendered mail: subject + plain-text body + HTML body.
@@ -145,6 +149,7 @@ impl TemplateEngine {
         add!("subscription-canceled");
         add!("quota-warning-80");
         add!("quota-warning-100");
+        add!("abuse-report-ack");
         Ok(Self { tera })
     }
 
@@ -210,6 +215,7 @@ mod tests {
             "token": "tok-abc-123",
             "sessions_revoked": 2,
             "user_id": "00000000-0000-0000-0000-000000000001",
+            "report_id": "00000000-0000-0000-0000-000000000002",
             "plan_code": "pro",
             "day": "2026-11-20",
             "unit": "images",

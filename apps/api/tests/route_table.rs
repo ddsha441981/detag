@@ -46,6 +46,11 @@
 //!    P1-080 `GET /v1/usage` answers 401 PF-1001 the same
 //!    way (JWT or a `jobs:read` key — no credential at all
 //!    is 401 either way).
+//!    P1-089 `POST /v1/abuse` answers 422 PF-2002 the same
+//!    way as the other public validated handlers (the
+//!    `ValidatedJson` extractor rejects the empty body —
+//!    the intake takes no credential, so there is no 401
+//!    branch for it).
 //!    P1-081 `GET /v1/admin/usage/{id}` +
 //!    `/export` answer 401 PF-1001 the same way (admin +
 //!    support reads — no credential at all is 401 either
@@ -203,6 +208,7 @@ async fn every_table_entry_resolves_to_the_stub() {
                     | "/v1/auth/login"
                     | "/v1/auth/forgot-password"
                     | "/v1/auth/reset-password"
+                    | "/v1/abuse"
             )
         {
             let req = Request::builder()

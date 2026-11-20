@@ -423,6 +423,19 @@ pub struct Settings {
     /// per-email registration bucket refill (P1-020): tokens
     /// per minute. Default 1. 0 = never refills.
     pub rate_limit_register_email_refill_per_min: u64,
+    /// Env: PF_RATE_LIMIT_ABUSE_INTAKE_BURST — per-IP abuse-intake bucket
+    /// burst (P1-089, ADR-0053): how many abuse reports one
+    /// client IP (keyed by its sha256, pre-auth — the reporter
+    /// has no account) may file in a burst. Default 5; must be >= 1.
+    /// Filing is rarer than logging in, and a bot that
+    /// fills the honeypot never reaches this bucket at all —
+    /// 5 burst / 5 per min bounds report spam while letting a
+    /// real reporter retry a mistyped form a few times.
+    pub rate_limit_abuse_intake_burst: u64,
+    /// Env: PF_RATE_LIMIT_ABUSE_INTAKE_REFILL_PER_MIN — per-IP
+    /// abuse-intake bucket refill (P1-089): tokens per minute.
+    /// Default 5. 0 = never refills.
+    pub rate_limit_abuse_intake_refill_per_min: u64,
     /// Env: PF_RATE_LIMIT_RESET_ACCOUNT_BURST — per-account
     /// password-reset bucket burst (P1-020 — the bucket exists
     /// so the reset flow (P1-025) wires its check in one line;
@@ -618,6 +631,8 @@ impl Default for Settings {
             rate_limit_login_ip_refill_per_min: 10,
             rate_limit_register_email_burst: 5,
             rate_limit_register_email_refill_per_min: 1,
+            rate_limit_abuse_intake_burst: 5,
+            rate_limit_abuse_intake_refill_per_min: 5,
             rate_limit_reset_account_burst: 10,
             rate_limit_reset_account_refill_per_min: 1,
             api_key_rate_limit_burst: 60,
@@ -762,6 +777,14 @@ const FIELD_VARS: &[(&str, &str)] = &[
     (
         "rate_limit_register_email_refill_per_min",
         "PF_RATE_LIMIT_REGISTER_EMAIL_REFILL_PER_MIN",
+    ),
+    (
+        "rate_limit_abuse_intake_burst",
+        "PF_RATE_LIMIT_ABUSE_INTAKE_BURST",
+    ),
+    (
+        "rate_limit_abuse_intake_refill_per_min",
+        "PF_RATE_LIMIT_ABUSE_INTAKE_REFILL_PER_MIN",
     ),
     (
         "rate_limit_reset_account_burst",
@@ -965,6 +988,11 @@ impl Settings {
             rate_limit_register_email_burst: field!(rate_limit_register_email_burst, u64),
             rate_limit_register_email_refill_per_min: field!(
                 rate_limit_register_email_refill_per_min,
+                u64
+            ),
+            rate_limit_abuse_intake_burst: field!(rate_limit_abuse_intake_burst, u64),
+            rate_limit_abuse_intake_refill_per_min: field!(
+                rate_limit_abuse_intake_refill_per_min,
                 u64
             ),
             rate_limit_reset_account_burst: field!(rate_limit_reset_account_burst, u64),
@@ -1199,6 +1227,12 @@ impl Settings {
         if self.rate_limit_register_email_burst == 0 {
             invalid(
                 "PF_RATE_LIMIT_REGISTER_EMAIL_BURST",
+                "must be >= 1".to_string(),
+            );
+        }
+        if self.rate_limit_abuse_intake_burst == 0 {
+            invalid(
+                "PF_RATE_LIMIT_ABUSE_INTAKE_BURST",
                 "must be >= 1".to_string(),
             );
         }
@@ -1812,6 +1846,8 @@ mod tests {
         assert_eq!(settings.rate_limit_login_ip_refill_per_min, 10);
         assert_eq!(settings.rate_limit_register_email_burst, 5);
         assert_eq!(settings.rate_limit_register_email_refill_per_min, 1);
+        assert_eq!(settings.rate_limit_abuse_intake_burst, 5);
+        assert_eq!(settings.rate_limit_abuse_intake_refill_per_min, 5);
         assert_eq!(settings.rate_limit_reset_account_burst, 10);
         assert_eq!(settings.rate_limit_reset_account_refill_per_min, 1);
         // P1-037: the default key tier is lower than the user
@@ -1864,6 +1900,13 @@ mod tests {
             "error must name the var, got: {err}"
         );
         env::set_var("PF_RATE_LIMIT_REGISTER_EMAIL_BURST", "4");
+        env::set_var("PF_RATE_LIMIT_ABUSE_INTAKE_BURST", "0");
+        let err = Settings::load_from(None).expect_err("0 abuse-intake burst must fail");
+        assert!(
+            err.to_string().contains("PF_RATE_LIMIT_ABUSE_INTAKE_BURST"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_RATE_LIMIT_ABUSE_INTAKE_BURST", "6");
         env::set_var("PF_RATE_LIMIT_RESET_ACCOUNT_BURST", "0");
         let err = Settings::load_from(None).expect_err("0 reset burst must fail");
         assert!(
@@ -1910,6 +1953,7 @@ mod tests {
         assert_eq!(settings.rate_limit_login_account_burst, 2);
         assert_eq!(settings.rate_limit_login_ip_burst, 7);
         assert_eq!(settings.rate_limit_register_email_burst, 4);
+        assert_eq!(settings.rate_limit_abuse_intake_burst, 6);
         assert_eq!(settings.rate_limit_reset_account_burst, 9);
         assert_eq!(settings.api_key_rate_limit_burst, 7);
         assert_eq!(settings.api_key_rate_limit_high_burst, 8);

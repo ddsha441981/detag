@@ -197,6 +197,7 @@ mod tests {
             "subscription-canceled",
             "quota-warning-80",
             "quota-warning-100",
+            "abuse-report-ack",
         ] {
             assert_eq!(template_class(template), MailClass::Transactional);
         }

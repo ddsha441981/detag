@@ -20,13 +20,14 @@
 //! /v1/admin/usage/{id}` + `GET
 //! /v1/admin/usage/{id}/export`, real since P1-081 (in
 //! this file), and `GET /v1/admin/audit`, real since
-//! P1-088 (in this file).
+//! P1-088 (in this file), and `POST /v1/abuse`, real since
+//! P1-089 (in this file — the public intake, no guard).
 //! Every route — live or stub — sits behind the matrix guard
 //! (P1-043): the stubs take `admin_stub` / `admin_read_stub`
 //! below, so an unauthenticated or wrong-role caller is
 //! rejected before the 501, exactly like on the live routes.
-//! The public abuse intake keeps the plain `stub` — it is not
-//! an admin route.
+//! The public abuse intake is live since P1-089 — it is not
+//! an admin route, so it takes no guard and no credential.
 //!
 //! The live handlers take [`AdminContext`] (writes) or
 //! [`AdminReadContext`] (reads): the extractor verifies the
@@ -40,15 +41,17 @@
 //! (not `Result<_, ProblemResponse>` — the P1-001
 //! `result_large_err` shape; see the adding-an-endpoint doc).
 
-use super::{
-    extractors::{RequestId, ValidatedJson},
-    stub,
-};
+use super::extractors::{MaybeConnectInfo, RequestId, ValidatedJson};
 use crate::{
     audit_middleware::{audit_admin_writes, AuditDetail, AuditHandled},
     auth::{AdminContext, AdminReadContext},
     problem::ProblemResponse,
+    rate_limit::{client_ip_from, denied_response},
     services::{
+        abuse_intake::{
+            file_abuse_report, AbuseIntakeError, AbuseIntakeOutcome, AbuseIntakeRequest,
+            AbuseReportResponse,
+        },
         admin::{
             impersonate_user, list_jobs, restore_user, search_users, suspend_user, AdminError,
             AdminJobsPage, ImpersonateResponse, ReasonRequest, UserSearchPage,
@@ -68,7 +71,7 @@ use crate::{
 };
 use axum::{
     extract::{Extension, Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     middleware,
     response::{IntoResponse, Json, Response},
     routing::{get, post},
@@ -893,6 +896,68 @@ async fn admin_read_stub(
     ProblemResponse(problem)
 }
 
+/// File an abuse report (P1-089, FR-C-06). Public: no
+/// credential is checked at all — the reporter is anonymous
+/// by design (the matrix row is `Ignored`: a key changes
+/// nothing, the anonymous and keyed responses are identical).
+/// Thin handler: the service owns the flow; this maps its
+/// errors to the problem+json envelope. Returns 201 with the
+/// ticket (`{id, status, created_at}`); a honeypot-filled
+/// submission gets the same 201 shape with a random id, so a
+/// bot cannot tell a dropped submission from a filed one.
+/// A bad body is 422 `PF-2002` (the `ValidatedJson`
+/// extractor); a named job id that does not exist is 404
+/// `PF-2010`; a tripped per-IP bucket is 429 `PF-3007`
+/// with `Retry-After` + the bucket's `X-RateLimit-*` trio.
+#[utoipa::path(
+    post,
+    path = "/v1/abuse",
+    request_body = AbuseIntakeRequest,
+    responses(
+        (status = 201, description = "Report filed; the ticket the reporter holds", body = AbuseReportResponse),
+        (status = 404, description = "The named job id does not exist", body = Problem),
+        (status = 422, description = "Validation failed (contact email shape, reason 1-500 chars)", body = Problem),
+        (status = 429, description = "Too many abuse reports from this address", body = Problem)
+    ),
+    tag = "admin"
+)]
+pub async fn abuse_intake(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    headers: HeaderMap,
+    MaybeConnectInfo(addr): MaybeConnectInfo,
+    ValidatedJson(req): ValidatedJson<AbuseIntakeRequest>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    match file_abuse_report(&state, &req, &client_ip_from(&headers, addr)).await {
+        Ok(AbuseIntakeOutcome::Filed(report)) => {
+            (StatusCode::CREATED, Json(report)).into_response()
+        }
+        Ok(AbuseIntakeOutcome::HoneypotDropped) => {
+            // Indistinguishable 201: a random id + now, the
+            // same shape as a filed report. Nothing was
+            // written — no row, no audit, no mail.
+            let dropped = AbuseReportResponse {
+                id: Uuid::now_v7(),
+                status: "open".to_string(),
+                created_at: state.clock.now(),
+            };
+            (StatusCode::CREATED, Json(dropped)).into_response()
+        }
+        Err(AbuseIntakeError::RateLimited(result, limit)) => {
+            denied_response(result, limit, request_id)
+        }
+        Err(AbuseIntakeError::UnknownJob) => {
+            ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(AbuseIntakeError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// The admin nest: dashboard, users (search / suspend / restore /
 /// quota-grant / impersonate), jobs (browse / reprocess / cancel),
 /// flags, plans, audit, abuse reports, attestations, system —
@@ -939,5 +1004,5 @@ pub fn router(state: AppState) -> Router<AppState> {
                 .route("/system", get(admin_read_stub))
                 .layer(middleware::from_fn_with_state(state, audit_admin_writes)),
         )
-        .nest("/v1/abuse", Router::new().route("/", post(stub)))
+        .nest("/v1/abuse", Router::new().route("/", post(abuse_intake)))
 }

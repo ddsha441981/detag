@@ -3,13 +3,15 @@
 //! `abuse_reports` is the admin abuse queue's table (migration
 //! 004): one row per report, `status` open | reviewing |
 //! resolved. Two writers exist: the public intake (`POST
-//! /v1/abuse`, reporter-filed, `user_id` NULL) and the velocity
-//! detector (`detag_core::abuse`, system-raised, `user_id` always
-//! set — P1-083 migration). This module is the detector's side:
-//! insert a spike report and find a user's still-open spike
-//! report inside a window (the dedup scan — one open report per
-//! user per window, so a sustained spike files once, not once
-//! per job).
+//! /v1/abuse`, reporter-filed, `user_id` NULL — P1-089, the
+//! intake service files through [`insert_intake`]) and the
+//! velocity detector (`detag_core::abuse`, system-raised,
+//! `user_id` always set — P1-083 migration). This module is
+//! both writers' side: insert a spike report, insert an
+//! intake report, and find a user's still-open spike report
+//! inside a window (the dedup scan — one open report per user
+//! per window, so a sustained spike files once, not once per
+//! job).
 
 use super::error::RepoError;
 use chrono::{DateTime, Utc};
@@ -30,6 +32,35 @@ pub struct AbuseReport {
     pub notes: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Insert a reporter-filed intake report (P1-089, FR-C-06):
+/// `user_id` NULL (the reporter has no account — the intake
+/// is public), `job_id` the reported job when the reporter
+/// gave one (`None` = a general-abuse report, no job), the
+/// reporter's contact address as filed, `status` `open`.
+/// The caller checks the job exists first (404 when it does
+/// not — ASSUMPTION-050); the column's foreign key is the
+/// backstop. Returns the row (id + timestamps) for the 201 body.
+pub async fn insert_intake(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    job_id: Option<Uuid>,
+    reporter_contact: &str,
+    reason: &str,
+) -> Result<AbuseReport, RepoError> {
+    sqlx::query_as!(
+        AbuseReport,
+        r#"INSERT INTO abuse_reports (job_id, reporter_contact, reason, status)
+           VALUES ($1, $2, $3, 'open')
+           RETURNING id, user_id, reporter_contact, job_id, reason, status,
+                     resolution, notes, created_at, updated_at"#,
+        job_id,
+        reporter_contact,
+        reason,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
 }
 
 /// Insert a system-raised spike report: `user_id` set, `job_id`
