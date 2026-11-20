@@ -14,14 +14,14 @@
 //!   `Capability::for_route`, and the role table behind it
 //!   admits exactly admin + support on read rows and admin
 //!   only on write/impersonate rows.
-//! - `admin_matrix_live` — the live walk: the 11 live routes
+//! - `admin_matrix_live` — the live walk: the 12 live routes
 //!   × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key), asserting the status
 //!   the matrix predicts — 401 `PF-1001` with no credential,
 //!   403 `PF-1002` for a wrong role or a key ("no admin
 //!   ever"), 200 for an admitted role.
 //!
-//! The 12 stub rows are enforced promises since P1-043
+//! The 11 stub rows are enforced promises since P1-043
 //! (`admin_stub` / `admin_read_stub` — guard first, 501
 //! after): the live walk in `admin_guard.rs` asserts the
 //! guard (401 / 403 / 501) on every stub, and the handler
@@ -67,7 +67,7 @@ struct MatrixRow {
 /// `POST /v1/abuse` intake lives in the admin module but is
 /// not an admin route — it has no row (and no capability).
 const MATRIX: &[MatrixRow] = &[
-    // Live (9)
+    // Live (12)
     MatrixRow {
         method: "GET",
         path: "/v1/admin/users",
@@ -122,7 +122,7 @@ const MATRIX: &[MatrixRow] = &[
         capability: Capability::AdminUsageRead,
         live: true,
     },
-    // Stubs (14) — guard lands with the handler ticket (P1-043)
+    // Stubs (13) — guard lands with the handler ticket (P1-043)
     MatrixRow {
         method: "GET",
         path: "/v1/admin/metrics/dashboard",
@@ -181,7 +181,7 @@ const MATRIX: &[MatrixRow] = &[
         method: "GET",
         path: "/v1/admin/audit",
         capability: Capability::AdminAuditRead,
-        live: false,
+        live: true,
     },
     MatrixRow {
         method: "GET",

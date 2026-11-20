@@ -20,6 +20,7 @@
 //! this module does not see a raw email at all.
 
 use super::error::RepoError;
+use crate::pagination::Cursor;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use uuid::Uuid;
@@ -133,4 +134,113 @@ pub async fn list_for_action(
     .fetch_all(pool)
     .await
     .map_err(RepoError::from_sqlx)
+}
+
+/// The P1-088 query filters: every field optional, an absent
+/// field means "no filter". `target` is the target's id (the
+/// `target_id` column — usually a user UUID once the user
+/// exists); the target *type* is not a filter, it rides on
+/// every returned row. `from` is inclusive, `to` exclusive —
+/// the half-open window `[from, to)`, so a row exactly at
+/// `to` belongs to the next window, never to this one.
+#[derive(Debug, Clone, Default)]
+pub struct AuditFilters {
+    /// Only rows this user acted on.
+    pub actor_user_id: Option<Uuid>,
+    /// Only rows with this exact dotted action name.
+    pub action: Option<String>,
+    /// Only rows targeting this id (any target type).
+    pub target_id: Option<String>,
+    /// Only rows at or after this instant.
+    pub from: Option<DateTime<Utc>>,
+    /// Only rows before this instant.
+    pub to: Option<DateTime<Utc>>,
+}
+
+/// Read back one page of the audit trail (newest first) for
+/// the P1-088 query API: the filters above, keyset pagination
+/// over `(created_at, id)`, `limit + 1` rows so the caller can
+/// tell whether a next page exists (the `detag_core::pagination`
+/// `Page::from_window` contract). A `None` cursor starts at
+/// the newest row.
+///
+/// The keyset compares on `date_trunc('milliseconds',
+/// created_at)` — the cursor carries Unix milliseconds, and
+/// the truncation is the same one the service's
+/// `timestamp_millis()` applies when it builds the next
+/// cursor, so the cursor points at exactly the last row of
+/// the previous page. Rows are ordered by that truncated
+/// timestamp, ties broken by `id` — the same order the
+/// cursor walks, so a page boundary never repeats or drops
+/// a row (two rows created in the same millisecond still
+/// order deterministically by `id`).
+///
+/// Indexes (data-model, migration 004): the actor filter +
+/// ordering ride `audit_logs_actor_created_idx`
+/// (`actor_user_id, created_at DESC`); the target filter
+/// rides `audit_logs_target_idx` (`target_type, target_id`)
+/// — the filtered set is then sorted. The action and
+/// `from`/`to` filters have no dedicated index (the
+/// data-model names none for them): they filter the rows
+/// the ordering scans. No new index is added here — the
+/// ticket's "indexes per data-model" is the two that exist.
+pub async fn list_filtered(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    filters: &AuditFilters,
+    cursor: Option<Cursor>,
+    limit: u32,
+) -> Result<Vec<AuditLog>, RepoError> {
+    match cursor {
+        Some(cursor) => {
+            let cursor_ts = DateTime::from_timestamp_millis(cursor.ts)
+                .expect("a cursor ts is a valid Unix-millis timestamp");
+            sqlx::query_as!(
+                AuditLog,
+                r#"SELECT id, actor_user_id, actor_client, action, target_type,
+                          target_id, "before", "after", reason, created_at
+                   FROM audit_logs
+                   WHERE ($1::uuid IS NULL OR actor_user_id = $1)
+                     AND ($2::text IS NULL OR action = $2)
+                     AND ($3::text IS NULL OR target_id = $3)
+                     AND ($4::timestamptz IS NULL OR created_at >= $4)
+                     AND ($5::timestamptz IS NULL OR created_at < $5)
+                     AND (date_trunc('milliseconds', created_at), id) < ($6, $7)
+                   ORDER BY date_trunc('milliseconds', created_at) DESC, id DESC
+                   LIMIT $8"#,
+                filters.actor_user_id,
+                filters.action,
+                filters.target_id,
+                filters.from,
+                filters.to,
+                cursor_ts,
+                cursor.id,
+                limit as i64,
+            )
+            .fetch_all(pool)
+            .await
+            .map_err(RepoError::from_sqlx)
+        }
+        None => sqlx::query_as!(
+            AuditLog,
+            r#"SELECT id, actor_user_id, actor_client, action, target_type,
+                      target_id, "before", "after", reason, created_at
+               FROM audit_logs
+               WHERE ($1::uuid IS NULL OR actor_user_id = $1)
+                 AND ($2::text IS NULL OR action = $2)
+                 AND ($3::text IS NULL OR target_id = $3)
+                 AND ($4::timestamptz IS NULL OR created_at >= $4)
+                 AND ($5::timestamptz IS NULL OR created_at < $5)
+               ORDER BY date_trunc('milliseconds', created_at) DESC, id DESC
+               LIMIT $6"#,
+            filters.actor_user_id,
+            filters.action,
+            filters.target_id,
+            filters.from,
+            filters.to,
+            limit as i64,
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(RepoError::from_sqlx),
+    }
 }

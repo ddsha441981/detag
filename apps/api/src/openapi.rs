@@ -8,7 +8,7 @@
 //! committed spec drifts from the code — regenerate, never edit
 //! the JSON by hand.
 //!
-//! Coverage today is the thirty-seven real handlers (`/healthz`,
+//! Coverage today is the thirty-eight real handlers (`/healthz`,
 //! `/readyz`, `/v1/auth/register`, `/v1/auth/verify-email`,
 //! `/v1/auth/resend-verification`, `/v1/auth/login`,
 //! `/v1/auth/refresh`, `/v1/auth/logout`,
@@ -26,13 +26,14 @@
 //! /v1/admin/billing/catalog-sync`, `POST
 //! /v1/admin/billing/subscriptions/{id}/cancel`, `GET
 //! /v1/admin/usage/{id}`, `GET
-//! /v1/admin/usage/{id}/export`, `POST /v1/billing/checkout`, `POST /v1/billing/portal`, `GET
+//! /v1/admin/usage/{id}/export`, `GET /v1/admin/audit`,
+//! `POST /v1/billing/checkout`, `POST /v1/billing/portal`, `GET
 //! /v1/billing/invoices`, `GET /v1/usage`, `POST /v1/webhooks/stripe`, `POST
 //! /v1/webhooks/razorpay` — the Razorpay receiver is flag-gated
 //! (P1-073): 404 while the flag is off, 501 until P1-074 wires
 //! it)
 //! plus the shared error schema (`Problem`).
-//! The 34 stub routes are NOT
+//! The 33 stub routes are NOT
 //! in the spec yet: each endpoint ticket adds its
 //! `#[utoipa::path]` annotation and its path to this
 //! `#[openapi]` list when its handler becomes real (see the
@@ -56,10 +57,10 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::{Config, SwaggerUi, Url};
 
 use crate::routes::admin::{
-    __path_admin_usage_export_handler, __path_admin_usage_handler, __path_cancel_subscription,
-    __path_catalog_sync_handler, __path_impersonate, __path_list_jobs_handler,
-    __path_list_plans_handler, __path_restore, __path_search_users_handler, __path_suspend,
-    __path_update_plans_handler,
+    __path_admin_audit_handler, __path_admin_usage_export_handler, __path_admin_usage_handler,
+    __path_cancel_subscription, __path_catalog_sync_handler, __path_impersonate,
+    __path_list_jobs_handler, __path_list_plans_handler, __path_restore,
+    __path_search_users_handler, __path_suspend, __path_update_plans_handler,
 };
 use crate::routes::api_keys::{
     __path_create_api_key, __path_revoke_api_key, __path_rotate_api_key,
@@ -79,6 +80,7 @@ use crate::routes::sessions::{__path_delete_session, __path_list_sessions};
 use crate::services::admin::{
     AdminJobItem, AdminJobsPage, ImpersonateResponse, ReasonRequest, UserSearchItem, UserSearchPage,
 };
+use crate::services::admin_audit::{AuditLogItem, AuditPage};
 use crate::services::admin_plans::{
     PlanEdit, PlanEntitlementsEdit, PlanView, PlansResponse, UpdatePlansRequest,
 };
@@ -106,7 +108,7 @@ use crate::AppState;
         version = "1.0.0",
         description = "Detag — watermark removal for images and videos you own. All errors are RFC 7807 problem+json with a stable PF-code (see the Problem schema)."
     ),
-    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, refresh, logout, logout_all, forgot_password, reset_password, get_me, patch_me, delete_me, list_sessions, delete_session, create_api_key, rotate_api_key, revoke_api_key, suspend, restore, search_users_handler, list_jobs_handler, impersonate, list_plans_handler, update_plans_handler, catalog_sync_handler, cancel_subscription, admin_usage_handler, admin_usage_export_handler, create_checkout, create_portal, list_invoices, get_usage, receive_stripe_webhook, receive_razorpay_webhook),
+    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, refresh, logout, logout_all, forgot_password, reset_password, get_me, patch_me, delete_me, list_sessions, delete_session, create_api_key, rotate_api_key, revoke_api_key, suspend, restore, search_users_handler, list_jobs_handler, impersonate, list_plans_handler, update_plans_handler, catalog_sync_handler, cancel_subscription, admin_usage_handler, admin_usage_export_handler, admin_audit_handler, create_checkout, create_portal, list_invoices, get_usage, receive_stripe_webhook, receive_razorpay_webhook),
     components(schemas(
         Problem,
         Readiness,
@@ -146,6 +148,8 @@ use crate::AppState;
         KeyUsage,
         AdminUsageResponse,
         UsageTotals,
+        AuditPage,
+        AuditLogItem,
         crate::services::webhook::WebhookReceipt,
         detag_billing::CatalogDriftReport,
         detag_billing::PlanSyncResult,

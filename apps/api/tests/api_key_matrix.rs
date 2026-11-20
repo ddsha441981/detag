@@ -177,7 +177,7 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow { method: "POST", path: "/v1/admin/billing/subscriptions/{id}/cancel", outcome: KeyOutcome::Forbidden, note: "live handler (P1-071) behind AdminContext; the guard rejects a key outright (no admin ever)" },
     MatrixRow { method: "GET", path: "/v1/admin/usage/{id}", outcome: KeyOutcome::Forbidden, note: "live handler (P1-081) behind AdminReadContext; the extractor rejects keys first" },
     MatrixRow { method: "GET", path: "/v1/admin/usage/{id}/export", outcome: KeyOutcome::Forbidden, note: "live handler (P1-081) behind AdminReadContext; the extractor rejects keys first" },
-    MatrixRow { method: "GET", path: "/v1/admin/audit", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
+    MatrixRow { method: "GET", path: "/v1/admin/audit", outcome: KeyOutcome::Forbidden, note: "live handler (P1-088) behind AdminReadContext; the extractor rejects keys first" },
     MatrixRow { method: "GET", path: "/v1/admin/abuse-reports", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
     MatrixRow { method: "POST", path: "/v1/admin/abuse-reports/{id}/resolve", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
     MatrixRow { method: "GET", path: "/v1/admin/attestations", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
