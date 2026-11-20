@@ -15,6 +15,21 @@ quality gates, observability. Provenance marks (C2PA) are preserved by
 default; stripping them is a gated feature, and invisible-watermark
 (SynthID-class) removal is research-only — see the compliance doc.
 
+## Status (2026-11-20)
+
+Phase 1 (Identity & Billing) is 85/111 tickets done, 190/672 overall
+(Phase 0: 105/108). 1,123 tests green (`just verify`), CI green.
+
+Live now: JWT auth + email verify, API keys (create/rotate/revoke,
+per-key rate limits), roles + permission matrix, plans/quota/feature
+flags, Stripe + Razorpay billing (checkout, webhooks, subscriptions,
+proration, invoices, dunning, refunds), usage counters + usage API,
+admin usage view + CSV export, reconciliation, abuse spike detection.
+
+Not built yet: the removal engine itself (Phase 2, 0/102) — job
+creation is a 501 stub, so no watermark can be removed yet. No console
+(Phase 4), no video pipeline (Phase 3), nothing deployed.
+
 ## Docs
 
 The full build plan and spec live in [`docs/`](docs/) (the agent kit):
