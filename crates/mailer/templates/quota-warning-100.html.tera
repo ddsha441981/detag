@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f6f6f6;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f6f6;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;margin:24px 0;padding:32px;font-family:Arial,Helvetica,sans-serif;color:#222222;">
+            <tr>
+              <td>
+                <p>Hi,</p>
+                <p>You've used all of your daily quota on your {{ app_name }} {{ plan_code }} plan ({{ used }} of {{ limit }} {{ unit }}) for {{ day }}.</p>
+                <p>New jobs will be rejected until tomorrow (UTC). See your usage at <a href="{{ base_url | safe }}/billing">{{ base_url | safe }}/billing</a>, or upgrade any time at <a href="{{ base_url | safe }}/plans">{{ base_url | safe }}/plans</a>.</p>
+                <p>— The {{ app_name }} team</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
