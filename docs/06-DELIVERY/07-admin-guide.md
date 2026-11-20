@@ -76,7 +76,7 @@ views — and neither are denials, 404s, or 501 stubs.
 | PUT | `/v1/admin/plans` | `admin.plans.write` | admin | live | `admin.plans.updated` |
 | POST | `/v1/admin/billing/catalog-sync` | `admin.billing.write` | admin | live | `admin.billing.catalog_synced` |
 | POST | `/v1/admin/billing/subscriptions/{id}/cancel` | `admin.billing.write` | admin | live | `billing.subscription.status_changed` |
-| GET | `/v1/admin/audit` | `admin.audit.read` | admin, support | stub | — |
+| GET | `/v1/admin/audit` | `admin.audit.read` | admin, support | live | — |
 | GET | `/v1/admin/abuse-reports` | `admin.abuse.read` | admin, support | stub | — |
 | POST | `/v1/admin/abuse-reports/{id}/resolve` | `admin.abuse.write` | admin | stub | `admin.abuse_reports.resolved` |
 | GET | `/v1/admin/attestations` | `admin.attestations.read` | admin, support | stub | — |

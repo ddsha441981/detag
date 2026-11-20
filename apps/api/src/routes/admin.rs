@@ -19,7 +19,8 @@
 //! P1-071 (in this file), and `GET
 //! /v1/admin/usage/{id}` + `GET
 //! /v1/admin/usage/{id}/export`, real since P1-081 (in
-//! this file).
+//! this file), and `GET /v1/admin/audit`, real since
+//! P1-088 (in this file).
 //! Every route — live or stub — sits behind the matrix guard
 //! (P1-043): the stubs take `admin_stub` / `admin_read_stub`
 //! below, so an unauthenticated or wrong-role caller is
@@ -52,6 +53,7 @@ use crate::{
             impersonate_user, list_jobs, restore_user, search_users, suspend_user, AdminError,
             AdminJobsPage, ImpersonateResponse, ReasonRequest, UserSearchPage,
         },
+        admin_audit::{list_audit, AdminAuditError, AuditPage},
         admin_plans::{
             list_plans, update_plans, PlanEditorError, PlanView, PlansResponse, UpdatePlansRequest,
         },
@@ -72,8 +74,10 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use chrono::{DateTime, Utc};
 use detag_billing::CatalogDriftReport;
 use detag_core::error::{AppError, Problem, Profile};
+use detag_core::repos::audit_logs::AuditFilters;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -773,6 +777,93 @@ pub async fn admin_usage_export_handler(
     }
 }
 
+/// Query params for `GET /v1/admin/audit` (P1-088): all
+/// optional. `actor` is the acting user's id; `action` the
+/// exact dotted action name; `target` the target's id (any
+/// target type); `from`/`to` the half-open created-at
+/// window `[from, to)` (RFC 3339); `limit` clamps to
+/// 1..=100 (default 20); `cursor` is the opaque keyset
+/// from the previous page.
+#[derive(Debug, Deserialize)]
+pub struct AuditQuery {
+    pub actor: Option<Uuid>,
+    pub action: Option<String>,
+    pub target: Option<String>,
+    pub from: Option<DateTime<Utc>>,
+    pub to: Option<DateTime<Utc>>,
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
+}
+
+/// GET /v1/admin/audit (P1-088): one page of the audit
+/// trail, newest first. Admin + support (the read-only
+/// role) may call it; a verified plain user gets 403
+/// `PF-1002` from the extractor, no credential gets 401
+/// `PF-1001`, an API key gets 403. The filters combine
+/// with AND (an unknown actor id is an empty page, not a
+/// 404 — a list never 404s on its filter). Answers the
+/// api-spec pagination shape (`{"items": [...],
+/// "next_cursor": "..."}` — `next_cursor` omitted on the
+/// last page). A tampered cursor is 422 `PF-2002`; a
+/// malformed uuid filter or a malformed `from`/`to` is
+/// rejected by the `Query` extractor the same way (the
+/// error mapper rewrites the framework 400 to the 422
+/// problem). No audit row (a read creates nothing).
+#[utoipa::path(
+    get,
+    path = "/v1/admin/audit",
+    params(
+        ("actor" = Option<Uuid>, Query, description = "Only rows this user acted on"),
+        ("action" = Option<String>, Query, description = "Only rows with this exact dotted action name"),
+        ("target" = Option<String>, Query, description = "Only rows targeting this id (any target type)"),
+        ("from" = Option<String>, Query, description = "Only rows at or after this instant (RFC 3339, inclusive)"),
+        ("to" = Option<String>, Query, description = "Only rows before this instant (RFC 3339, exclusive)"),
+        ("limit" = Option<u32>, Query, description = "Page size, clamped to 1..=100 (default 20)"),
+        ("cursor" = Option<String>, Query, description = "Opaque keyset from the previous page's next_cursor")
+    ),
+    responses(
+        (status = 200, description = "One page of audit rows, newest first", body = AuditPage),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified plain user, or an API key)", body = Problem),
+        (status = 422, description = "Tampered cursor, malformed uuid filter, or malformed from/to", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn admin_audit_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    _admin: AdminReadContext,
+    Query(params): Query<AuditQuery>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    match list_audit(
+        &state,
+        AuditFilters {
+            actor_user_id: params.actor,
+            action: params.action,
+            target_id: params.target,
+            from: params.from,
+            to: params.to,
+        },
+        params.limit,
+        params.cursor,
+    )
+    .await
+    {
+        Ok(page) => Json(page).into_response(),
+        Err(AdminAuditError::InvalidCursor) => ProblemResponse(
+            AppError::ValidationFailed.to_problem(Profile::Production, request_id, None),
+        )
+        .into_response(),
+        Err(AdminAuditError::Db(db_err)) => {
+            tracing::error!(error = %db_err, "admin audit: read failed");
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// The guarded 501 stubs (P1-043): the same 501 `PF-5004` as
 /// the shared [`stub`](super::stub), but behind the matrix
 /// guard — so a route whose handler has not landed yet still
@@ -841,7 +932,7 @@ pub fn router(state: AppState) -> Router<AppState> {
                 )
                 .route("/usage/{id}", get(admin_usage_handler))
                 .route("/usage/{id}/export", get(admin_usage_export_handler))
-                .route("/audit", get(admin_read_stub))
+                .route("/audit", get(admin_audit_handler))
                 .route("/abuse-reports", get(admin_read_stub))
                 .route("/abuse-reports/{id}/resolve", post(admin_stub))
                 .route("/attestations", get(admin_read_stub))

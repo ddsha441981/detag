@@ -10,15 +10,16 @@
 //! /v1/admin/plans`; P1-061: `POST
 //! /v1/admin/billing/catalog-sync`; P1-071: `POST
 //! /v1/admin/billing/subscriptions/{id}/cancel`; P1-081:
-//! `GET /v1/admin/usage/{id}` + `/export`), so the walk
-//! now covers 11 live routes and 12 stubs. The three tests:
+//! `GET /v1/admin/usage/{id}` + `/export`; P1-088: `GET
+//! /v1/admin/audit`), so the walk
+//! now covers 12 live routes and 11 stubs. The three tests:
 //!
 //! - `admin_guard_on_every_route` — the walk: all 23 admin
 //!   routes × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key). Anonymous is 401
 //!   `PF-1001`, a wrong role or a key is 403 `PF-1002`, an
-//!   admitted role is 200 on the 11 live routes and 501
-//!   `PF-5004` on the 12 stubs — except the catalog sync,
+//!   admitted role is 200 on the 12 live routes and 501
+//!   `PF-5004` on the 11 stubs — except the catalog sync,
 //!   whose admitted admin gets 503 `PF-5005` (billing is
 //!   unconfigured in the test environment: no Stripe key).
 //!   A route that answers 501 to an
@@ -388,7 +389,7 @@ const GUARD_ROWS: &[GuardRow] = &[
     GuardRow {
         method: "GET",
         path: "/v1/admin/audit",
-        live: false,
+        live: true,
         read: true,
     },
     GuardRow {
