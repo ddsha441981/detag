@@ -22,12 +22,15 @@
 //!   plain 501 stub answers anonymous and key alike. These
 //!   are gaps, recorded honestly, not 403s: the route's
 //!   handler ticket adds the extractor/guard and flips the
-//!   row then. Two of them are public BY DESIGN, not gaps —
-//!   `GET /v1/plans` (the plan matrix is public data) and the
-//!   provider webhooks + abuse intake (signature-verified /
-//!   public intake) — the row's note says which.
+//!   row then. One of them is public BY DESIGN, not a gap —
+//!   `GET /v1/plans` (the plan matrix is public data) — the
+//!   row's note says so. The provider webhooks and the abuse
+//!   intake are `Ignored`, not `Unprotected`: their handlers
+//!   take no credential either, but they are live — a key
+//!   changes nothing, so the anonymous and keyed responses
+//!   are identical (the `Ignored` proof, below).
 //! - `Ignored` — the handler takes no credential (the auth
-//!   routes): the key changes nothing, so the anonymous and
+//!   routes, the provider webhooks, the abuse intake): the key
 //!   key responses are identical. The proof is the equality
 //!   itself — had an extractor run, the key would be 403
 //!   while anonymous is 401, so equal statuses mean no
@@ -182,7 +185,7 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow { method: "POST", path: "/v1/admin/abuse-reports/{id}/resolve", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
     MatrixRow { method: "GET", path: "/v1/admin/attestations", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
     MatrixRow { method: "GET", path: "/v1/admin/system", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
-    MatrixRow { method: "POST", path: "/v1/abuse", outcome: KeyOutcome::Unprotected, note: "public by design — abuse intake takes no credential" },
+    MatrixRow { method: "POST", path: "/v1/abuse", outcome: KeyOutcome::Ignored, note: "public by design — abuse intake takes no credential; the handler validates the body (P1-089)" },
 ];
 
 /// The live admin routes (the ones with real handlers +

@@ -3,6 +3,7 @@
 //! thin (extract → call a service → render), SQL stays in
 //! `detag_core::repos`, and the service owns the transaction.
 
+pub mod abuse_intake;
 pub mod admin;
 pub mod admin_audit;
 pub mod admin_plans;

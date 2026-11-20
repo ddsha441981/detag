@@ -42,6 +42,7 @@ use detag_core::audit::{record, NewAuditLog};
 use detag_core::checksum::sha256_hex;
 use detag_core::config::Settings;
 use detag_core::db::DbPool;
+use detag_core::repos::abuse_reports;
 use detag_core::repos::email_outbox::{self, OutboxMail};
 use detag_core::repos::users;
 use serde_json::json;
@@ -51,6 +52,13 @@ use uuid::Uuid;
 /// address on record: the drain resolves its recipient from
 /// `users.pending_email` instead of `users.email`.
 pub const EMAIL_CHANGE_VERIFY_TEMPLATE: &str = "email-change-verify";
+
+/// The template that goes to a reporter who has no account:
+/// the drain resolves its recipient from the report row's
+/// `reporter_contact` (P1-089) instead of the users table —
+/// the payload carries `{report_id}`, never a raw address,
+/// and the hash check below is the same as for user mail.
+pub const ABUSE_REPORT_ACK_TEMPLATE: &str = "abuse-report-ack";
 
 /// Backoff ceiling: no retry is ever scheduled more than an
 /// hour out, whatever the attempt count.
@@ -149,7 +157,19 @@ enum ResolveOutcome {
 /// the email-change verification mail), and verify its sha256
 /// equals the row's `to_hash`. The address itself is never
 /// logged — only the row id + template, at the call site.
+///
+/// The one exception is the abuse-report ack (P1-089): its
+/// reporter has no account, so there is no `user_id` to load.
+/// Its payload carries `{report_id}`; the address comes from
+/// the report row's `reporter_contact`, verified against
+/// `to_hash` the same way. A report row with no contact (a
+/// system-raised spike row enqueued under this template by
+/// mistake) parks permanent — the template is only ever
+/// enqueued by the intake service, which always sets one.
 async fn resolve_recipient(pool: &DbPool, row: &OutboxMail) -> ResolveOutcome {
+    if row.template == ABUSE_REPORT_ACK_TEMPLATE {
+        return resolve_abuse_reporter(pool, row).await;
+    }
     let user_id_raw = match row.payload.get("user_id").and_then(|v| v.as_str()) {
         Some(raw) => raw,
         None => {
@@ -178,6 +198,43 @@ async fn resolve_recipient(pool: &DbPool, row: &OutboxMail) -> ResolveOutcome {
         }
     } else {
         user.email
+    };
+    match row.to_hash.as_deref() {
+        Some(hash) if sha256_hex(address.as_bytes()) == hash => ResolveOutcome::Ok(address),
+        Some(_) => {
+            ResolveOutcome::Permanent("to_hash does not match the resolved address".to_string())
+        }
+        None => ResolveOutcome::Permanent("outbox row has no to_hash".to_string()),
+    }
+}
+
+/// Resolve an abuse-report ack's recipient from its report
+/// row: the payload's `report_id` names the row, the row's
+/// `reporter_contact` is the address, verified against
+/// `to_hash` exactly like the user path above.
+async fn resolve_abuse_reporter(pool: &DbPool, row: &OutboxMail) -> ResolveOutcome {
+    let report_id_raw = match row.payload.get("report_id").and_then(|v| v.as_str()) {
+        Some(raw) => raw,
+        None => {
+            return ResolveOutcome::Permanent("payload has no report_id".to_string());
+        }
+    };
+    let report_id = match Uuid::parse_str(report_id_raw) {
+        Ok(id) => id,
+        Err(_) => {
+            return ResolveOutcome::Permanent("payload report_id is not a UUID".to_string());
+        }
+    };
+    let report = match abuse_reports::by_id(pool, report_id).await {
+        Ok(Some(report)) => report,
+        Ok(None) => return ResolveOutcome::Permanent("abuse report not found".to_string()),
+        Err(err) => return ResolveOutcome::Transient(MailError::Db(err)),
+    };
+    let address = match report.reporter_contact {
+        Some(contact) => contact,
+        None => {
+            return ResolveOutcome::Permanent("abuse report has no reporter contact".to_string());
+        }
     };
     match row.to_hash.as_deref() {
         Some(hash) if sha256_hex(address.as_bytes()) == hash => ResolveOutcome::Ok(address),

@@ -65,6 +65,8 @@
 | `PF_PUBLIC_BASE_URL` | `http://localhost:8080` | api |
 | `PF_QUEUE_KEEP_ALIVE_SECS` | `30` | worker |
 | `PF_QUEUE_VISIBILITY_TIMEOUT_SECS` | `300` | worker |
+| `PF_RATE_LIMIT_ABUSE_INTAKE_BURST` | `5` | api |
+| `PF_RATE_LIMIT_ABUSE_INTAKE_REFILL_PER_MIN` | `5` | api |
 | `PF_RATE_LIMIT_IP_BURST` | `120` | api |
 | `PF_RATE_LIMIT_IP_REFILL_PER_MIN` | `120` | api |
 | `PF_RATE_LIMIT_LOGIN_ACCOUNT_BURST` | `10` | api |

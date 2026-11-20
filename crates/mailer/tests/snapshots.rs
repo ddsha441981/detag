@@ -27,6 +27,7 @@ fn context() -> serde_json::Value {
         "token": "tok-abc-123",
         "sessions_revoked": 2,
         "user_id": "00000000-0000-0000-0000-000000000001",
+        "report_id": "00000000-0000-0000-0000-000000000002",
         "plan_code": "pro",
         "day": "2026-11-20",
         "unit": "images",

@@ -55,7 +55,8 @@ use detag_api::routes::ROUTE_TABLE;
 /// POST /v1/webhooks/razorpay (flag-gated: 404 while the
 /// flag is off, 501 until P1-074 wires the receiver);
 /// P1-080: GET /v1/usage; P1-081: GET /v1/admin/usage/{id} +
-/// `/export`; P1-088: GET /v1/admin/audit.
+/// `/export`; P1-088: GET /v1/admin/audit; P1-089: POST
+/// /v1/abuse.
 /// Everything else is the 501 stub until its Phase ticket lands.
 fn is_live(method: &str, path: &str) -> bool {
     matches!(
@@ -98,6 +99,7 @@ fn is_live(method: &str, path: &str) -> bool {
             | ("GET", "/v1/admin/usage/{id}")
             | ("GET", "/v1/admin/usage/{id}/export")
             | ("GET", "/v1/admin/audit")
+            | ("POST", "/v1/abuse")
     )
 }
 

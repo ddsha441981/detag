@@ -10,7 +10,9 @@
 
 use chrono::{Duration, Utc};
 use detag_core::checksum::sha256_hex;
-use detag_core::repos::{audit_logs, email_outbox, email_outbox::NewOutboxMail, users};
+use detag_core::repos::{
+    abuse_reports, audit_logs, email_outbox, email_outbox::NewOutboxMail, users,
+};
 use detag_mailer::{
     backoff_delay_secs, drain_once, DrainConfig, MemoryTransport, RateLimitConfig, TemplateEngine,
 };
@@ -747,6 +749,147 @@ async fn drain_never_caps_transactional_alerts() {
     assert_eq!(outcome.sent, 4, "alerts are never capped");
     assert_eq!(outcome.rate_limited, 0);
     assert_eq!(trip_audits(&ctx).await.len(), 0, "no trip logged");
+
+    ctx.close().await;
+}
+
+#[tokio::test]
+async fn drain_sends_abuse_report_ack_to_the_reporter() {
+    // P1-089: the ack's reporter has no account — the drain
+    // resolves the address from the report row's
+    // `reporter_contact` (payload `{report_id}` only) and
+    // verifies its sha256 against `to_hash`, exactly like
+    // the user path.
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let contact = "ivan-reporter@example.com";
+    let report = abuse_reports::insert_intake(&ctx.pool, None, contact, "Stolen artwork.")
+        .await
+        .expect("file a report");
+    let id = enqueue(
+        &ctx,
+        contact,
+        "abuse-report-ack",
+        json!({ "report_id": report.id }),
+    )
+    .await;
+    let now = Utc::now();
+
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &drain_config(), now)
+        .await
+        .expect("drain pass succeeds");
+    assert_eq!(outcome.claimed, 1);
+    assert_eq!(outcome.sent, 1);
+    assert_eq!(outcome.transient_failed, 0);
+    assert_eq!(outcome.permanent_failed, 0);
+
+    let sent = transport.sent();
+    assert_eq!(sent.len(), 1, "exactly one mail sent");
+    assert_eq!(sent[0].to, contact);
+    assert_eq!(sent[0].subject, "We received your Detag abuse report");
+    assert!(
+        sent[0].text_body.contains(&report.id.to_string()),
+        "the ack names the report id:\n{}",
+        sent[0].text_body
+    );
+    assert!(
+        sent[0].text_body.contains("72 hours"),
+        "the ack states the review target:\n{}",
+        sent[0].text_body
+    );
+
+    assert!(
+        email_outbox::unsent_for_template(&ctx.pool, "abuse-report-ack")
+            .await
+            .expect("read back")
+            .iter()
+            .all(|r| r.id != id),
+        "the sent row must not be unsent anymore"
+    );
+
+    ctx.close().await;
+}
+
+#[tokio::test]
+async fn drain_parks_abuse_ack_with_bad_data() {
+    // P1-089: an ack naming a report that does not exist, an
+    // ack whose `to_hash` names a different address, and an
+    // ack with no `report_id` at all are all parked on the
+    // first pass, never sent anywhere, never claimed again.
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let config = drain_config();
+
+    let ghost = enqueue(
+        &ctx,
+        "judy-reporter@example.com",
+        "abuse-report-ack",
+        json!({ "report_id": Uuid::now_v7() }),
+    )
+    .await;
+    // The mismatch names a REAL report but a different
+    // address's hash: the lookup succeeds and the hash check
+    // is what parks it (a random report_id would fail at the
+    // lookup instead and never reach the hash check).
+    let mismatch_report = abuse_reports::insert_intake(
+        &ctx.pool,
+        None,
+        "mia-reporter@example.com",
+        "Stolen artwork.",
+    )
+    .await
+    .expect("file a report");
+    let mismatch = email_outbox::enqueue(
+        &ctx.pool,
+        &NewOutboxMail {
+            to_hash: sha256_hex("someone-else@example.com".as_bytes()),
+            template: "abuse-report-ack".to_string(),
+            payload: json!({ "report_id": mismatch_report.id }),
+            scheduled_at: None,
+        },
+    )
+    .await
+    .expect("enqueue mismatch row");
+    let no_id = enqueue(
+        &ctx,
+        "karl-reporter@example.com",
+        "abuse-report-ack",
+        json!({}),
+    )
+    .await;
+
+    let now = Utc::now();
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &config, now)
+        .await
+        .expect("drain pass");
+    assert_eq!(outcome.claimed, 3);
+    assert_eq!(outcome.sent, 0);
+    assert_eq!(outcome.permanent_failed, 3);
+    assert_eq!(
+        transport.sent_count(),
+        0,
+        "nothing is ever sent for bad rows"
+    );
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &config, now)
+        .await
+        .expect("second pass");
+    assert_eq!(outcome.claimed, 0, "parked rows are never claimed again");
+    for (id, why) in [
+        (ghost, "missing report"),
+        (mismatch, "to_hash mismatch"),
+        (no_id, "no report_id"),
+    ] {
+        let stored = email_outbox::unsent_for_template(&ctx.pool, "abuse-report-ack")
+            .await
+            .expect("read back")
+            .into_iter()
+            .find(|r| r.id == id)
+            .unwrap_or_else(|| panic!("parked row {id} ({why}) must stay in the table"));
+        assert_eq!(stored.attempts, 3, "{why}: parked at max attempts");
+        assert!(stored.last_error.is_some(), "{why}: reason kept");
+    }
 
     ctx.close().await;
 }

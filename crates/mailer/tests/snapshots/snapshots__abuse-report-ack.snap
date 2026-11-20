@@ -1,0 +1,37 @@
+---
+source: crates/mailer/tests/snapshots.rs
+expression: "format!(\"subject: {}\\n\\n--- text ---\\n{}\\n--- html ---\\n{}\", rendered.subject,\nrendered.text_body, rendered.html_body)"
+---
+subject: We received your Detag abuse report
+
+--- text ---
+Hi,
+
+We received your abuse report (00000000-0000-0000-0000-000000000002). A reviewer will look at it — we aim to review reports within 72 hours.
+
+You don't need to do anything else. If we need more detail, we'll reply to this address.
+
+— The Detag team
+
+--- html ---
+<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f6f6f6;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f6f6;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;margin:24px 0;padding:32px;font-family:Arial,Helvetica,sans-serif;color:#222222;">
+            <tr>
+              <td>
+                <p>Hi,</p>
+                <p>We received your abuse report (00000000-0000-0000-0000-000000000002). A reviewer will look at it — we aim to review reports within 72 hours.</p>
+                <p>You don't need to do anything else. If we need more detail, we'll reply to this address.</p>
+                <p>— The Detag team</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

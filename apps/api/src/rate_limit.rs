@@ -19,6 +19,7 @@
 //! | `api-key` | key id (UUID) | enforced for key callers (P1-037, by the extractor — see below) |
 //! | `login-ip` | sha256 of the client IP | enforced for login (P1-020, by the login service) |
 //! | `register-email` | sha256 of the normalized email | enforced for register (P1-020, by the register service) |
+//! | `abuse-intake` | sha256 of the client IP | enforced for abuse intake (P1-089, by the intake service) |
 //! | `reset-account` | sha256 of the normalized email | P1-025 wires it (no reset endpoint yet — the bucket exists, nothing spends from it) |
 //!
 //! ONE BUCKET, ONE KEY (P1-020): the Lua script takes the
@@ -182,6 +183,12 @@ pub enum RateLimitScope {
     /// Per email, for registration attempts (P1-020): keyed by
     /// the sha256 of the normalized email, pre-auth.
     RegisterEmail,
+    /// Per client IP, for abuse-intake attempts (P1-089):
+    /// keyed by the sha256 of the client IP, pre-auth (the
+    /// reporter has no account). The honeypot check runs
+    /// before this bucket, so a bot that fills the honeypot
+    /// never spends from it.
+    AbuseIntake,
     /// Per account, for password-reset attempts (P1-020): keyed
     /// by the sha256 of the normalized email, pre-auth. The
     /// reset flow (P1-025) wires the check; nothing spends from
@@ -199,6 +206,7 @@ impl RateLimitScope {
             RateLimitScope::Route => "route",
             RateLimitScope::LoginIp => "login-ip",
             RateLimitScope::RegisterEmail => "register-email",
+            RateLimitScope::AbuseIntake => "abuse-intake",
             RateLimitScope::ResetAccount => "reset-account",
         }
     }
@@ -239,6 +247,11 @@ pub struct RateLimitPolicy {
     /// too — a duplicate registration IS a registration
     /// attempt.
     pub register_email: TokenBucket,
+    /// Per-IP abuse-intake bucket (P1-089): burst + refill
+    /// from the settings. Checked by the intake service after
+    /// the honeypot check, keyed by the sha256 of the client
+    /// IP, pre-auth (the reporter has no account).
+    pub abuse_intake: TokenBucket,
     /// Per-account password-reset bucket (P1-020): burst +
     /// refill from the settings. The reset flow (P1-025) wires
     /// the check; nothing spends from it until then.
@@ -289,6 +302,11 @@ impl RateLimitPolicy {
             settings.rate_limit_register_email_refill_per_min as f64 / 60.0,
         )
         .expect("settings validation guarantees a valid register-email bucket");
+        let abuse_intake = TokenBucket::new(
+            settings.rate_limit_abuse_intake_burst as f64,
+            settings.rate_limit_abuse_intake_refill_per_min as f64 / 60.0,
+        )
+        .expect("settings validation guarantees a valid abuse-intake bucket");
         let reset_account = TokenBucket::new(
             settings.rate_limit_reset_account_burst as f64,
             settings.rate_limit_reset_account_refill_per_min as f64 / 60.0,
@@ -310,6 +328,7 @@ impl RateLimitPolicy {
             login_account,
             login_ip,
             register_email,
+            abuse_intake,
             reset_account,
             api_key_default,
             api_key_high,
@@ -345,6 +364,11 @@ impl RateLimitPolicy {
     /// The burst capacity of the per-email registration bucket.
     pub fn register_email_burst(&self) -> u64 {
         self.register_email.capacity() as u64
+    }
+
+    /// The burst capacity of the per-IP abuse-intake bucket.
+    pub fn abuse_intake_burst(&self) -> u64 {
+        self.abuse_intake.capacity() as u64
     }
 
     /// The burst capacity of the per-account reset bucket.
