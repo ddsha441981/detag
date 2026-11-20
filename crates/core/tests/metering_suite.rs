@@ -39,7 +39,11 @@
 //!   sum of their actuals, in both stores.
 //!   `true_up_refunds_floor_at_zero_across_jobs` —
 //!   interleaved refunds floor at 0, and a retried
-//!   completion true-up is a no-op.
+//!   completion true-up is bounded by that floor, not a
+//!   no-op (P1-086: the floor eats the whole refund only
+//!   when the day total is already 0 — with headroom left
+//!   it applies up to the floor, so the real guard is
+//!   completion-processed-once at the caller).
 //! - **Drift reconciliation:**
 //!   `reconcile_repairs_both_legs_at_once` — a hash
 //!   corrupted on both fields is repaired in one pass.
@@ -64,7 +68,8 @@
 //! 2. This suite proves the meter-level properties that
 //! check-and-record will rely on (exact totals under
 //! concurrency, the durable snapshot reading exactly what
-//! the meter recorded, reconcile never wiping a record).
+//! the meter recorded, reconcile never wiping a durable
+//! row).
 //! The HTTP-level limit trip itself is already proven in
 //! `apps/api/tests/entitlements.rs` (P1-057: Free 9/10
 //! reaches the stub, 10/10 is 429 `PF-3001`).
@@ -538,9 +543,12 @@ async fn true_up_math_is_exact_across_many_jobs() {
 
 /// True-up math, the floor across jobs: interleaved
 /// refunds floor the day total at 0, and a retried
-/// completion true-up for an already-settled job is a
-/// no-op — the second refund cannot drive the counter
-/// below zero.
+/// completion true-up is bounded by that floor — the
+/// second refund cannot drive the counter below zero.
+/// (P1-086: bounded, not a no-op — the retry is a no-op
+/// here only because the day total is already 0; with
+/// headroom left it applies up to the floor, so the real
+/// guard is completion-processed-once at the caller.)
 #[tokio::test]
 async fn true_up_refunds_floor_at_zero_across_jobs() {
     let db = "detag_p084_suite_trueup_floor";
