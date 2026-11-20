@@ -47,7 +47,7 @@ use crate::error::MailError;
 /// ("reset-password" is `password-reset`, "new-login" is
 /// `new-login-digest`, "lockout" is `lockout-notice`); the
 /// spec's "password-changed" and "verification-thanks" have no
-/// template because no api service enqueues them — the thirteen
+/// template because no api service enqueues them — the fifteen
 /// names here are the contract, and the snapshots cover all of
 /// them. P1-064 adds the three subscription lifecycle mails
 /// (`subscription-welcome` / `subscription-dunning` /
@@ -55,7 +55,10 @@ use crate::error::MailError;
 /// state machine's service. P1-070 adds the two dunning
 /// reminders (`subscription-dunning-day3` /
 /// `subscription-dunning-day7`), enqueued by the dunning
-/// policy job.
+/// policy job. P1-085 adds the two quota warnings
+/// (`quota-warning-80` / `quota-warning-100`), enqueued by
+/// the quota-warning service when daily usage crosses the
+/// configured thresholds — one mail per level per day.
 pub const TEMPLATES: &[&str] = &[
     "verify-email",
     "email-change-verify",
@@ -70,6 +73,8 @@ pub const TEMPLATES: &[&str] = &[
     "subscription-dunning-day3",
     "subscription-dunning-day7",
     "subscription-canceled",
+    "quota-warning-80",
+    "quota-warning-100",
 ];
 
 /// A rendered mail: subject + plain-text body + HTML body.
@@ -138,6 +143,8 @@ impl TemplateEngine {
         add!("subscription-dunning-day3");
         add!("subscription-dunning-day7");
         add!("subscription-canceled");
+        add!("quota-warning-80");
+        add!("quota-warning-100");
         Ok(Self { tera })
     }
 
@@ -204,6 +211,11 @@ mod tests {
             "sessions_revoked": 2,
             "user_id": "00000000-0000-0000-0000-000000000001",
             "plan_code": "pro",
+            "day": "2026-11-20",
+            "unit": "images",
+            "used": 8,
+            "limit": 10,
+            "percent": 80,
         })
     }
 

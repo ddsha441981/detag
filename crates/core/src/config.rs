@@ -214,6 +214,26 @@ pub struct Settings {
     /// minute of video). Must be >= 0 (0 audits every
     /// correction).
     pub reconcile_audit_threshold_video_seconds: i64,
+    /// Env: PF_BILLING_QUOTA_WARN_ENABLED — the quota-warning
+    /// mails' kill-switch (P1-085, ADR-0049). Default true: a
+    /// user whose daily usage reaches the warn/full thresholds
+    /// gets one warning mail per level per day. False means no
+    /// warning mail is ever enqueued — the operator's pause
+    /// button while a metering incident is worked.
+    pub quota_warn_enabled: bool,
+    /// Env: PF_BILLING_QUOTA_WARN_PCT — the first warning
+    /// threshold, percent of the daily limit (P1-085,
+    /// ADR-0049). Default 80: at 80% of either daily limit
+    /// (images or video-seconds, whichever trips first) the
+    /// `quota-warning-80` mail is enqueued. Must be 1..=100
+    /// and strictly below `PF_BILLING_QUOTA_WARN_FULL_PCT`.
+    pub quota_warn_pct: u32,
+    /// Env: PF_BILLING_QUOTA_WARN_FULL_PCT — the second warning
+    /// threshold, percent of the daily limit (P1-085,
+    /// ADR-0049). Default 100: at 100% of either daily limit
+    /// the `quota-warning-100` mail is enqueued. Must be
+    /// 1..=100 and strictly above `PF_BILLING_QUOTA_WARN_PCT`.
+    pub quota_warn_full_pct: u32,
     /// Env: PF_ABUSE_SPIKE_ENABLED — the abuse spike
     /// detector's kill-switch (P1-083, ADR-0047). Default
     /// true: a user creating at least `PF_ABUSE_SPIKE_JOBS_PER_MINUTE`
@@ -555,6 +575,9 @@ impl Default for Settings {
             reconcile_enabled: true,
             reconcile_audit_threshold_images: 10,
             reconcile_audit_threshold_video_seconds: 60,
+            quota_warn_enabled: true,
+            quota_warn_pct: 80,
+            quota_warn_full_pct: 100,
             abuse_spike_enabled: true,
             abuse_spike_jobs_per_minute: 30,
             abuse_spike_window_seconds: 60,
@@ -658,6 +681,9 @@ const FIELD_VARS: &[(&str, &str)] = &[
         "reconcile_audit_threshold_video_seconds",
         "PF_BILLING_RECONCILE_AUDIT_THRESHOLD_VIDEO_SECONDS",
     ),
+    ("quota_warn_enabled", "PF_BILLING_QUOTA_WARN_ENABLED"),
+    ("quota_warn_pct", "PF_BILLING_QUOTA_WARN_PCT"),
+    ("quota_warn_full_pct", "PF_BILLING_QUOTA_WARN_FULL_PCT"),
     ("abuse_spike_enabled", "PF_ABUSE_SPIKE_ENABLED"),
     (
         "abuse_spike_jobs_per_minute",
@@ -892,6 +918,9 @@ impl Settings {
                 reconcile_audit_threshold_video_seconds,
                 i64
             ),
+            quota_warn_enabled: field!(quota_warn_enabled, bool),
+            quota_warn_pct: field!(quota_warn_pct, u32),
+            quota_warn_full_pct: field!(quota_warn_full_pct, u32),
             abuse_spike_enabled: field!(abuse_spike_enabled, bool),
             abuse_spike_jobs_per_minute: field!(abuse_spike_jobs_per_minute, u32),
             abuse_spike_window_seconds: field!(abuse_spike_window_seconds, u32),
@@ -1097,6 +1126,26 @@ impl Settings {
             invalid(
                 "PF_BILLING_RECONCILE_AUDIT_THRESHOLD_VIDEO_SECONDS",
                 "must be >= 0".to_string(),
+            );
+        }
+        // The quota-warning thresholds are percents (P1-085):
+        // 0 would warn on any usage (or never, for the full
+        // leg), > 100 would never fire — and equal thresholds
+        // would make the two levels indistinguishable, so the
+        // warn level must sit strictly below the full level.
+        if !(1..=100).contains(&self.quota_warn_pct) {
+            invalid("PF_BILLING_QUOTA_WARN_PCT", "must be 1..=100".to_string());
+        }
+        if !(1..=100).contains(&self.quota_warn_full_pct) {
+            invalid(
+                "PF_BILLING_QUOTA_WARN_FULL_PCT",
+                "must be 1..=100".to_string(),
+            );
+        }
+        if self.quota_warn_pct >= self.quota_warn_full_pct {
+            invalid(
+                "PF_BILLING_QUOTA_WARN_PCT",
+                "must be < PF_BILLING_QUOTA_WARN_FULL_PCT".to_string(),
             );
         }
         // The spike threshold/window are the velocity rule's

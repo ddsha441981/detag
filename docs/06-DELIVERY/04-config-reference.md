@@ -29,6 +29,9 @@
 | `PF_BILLING_DUNNING_ENABLED` | `true` | billing |
 | `PF_BILLING_DUNNING_SUSPEND_DAYS` | `14` | billing |
 | `PF_BILLING_GSTIN` | (empty) | billing |
+| `PF_BILLING_QUOTA_WARN_ENABLED` | `true` | billing |
+| `PF_BILLING_QUOTA_WARN_FULL_PCT` | `100` | billing |
+| `PF_BILLING_QUOTA_WARN_PCT` | `80` | billing |
 | `PF_BILLING_RECONCILE_AUDIT_THRESHOLD_IMAGES` | `10` | billing |
 | `PF_BILLING_RECONCILE_AUDIT_THRESHOLD_VIDEO_SECONDS` | `60` | billing |
 | `PF_BILLING_RECONCILE_ENABLED` | `true` | billing |

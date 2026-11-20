@@ -28,6 +28,11 @@ fn context() -> serde_json::Value {
         "sessions_revoked": 2,
         "user_id": "00000000-0000-0000-0000-000000000001",
         "plan_code": "pro",
+        "day": "2026-11-20",
+        "unit": "images",
+        "used": 8,
+        "limit": 10,
+        "percent": 80,
     })
 }
 

@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO email_outbox (to_hash, template, payload, scheduled_at)\n           VALUES ($1, $2, $3, $4)\n           ON CONFLICT DO NOTHING\n           RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "email_outbox",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Jsonb",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "42f43e2b8a93994bc9b7f7f86d794087903ce94fea797411a3b78b9d4ef768e5"
+}

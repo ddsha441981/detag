@@ -292,3 +292,49 @@ pub async fn count_recent_for_user(
     .map_err(RepoError::from_sqlx)?;
     Ok(row.count)
 }
+
+/// Enqueue a quota-warning mail, once per user + UTC day +
+/// template (P1-085). The insert IS the cap check: the partial
+/// unique index `email_outbox_quota_warn_once_idx` (migrations
+/// 20261120021325 + 20261120023438) keys on (`template`,
+/// `payload->>'user_id'`, `payload->>'day'`), so
+/// `ON CONFLICT DO NOTHING` makes a second enqueue for the
+/// same user/day/level a no-op instead of a second mail — two
+/// concurrent checks racing the same threshold land exactly
+/// one row, with no advisory lock and no separate read. The
+/// template IS part of the key: the first version of the index
+/// keyed on (user, day) only, so an 80% mail blocked the same
+/// day's 100% mail — the ticket's own live test caught it, and
+/// the fix migration put the template in the key.
+///
+/// Returns `Some(id)` when the row was enqueued, `None` when
+/// the cap already held a row for this user/day/template
+/// (sent or still queued — a sent row still counts: the cap
+/// is one mail per day, not one unsent row per day).
+///
+/// The payload MUST carry `user_id` (uuid string) + `day`
+/// (YYYY-MM-DD) — the index reads exactly those two keys, so
+/// a payload missing either would silently escape the cap.
+/// Callers pass the full warning payload (user, day,
+/// dimension, used/limit, percent, plan); only the two cap
+/// keys are load-bearing for the index.
+pub async fn try_enqueue_quota_warning(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    mail: &NewOutboxMail,
+) -> Result<Option<Uuid>, RepoError> {
+    let scheduled_at = mail.scheduled_at.unwrap_or_else(Utc::now);
+    let row = sqlx::query!(
+        r#"INSERT INTO email_outbox (to_hash, template, payload, scheduled_at)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT DO NOTHING
+           RETURNING id"#,
+        mail.to_hash,
+        mail.template,
+        mail.payload,
+        scheduled_at,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(row.map(|r| r.id))
+}

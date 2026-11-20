@@ -1,0 +1,7 @@
+Hi,
+
+You've used {{ percent }}% of your daily quota on your {{ app_name }} {{ plan_code }} plan ({{ used }} of {{ limit }} {{ unit }}) for {{ day }}.
+
+When the quota is full, new jobs are rejected until tomorrow (UTC). See your usage at {{ base_url }}/billing, or upgrade any time at {{ base_url }}/plans.
+
+— The {{ app_name }} team

@@ -195,6 +195,8 @@ mod tests {
             "subscription-dunning-day3",
             "subscription-dunning-day7",
             "subscription-canceled",
+            "quota-warning-80",
+            "quota-warning-100",
         ] {
             assert_eq!(template_class(template), MailClass::Transactional);
         }
