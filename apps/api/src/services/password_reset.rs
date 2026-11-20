@@ -62,12 +62,12 @@
 use crate::rate_limit::RateLimitScope;
 use crate::AppState;
 use detag_core::{
+    audit::{record, NewAuditLog},
     checksum::sha256_hex,
     db::PoolConfig,
     password::{hash_password, Argon2Params},
     redis::ratelimit::RateLimit,
     repos::{
-        audit_logs::{self, NewAuditLog},
         email_outbox::{self, NewOutboxMail},
         email_verification_tokens::{self, PURPOSE_PASSWORD_RESET},
         login_attempts::{self, LockScope},
@@ -226,7 +226,7 @@ pub async fn request_password_reset(
         // row, no PII — the register.attempt pattern) and
         // mint nothing. The 204 the handler answers is
         // identical to the known-email one.
-        audit_logs::insert(
+        record(
             &state.pool,
             &NewAuditLog {
                 actor_user_id: None,
@@ -282,7 +282,7 @@ pub async fn request_password_reset(
             )
             .await
             .map_err(ResetTxError::Db)?;
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: None,
@@ -401,7 +401,7 @@ pub async fn reset_password(
             login_attempts::reset(&mut *conn, LockScope::Account, &email_hash)
                 .await
                 .map_err(ResetTxError::Db)?;
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: Some(user.id),

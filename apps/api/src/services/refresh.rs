@@ -45,11 +45,11 @@
 use crate::AppState;
 use chrono::Duration;
 use detag_core::{
+    audit::{record, NewAuditLog},
     checksum::sha256_hex,
     db::PoolConfig,
     jwt::{issue_access_token_at, ACCESS_TOKEN_TTL_SECS, REFRESH_TOKEN_TTL_SECS},
     repos::{
-        audit_logs::{self, NewAuditLog},
         email_outbox::{self, NewOutboxMail},
         sessions::{self, NewSession, Session, LAST_SEEN_THROTTLE_SECS},
         users, RepoError,
@@ -216,7 +216,7 @@ pub async fn refresh_session(
             sessions::touch_last_seen(&mut *conn, session.id, now, LAST_SEEN_THROTTLE_SECS)
                 .await
                 .map_err(RefreshTxError::Db)?;
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: Some(user.id),
@@ -287,7 +287,7 @@ async fn reuse_family(state: &AppState, session: &Session) -> Result<RefreshOutc
                 let revoked = sessions::revoke_family(&mut *conn, session.family_id)
                     .await
                     .map_err(RefreshTxError::Db)?;
-                audit_logs::insert(
+                record(
                     &mut *conn,
                     &NewAuditLog {
                         actor_user_id: Some(user.id),

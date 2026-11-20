@@ -25,10 +25,10 @@
 
 use crate::AppState;
 use detag_core::{
+    audit::{record, NewAuditLog},
     checksum::sha256_hex,
     db::PoolConfig,
     repos::{
-        audit_logs::{self, NewAuditLog},
         sessions::{self, Session},
         users::User,
         RepoError,
@@ -86,7 +86,7 @@ async fn revoke_and_audit(state: &AppState, session: &Session) -> Result<bool, L
                 .await
                 .map_err(LogoutTxError::Db)?;
             if revoked {
-                audit_logs::insert(
+                record(
                     &mut *conn,
                     &NewAuditLog {
                         actor_user_id: Some(session.user_id),
@@ -138,7 +138,7 @@ pub async fn logout_all(
                 .await
                 .map_err(LogoutTxError::Db)?;
             if revoked > 0 {
-                audit_logs::insert(
+                record(
                     &mut *conn,
                     &NewAuditLog {
                         actor_user_id: Some(actor_user_id),

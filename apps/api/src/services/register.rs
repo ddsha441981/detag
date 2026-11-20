@@ -52,13 +52,13 @@
 
 use chrono::{DateTime, Utc};
 use detag_core::{
+    audit::{record, NewAuditLog},
     checksum::sha256_hex,
     db::PoolConfig,
     error::FieldError,
     password::{hash_password, Argon2Params, PasswordError},
     redis::ratelimit::RateLimit,
     repos::{
-        audit_logs::{self, NewAuditLog},
         login_attempts::{self, LockScope},
         users::{self, User},
         RepoError,
@@ -276,7 +276,7 @@ pub async fn register_user(state: &AppState, req: &RegisterRequest) -> Result<Us
     // someone tried. The email hash was computed above (the
     // bucket check keys on it); it is reused here, never the
     // raw email.
-    audit_logs::insert(
+    record(
         pool,
         &NewAuditLog {
             actor_user_id: None,
@@ -319,7 +319,7 @@ pub async fn register_user(state: &AppState, req: &RegisterRequest) -> Result<Us
             login_attempts::reset(&mut *conn, LockScope::Account, &email_hash)
                 .await
                 .map_err(RegisterTxError::Db)?;
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: Some(user.id),

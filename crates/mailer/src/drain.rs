@@ -38,10 +38,10 @@ use crate::rate_limit::{
 use crate::smtp::{MailTransport, OutgoingMail};
 use crate::templates::TemplateEngine;
 use chrono::{DateTime, Duration, Utc};
+use detag_core::audit::{record, NewAuditLog};
 use detag_core::checksum::sha256_hex;
 use detag_core::config::Settings;
 use detag_core::db::DbPool;
-use detag_core::repos::audit_logs::{self, NewAuditLog};
 use detag_core::repos::email_outbox::{self, OutboxMail};
 use detag_core::repos::users;
 use serde_json::json;
@@ -374,7 +374,7 @@ async fn rate_limited(
         .get("user_id")
         .and_then(|v| v.as_str())
         .and_then(|raw| Uuid::parse_str(raw).ok());
-    if let Err(err) = audit_logs::insert(
+    if let Err(err) = record(
         pool,
         &NewAuditLog {
             actor_user_id: user_id,

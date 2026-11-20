@@ -60,10 +60,10 @@
 use crate::AppState;
 use chrono::{DateTime, Utc};
 use detag_core::{
+    audit::{record, NewAuditLog},
     db::PoolConfig,
     error::AppError,
     repos::{
-        audit_logs::{self, NewAuditLog},
         plan_changes::{self, ScheduledPlanChange},
         plans, subscriptions,
     },
@@ -218,7 +218,7 @@ async fn apply_change(
                 return Err(ApplyTxError::LostRace);
             }
             if moved {
-                audit_logs::insert(
+                record(
                     &mut *conn,
                     &NewAuditLog {
                         actor_user_id: None,

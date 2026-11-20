@@ -61,10 +61,10 @@
 use crate::AppState;
 use detag_billing::{BillingError, DomainEvent, DynBillingProvider};
 use detag_core::{
+    audit::{record, NewAuditLog},
     db::PoolConfig,
     error::AppError,
     repos::{
-        audit_logs::{self, NewAuditLog},
         email_outbox::{self, NewOutboxMail},
         plans, subscriptions, users,
     },
@@ -385,7 +385,7 @@ async fn create_subscription(
             )
             .await
             .map_err(CreateTxError::Db)?;
-            audit_logs::insert(
+            record(
                 &mut *conn,
                 &NewAuditLog {
                     actor_user_id: None,

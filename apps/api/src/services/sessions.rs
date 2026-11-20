@@ -26,9 +26,9 @@
 use crate::AppState;
 use chrono::{DateTime, Utc};
 use detag_core::{
+    audit::{record, NewAuditLog},
     db::PoolConfig,
     repos::{
-        audit_logs::{self, NewAuditLog},
         sessions::{self},
         users::User,
         RepoError,
@@ -152,7 +152,7 @@ pub async fn revoke_session(
                 .await
                 .map_err(SessionTxError::Db)?;
             if revoked {
-                audit_logs::insert(
+                record(
                     &mut *conn,
                     &NewAuditLog {
                         actor_user_id: Some(actor_user_id),
