@@ -23,10 +23,17 @@
 //! [`UsageMeter::record`] writes both, Redis first. A DB
 //! failure after the Redis write leaves drift behind —
 //! that is exactly what [`UsageMeter::reconcile_day`]
-//! repairs (compare-and-set, so a concurrent record is
-//! never wiped). The nightly job that runs the
-//! reconciliation on a schedule is P1-082's; this ticket
-//! delivers the mechanism + the proof it works.
+//! repairs: it compare-and-sets the hash to the DB
+//! values, retrying when the hash moves under the read.
+//! A record whose Redis increment lands between the
+//! reconcile's DB read and its CAS can be transiently
+//! set back in the hash — the durable row itself is
+//! never wiped, and the next reconcile repairs the hash
+//! (the P1-084 suite proves the convergence: after the
+//! records settle, one reconcile makes the stores agree).
+//! The nightly job that runs the reconciliation on a
+//! schedule is P1-082's; this ticket delivers the
+//! mechanism + the proof it works.
 //!
 //! The day is always UTC, taken from the injected
 //! [`Clock`] — never `Utc::now()` in the service — so the
@@ -278,8 +285,14 @@ impl UsageMeter {
     /// Reconcile one user-day: the DB row is the source of
     /// truth, so a Redis hash that disagrees is overwritten
     /// with the DB values (compare-and-set, retried — a
-    /// concurrent record moves the hash and the CAS fails
-    /// rather than wiping the record). A missing DB row
+    /// record that moves the hash under the read makes the
+    /// CAS fail and retry). One window stays open: a record
+    /// whose Redis increment lands between this function's
+    /// DB read and its CAS can be transiently set back in
+    /// the hash — its DB upsert still lands, so the durable
+    /// truth is never wiped, and the next reconcile repairs
+    /// the hash. After the records settle, one reconcile
+    /// makes the stores agree (P1-084). A missing DB row
     /// reads as zeros; a missing Redis hash reads as zeros.
     /// Returns whether Redis was corrected.
     pub async fn reconcile_day(
