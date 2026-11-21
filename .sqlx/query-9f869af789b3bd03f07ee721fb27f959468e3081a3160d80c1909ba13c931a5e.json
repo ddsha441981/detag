@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT j.id, j.user_id, j.upload_id, j.kind, j.mode, j.params, j.status,\n                 j.stage, j.progress, j.priority, j.lane, j.attempts, j.idempotency_key,\n                 j.error, j.attestation_id, j.webhook_url, j.started_at, j.finished_at,\n                 j.created_at, j.updated_at, j.key_id, k.prefix AS \"key_prefix?\"\n             FROM jobs j LEFT JOIN api_keys k ON k.id = j.key_id\n             WHERE ($1::uuid IS NULL OR j.user_id = $1)\n               AND ($2::uuid IS NULL OR j.key_id = $2)\n             ORDER BY j.created_at DESC, j.id DESC\n             LIMIT $3",
+  "query": "SELECT j.id, j.user_id, j.upload_id, j.kind, j.mode, j.params, j.status,\n                 j.stage, j.progress, j.priority, j.lane, j.attempts, j.idempotency_key,\n                 j.error, j.attestation_id, j.webhook_url, j.started_at, j.finished_at,\n                 j.created_at, j.updated_at, j.key_id, k.prefix AS \"key_prefix?\"\n             FROM jobs j LEFT JOIN api_keys k ON k.id = j.key_id\n             WHERE ($1::uuid IS NULL OR j.user_id = $1)\n               AND ($2::uuid IS NULL OR j.key_id = $2)\n             ORDER BY date_trunc('milliseconds', j.created_at) DESC, j.id DESC\n             LIMIT $3",
   "describe": {
     "columns": [
       {
@@ -278,5 +278,5 @@
       false
     ]
   },
-  "hash": "970d6941dbf593d930f57bf588762bdd628103819f84d7fdc114c7b96d38d46a"
+  "hash": "9f869af789b3bd03f07ee721fb27f959468e3081a3160d80c1909ba13c931a5e"
 }
