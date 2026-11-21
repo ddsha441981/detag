@@ -176,8 +176,20 @@ pub async fn suspend_user(
                         "sessions_revoked": sessions_revoked,
                         "jobs_held": jobs_held,
                     })),
-                    reason: Some(reason),
+                    reason: Some(reason.clone()),
                 },
+            )
+            .await
+            .map_err(AdminTxError::Db)?;
+            // The ladder's second rung mails the user (P1-091):
+            // the suspension notice goes out in the same
+            // transaction as the suspension itself, so a
+            // suspended account is never left uninformed.
+            crate::services::enforcement::enqueue_step_mail(
+                &mut *conn,
+                &target,
+                crate::services::enforcement::ENFORCEMENT_SUSPENSION_TEMPLATE,
+                &reason,
             )
             .await
             .map_err(AdminTxError::Db)?;

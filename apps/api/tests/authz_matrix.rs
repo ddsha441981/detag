@@ -63,11 +63,11 @@ struct MatrixRow {
     live: bool,
 }
 
-/// The matrix: all 23 `/v1/admin/*` routes. The public
+/// The matrix: all 25 `/v1/admin/*` routes. The public
 /// `POST /v1/abuse` intake lives in the admin module but is
 /// not an admin route — it has no row (and no capability).
 const MATRIX: &[MatrixRow] = &[
-    // Live (14)
+    // Live (16)
     MatrixRow {
         method: "GET",
         path: "/v1/admin/users",
@@ -89,6 +89,18 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow {
         method: "POST",
         path: "/v1/admin/users/{id}/restore",
+        capability: Capability::AdminUsersWrite,
+        live: true,
+    },
+    MatrixRow {
+        method: "POST",
+        path: "/v1/admin/users/{id}/warn",
+        capability: Capability::AdminUsersWrite,
+        live: true,
+    },
+    MatrixRow {
+        method: "POST",
+        path: "/v1/admin/users/{id}/terminate",
         capability: Capability::AdminUsersWrite,
         live: true,
     },
@@ -223,12 +235,12 @@ fn matrix_covers_every_admin_route() {
         .collect();
     assert_eq!(
         admin_routes.len(),
-        23,
-        "ROUTE_TABLE must hold the 23 /v1/admin/* routes (the public POST /v1/abuse intake is not one)"
+        25,
+        "ROUTE_TABLE must hold the 25 /v1/admin/* routes (the public POST /v1/abuse intake is not one)"
     );
     assert_eq!(
         MATRIX.len(),
-        23,
+        25,
         "the matrix must hold one row per admin route ({} rows today)",
         MATRIX.len()
     );
@@ -486,7 +498,7 @@ fn problem_code(res: &common::TestResponse) -> String {
 
 #[tokio::test]
 async fn admin_matrix_live() {
-    // The live walk: the 14 live rows × 5 caller kinds.
+    // The live walk: the 16 live rows × 5 caller kinds.
     // Order per row is anonymous → user → support → admin
     // → key, so the mutating admin call (suspend,
     // impersonate) runs last and cannot affect the earlier
@@ -505,6 +517,22 @@ async fn admin_matrix_live() {
     let (suspend_target, _) = make_role(&app, &unique_email("target-s"), "user").await;
     let (restore_target, _) = make_role(&app, &unique_email("target-r"), "user").await;
     let (impersonate_target, _) = make_role(&app, &unique_email("target-i"), "user").await;
+    // The warn row needs an active user to reach 200; the
+    // terminate row needs a suspended one (the ladder is
+    // sequential — terminating an active account is 422).
+    // Suspend the terminate target up front.
+    let (warn_target, _) = make_role(&app, &unique_email("target-w"), "user").await;
+    let (terminate_target, _) = make_role(&app, &unique_email("target-t"), "user").await;
+    let res = probe(
+        &app,
+        "POST",
+        "/v1/admin/users/{id}/suspend",
+        Some(&admin_token),
+        Some(terminate_target),
+        Some(json!({ "reason": "authz matrix setup" })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
     // The cancel row needs a real subscription to reach 200
     // (an unknown id is 404): seed one for a sacrificial
     // user.
@@ -528,6 +556,14 @@ async fn admin_matrix_live() {
                 Some(json!({ "reason": "authz matrix probe" })),
             ),
             "/v1/admin/users/{id}/restore" => (Some(restore_target), None),
+            "/v1/admin/users/{id}/warn" => (
+                Some(warn_target),
+                Some(json!({ "reason": "authz matrix probe" })),
+            ),
+            "/v1/admin/users/{id}/terminate" => (
+                Some(terminate_target),
+                Some(json!({ "reason": "authz matrix probe" })),
+            ),
             "/v1/admin/users/{id}/impersonate" => (
                 Some(impersonate_target),
                 Some(json!({ "reason": "authz matrix probe" })),

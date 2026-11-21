@@ -109,11 +109,13 @@ pub const ROUTE_TABLE: &[(&str, &str)] = &[
     ("POST", "/v1/webhook-endpoints"),
     ("DELETE", "/v1/webhook-endpoints/{id}"),
     ("GET", "/v1/webhook-endpoints/{id}/deliveries"),
-    // admin (23)
+    // admin (25)
     ("GET", "/v1/admin/metrics/dashboard"),
     ("GET", "/v1/admin/users"),
     ("POST", "/v1/admin/users/{id}/suspend"),
     ("POST", "/v1/admin/users/{id}/restore"),
+    ("POST", "/v1/admin/users/{id}/warn"),
+    ("POST", "/v1/admin/users/{id}/terminate"),
     ("POST", "/v1/admin/users/{id}/quota-grant"),
     ("POST", "/v1/admin/users/{id}/impersonate"),
     ("GET", "/v1/admin/jobs"),

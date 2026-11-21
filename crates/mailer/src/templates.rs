@@ -47,7 +47,7 @@ use crate::error::MailError;
 /// ("reset-password" is `password-reset`, "new-login" is
 /// `new-login-digest`, "lockout" is `lockout-notice`); the
 /// spec's "password-changed" and "verification-thanks" have no
-/// template because no api service enqueues them — the sixteen
+/// template because no api service enqueues them — the nineteen
 /// names here are the contract, and the snapshots cover all of
 /// them. P1-064 adds the three subscription lifecycle mails
 /// (`subscription-welcome` / `subscription-dunning` /
@@ -62,6 +62,13 @@ use crate::error::MailError;
 /// adds the abuse-report ack (`abuse-report-ack`), enqueued
 /// by the abuse intake service when a report is filed — one
 /// mail per report, addressed to the reporter's contact.
+/// P1-091 adds the three enforcement-ladder mails
+/// (`enforcement-warning` / `enforcement-suspension` /
+/// `enforcement-termination`), enqueued by the enforcement
+/// service (warning + termination) and by both suspension
+/// paths (the P1-008 admin suspend and the P1-090 queue
+/// suspend) — one mail per ladder step, addressed to the
+/// user on record.
 pub const TEMPLATES: &[&str] = &[
     "verify-email",
     "email-change-verify",
@@ -79,6 +86,9 @@ pub const TEMPLATES: &[&str] = &[
     "quota-warning-80",
     "quota-warning-100",
     "abuse-report-ack",
+    "enforcement-warning",
+    "enforcement-suspension",
+    "enforcement-termination",
 ];
 
 /// A rendered mail: subject + plain-text body + HTML body.
@@ -150,6 +160,9 @@ impl TemplateEngine {
         add!("quota-warning-80");
         add!("quota-warning-100");
         add!("abuse-report-ack");
+        add!("enforcement-warning");
+        add!("enforcement-suspension");
+        add!("enforcement-termination");
         Ok(Self { tera })
     }
 
@@ -222,6 +235,12 @@ mod tests {
             "used": 8,
             "limit": 10,
             "percent": 80,
+            // P1-091: the enforcement templates render
+            // `{{ reason }}` — without it the full-context
+            // test fails on the first enforcement template
+            // (the snapshot context already had it; this
+            // one did not — caught by verify attempt 2).
+            "reason": "repeated stock-agency template matches",
         })
     }
 

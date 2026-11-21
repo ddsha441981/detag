@@ -660,6 +660,20 @@ async fn suspend_user(
                 )
                 .await
                 .map_err(AbuseQueueTxError::Db)?;
+                // The ladder's second rung mails the user
+                // (P1-091) — in the same transaction as the
+                // suspension, and only on a real transition:
+                // an already-suspended account already got
+                // this mail for the suspension that put it
+                // there.
+                crate::services::enforcement::enqueue_step_mail(
+                    &mut *conn,
+                    &target,
+                    crate::services::enforcement::ENFORCEMENT_SUSPENSION_TEMPLATE,
+                    &reason,
+                )
+                .await
+                .map_err(AbuseQueueTxError::Db)?;
             }
             record(
                 &mut *conn,

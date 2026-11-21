@@ -24,7 +24,10 @@
 //! /v1/admin/abuse-reports` + `POST
 //! /v1/admin/abuse-reports/{id}/resolve`, real since
 //! P1-090 (in this file), and `POST /v1/abuse`, real since
-//! P1-089 (in this file — the public intake, no guard).
+//! P1-089 (in this file — the public intake, no guard),
+//! and `POST /v1/admin/users/{id}/warn` +
+//! `/v1/admin/users/{id}/terminate`, real since P1-091
+//! (in this file).
 //! Every route — live or stub — sits behind the matrix guard
 //! (P1-043): the stubs take `admin_stub` / `admin_read_stub`
 //! below, so an unauthenticated or wrong-role caller is
@@ -69,6 +72,7 @@ use crate::{
         },
         admin_usage::{export_usage_csv, get_admin_usage, AdminUsageError, AdminUsageResponse},
         catalog_sync::{run_catalog_sync, CatalogSyncError},
+        enforcement::{terminate_user, warn_user, EnforcementError, EnforcementResponse},
         register::UserResponse,
         support_cancel::{
             support_cancel as support_cancel_service, SupportCancelError, SupportCancelResponse,
@@ -294,6 +298,149 @@ pub async fn suspend(
         }
         // Suspend takes no cursor — unreachable here.
         Err(AdminError::InvalidCursor) | Err(AdminError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
+/// POST /v1/admin/users/{id}/warn (P1-091): the ladder's
+/// first rung — a formal warning with a reason. The status
+/// does not change; the warning is audited (`user.warned`,
+/// actor = the admin) and the `enforcement-warning` mail
+/// is enqueued in the same transaction. A warning is
+/// repeatable: each call is a new warning event. Requires
+/// an `active` account — warning a suspended or
+/// deletion-pending one is 422 (the ladder only moves
+/// forward). Returns the user + the rung that ran.
+#[utoipa::path(
+    post,
+    path = "/v1/admin/users/{id}/warn",
+    request_body = ReasonRequest,
+    responses(
+        (status = 200, description = "Warned", body = EnforcementResponse),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified non-admin)", body = Problem),
+        (status = 404, description = "No such user", body = Problem),
+        (status = 422, description = "Reason missing, blank, too long, or with control characters; or the account is not active", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn warn_user_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    admin: AdminContext,
+    Path(user_id): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<ReasonRequest>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let Some(admin_user) = admin.auth.user else {
+        // The extractor guarantees a user for a verified context.
+        return ProblemResponse(AppError::Internal.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
+    match warn_user(&state, &admin_user, user_id, &req).await {
+        Ok(outcome) => {
+            // The service wrote the audit row in the same
+            // transaction as the mail (P1-091) — mark the
+            // response so the P1-046 middleware stands down
+            // and the row exists exactly once.
+            let mut response = Json(EnforcementResponse::from(outcome)).into_response();
+            response.extensions_mut().insert(AuditHandled);
+            response
+        }
+        Err(EnforcementError::Validation(errors)) => {
+            ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
+        }
+        Err(EnforcementError::NotFound) => {
+            ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(EnforcementError::InvalidStatus) => ProblemResponse(
+            AppError::ValidationFailed.to_problem(Profile::Production, request_id, None),
+        )
+        .into_response(),
+        Err(EnforcementError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
+/// POST /v1/admin/users/{id}/terminate (P1-091): the
+/// ladder's third rung — termination with a reason. Status
+/// becomes `deletion_pending` (the P1-007 grace: purge
+/// after 30 days), every live session is revoked, every
+/// queued job is held, and the action is audited
+/// (`user.terminated`, actor = the admin) with the
+/// `enforcement-termination` mail enqueued in the same
+/// transaction. Requires a `suspended` account — the ladder
+/// is sequential, an active account cannot be terminated
+/// outright (422). Idempotent: terminating an
+/// already-terminated account is a 200 no-op (no write, no
+/// audit, no mail). A terminated account cannot log in
+/// (403 `PF-1004`) — the login does NOT cancel an
+/// admin-initiated termination the way it cancels a
+/// self-requested deletion. Returns the user + the rung
+/// that ran.
+#[utoipa::path(
+    post,
+    path = "/v1/admin/users/{id}/terminate",
+    request_body = ReasonRequest,
+    responses(
+        (status = 200, description = "Terminated (or already terminated)", body = EnforcementResponse),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified non-admin)", body = Problem),
+        (status = 404, description = "No such user", body = Problem),
+        (status = 422, description = "Reason missing, blank, too long, or with control characters; or the account is not suspended", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn terminate_user_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    admin: AdminContext,
+    Path(user_id): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<ReasonRequest>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let Some(admin_user) = admin.auth.user else {
+        // The extractor guarantees a user for a verified context.
+        return ProblemResponse(AppError::Internal.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
+    match terminate_user(&state, &admin_user, user_id, &req).await {
+        Ok(outcome) => {
+            // Same marker protocol as warn (P1-046): the
+            // service wrote the audit row in the mutation's
+            // transaction (also on the idempotent no-op,
+            // which deliberately writes none).
+            let mut response = Json(EnforcementResponse::from(outcome)).into_response();
+            response.extensions_mut().insert(AuditHandled);
+            response
+        }
+        Err(EnforcementError::Validation(errors)) => {
+            ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
+        }
+        Err(EnforcementError::NotFound) => {
+            ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(EnforcementError::InvalidStatus) => ProblemResponse(
+            AppError::ValidationFailed.to_problem(Profile::Production, request_id, None),
+        )
+        .into_response(),
+        Err(EnforcementError::Internal) => {
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
                 .into_response()
         }
@@ -1153,6 +1300,8 @@ pub fn router(state: AppState) -> Router<AppState> {
                 .route("/users", get(search_users_handler))
                 .route("/users/{id}/suspend", post(suspend))
                 .route("/users/{id}/restore", post(restore))
+                .route("/users/{id}/warn", post(warn_user_handler))
+                .route("/users/{id}/terminate", post(terminate_user_handler))
                 .route("/users/{id}/quota-grant", post(admin_stub))
                 .route("/users/{id}/impersonate", post(impersonate))
                 .route("/jobs", get(list_jobs_handler))

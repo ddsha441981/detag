@@ -24,7 +24,7 @@
 //!
 //! # Routes vs stubs
 //!
-//! The matrix covers all 23 admin routes in the route table,
+//! The matrix covers all 25 admin routes in the route table,
 //! live or stub. The 14 live routes are enforced by the guards
 //! today and walked live by the test registry
 //! (`apps/api/tests/authz_matrix.rs`). The 9 stub routes
@@ -61,7 +61,7 @@ pub enum Capability {
     /// `GET /v1/admin/users`.
     AdminUsersRead,
     /// `POST /v1/admin/users/{id}/suspend`,
-    /// `/restore`, `/quota-grant`.
+    /// `/restore`, `/warn`, `/terminate`, `/quota-grant`.
     AdminUsersWrite,
     /// `POST /v1/admin/users/{id}/impersonate`.
     AdminUsersImpersonate,
@@ -184,6 +184,8 @@ impl Capability {
             ("GET", "/v1/admin/users") => Some(AdminUsersRead),
             ("POST", "/v1/admin/users/{id}/suspend")
             | ("POST", "/v1/admin/users/{id}/restore")
+            | ("POST", "/v1/admin/users/{id}/warn")
+            | ("POST", "/v1/admin/users/{id}/terminate")
             | ("POST", "/v1/admin/users/{id}/quota-grant") => Some(AdminUsersWrite),
             ("POST", "/v1/admin/users/{id}/impersonate") => Some(AdminUsersImpersonate),
             ("GET", "/v1/admin/jobs") => Some(AdminJobsRead),
@@ -231,6 +233,8 @@ impl Capability {
         match (method.as_str(), path) {
             ("POST", "/v1/admin/users/{id}/suspend") => Some("user.suspended"),
             ("POST", "/v1/admin/users/{id}/restore") => Some("user.restored"),
+            ("POST", "/v1/admin/users/{id}/warn") => Some("user.warned"),
+            ("POST", "/v1/admin/users/{id}/terminate") => Some("user.terminated"),
             ("POST", "/v1/admin/users/{id}/quota-grant") => Some("admin.users.quota_granted"),
             ("POST", "/v1/admin/users/{id}/impersonate") => Some("user.impersonated"),
             ("POST", "/v1/admin/jobs/{id}/reprocess") => Some("admin.jobs.reprocessed"),
@@ -257,6 +261,8 @@ impl Capability {
         match (method.as_str(), path) {
             ("POST", "/v1/admin/users/{id}/suspend")
             | ("POST", "/v1/admin/users/{id}/restore")
+            | ("POST", "/v1/admin/users/{id}/warn")
+            | ("POST", "/v1/admin/users/{id}/terminate")
             | ("POST", "/v1/admin/users/{id}/quota-grant")
             | ("POST", "/v1/admin/users/{id}/impersonate") => Some("user"),
             ("POST", "/v1/admin/jobs/{id}/reprocess") | ("POST", "/v1/admin/jobs/{id}/cancel") => {
@@ -381,7 +387,7 @@ mod tests {
 
     #[test]
     fn for_route_names_every_admin_route_and_nothing_else() {
-        // The route table: 23 admin routes, each with exactly
+        // The route table: 25 admin routes, each with exactly
         // one capability; non-admin routes map to None.
         use axum::http::Method;
         let admin_routes: &[(&str, &str)] = &[
@@ -389,6 +395,8 @@ mod tests {
             ("GET", "/v1/admin/users"),
             ("POST", "/v1/admin/users/{id}/suspend"),
             ("POST", "/v1/admin/users/{id}/restore"),
+            ("POST", "/v1/admin/users/{id}/warn"),
+            ("POST", "/v1/admin/users/{id}/terminate"),
             ("POST", "/v1/admin/users/{id}/quota-grant"),
             ("POST", "/v1/admin/users/{id}/impersonate"),
             ("GET", "/v1/admin/jobs"),
@@ -411,8 +419,8 @@ mod tests {
         ];
         assert_eq!(
             admin_routes.len(),
-            23,
-            "23 admin (method, path) pairs in the route table"
+            25,
+            "25 admin (method, path) pairs in the route table"
         );
         for (method, path) in admin_routes {
             let m = Method::from_bytes(method.as_bytes()).unwrap();
@@ -485,7 +493,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(writes, 11, "11 admin write routes");
+        assert_eq!(writes, 13, "13 admin write routes");
         assert_eq!(reads, 12, "12 admin read routes");
     }
 
@@ -509,7 +517,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(actions.len(), 11, "one action per write route");
+        assert_eq!(actions.len(), 13, "one action per write route");
     }
 
     #[test]

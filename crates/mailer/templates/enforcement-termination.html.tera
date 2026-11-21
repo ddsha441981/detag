@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f6f6f6;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f6f6;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;margin:24px 0;padding:32px;font-family:Arial,Helvetica,sans-serif;color:#222222;">
+            <tr>
+              <td>
+                <p>Hi,</p>
+                <p>Your {{ app_name }} account is scheduled for deletion following repeated violations of our acceptable-use policy.</p>
+                <p>Reason: {{ reason }}</p>
+                <p>Your account will be permanently deleted in 30 days. Your sessions have been signed out and your queued jobs are on hold. This is the final step of our enforcement ladder. If you believe this termination was made in error, contact support before the 30 days run out.</p>
+                <p>— The {{ app_name }} team</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

@@ -1,0 +1,9 @@
+Hi,
+
+Your {{ app_name }} account received a formal warning for violating our acceptable-use policy.
+
+Reason: {{ reason }}
+
+This is the first step of our enforcement ladder: a further violation may lead to suspension, then termination of your account. If you believe this warning was sent in error, contact support.
+
+— The {{ app_name }} team

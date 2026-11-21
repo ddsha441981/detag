@@ -8,7 +8,7 @@
 //! committed spec drifts from the code — regenerate, never edit
 //! the JSON by hand.
 //!
-//! Coverage today is the thirty-nine real handlers (`/healthz`,
+//! Coverage today is the forty-three real handlers (`/healthz`,
 //! `/readyz`, `/v1/auth/register`, `/v1/auth/verify-email`,
 //! `/v1/auth/resend-verification`, `/v1/auth/login`,
 //! `/v1/auth/refresh`, `/v1/auth/logout`,
@@ -19,7 +19,9 @@
 //! `POST /v1/auth/forgot-password`,
 //! `POST /v1/auth/reset-password`,
 //! `POST /v1/admin/users/{id}/suspend`,
-//! `POST /v1/admin/users/{id}/restore`, `GET /v1/admin/users`,
+//! `POST /v1/admin/users/{id}/restore`,
+//! `POST /v1/admin/users/{id}/warn`,
+//! `POST /v1/admin/users/{id}/terminate`, `GET /v1/admin/users`,
 //! `POST /v1/admin/users/{id}/impersonate`,
 //! `GET /v1/admin/jobs`, `GET /v1/admin/plans`,
 //! `PUT /v1/admin/plans`, `POST
@@ -61,7 +63,8 @@ use crate::routes::admin::{
     __path_admin_usage_export_handler, __path_admin_usage_handler, __path_cancel_subscription,
     __path_catalog_sync_handler, __path_impersonate, __path_list_jobs_handler,
     __path_list_plans_handler, __path_resolve_abuse_report_handler, __path_restore,
-    __path_search_users_handler, __path_suspend, __path_update_plans_handler,
+    __path_search_users_handler, __path_suspend, __path_terminate_user_handler,
+    __path_update_plans_handler, __path_warn_user_handler,
 };
 use crate::routes::api_keys::{
     __path_create_api_key, __path_revoke_api_key, __path_rotate_api_key,
@@ -92,6 +95,7 @@ use crate::services::admin_plans::{
 use crate::services::admin_usage::{AdminUsageResponse, UsageTotals};
 use crate::services::api_keys::{CreateApiKeyRequest, CreateApiKeyResponse};
 use crate::services::checkout::{CheckoutRequestBody, CheckoutResponse, ScheduledChangeResponse};
+use crate::services::enforcement::{EnforcementResponse, EnforcementStep};
 use crate::services::login::{LoginRequest, LoginResponse};
 use crate::services::password_reset::{ForgotPasswordRequest, ResetPasswordRequest};
 use crate::services::profile::{PatchProfileRequest, ProfileResponse};
@@ -113,7 +117,7 @@ use crate::AppState;
         version = "1.0.0",
         description = "Detag — watermark removal for images and videos you own. All errors are RFC 7807 problem+json with a stable PF-code (see the Problem schema)."
     ),
-    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, refresh, logout, logout_all, forgot_password, reset_password, get_me, patch_me, delete_me, list_sessions, delete_session, create_api_key, rotate_api_key, revoke_api_key, suspend, restore, search_users_handler, list_jobs_handler, impersonate, list_plans_handler, update_plans_handler, catalog_sync_handler, cancel_subscription, admin_usage_handler, admin_usage_export_handler, admin_audit_handler, admin_abuse_queue_handler, resolve_abuse_report_handler, abuse_intake, create_checkout, create_portal, list_invoices, get_usage, receive_stripe_webhook, receive_razorpay_webhook),
+    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, refresh, logout, logout_all, forgot_password, reset_password, get_me, patch_me, delete_me, list_sessions, delete_session, create_api_key, rotate_api_key, revoke_api_key, suspend, restore, warn_user_handler, terminate_user_handler, search_users_handler, list_jobs_handler, impersonate, list_plans_handler, update_plans_handler, catalog_sync_handler, cancel_subscription, admin_usage_handler, admin_usage_export_handler, admin_audit_handler, admin_abuse_queue_handler, resolve_abuse_report_handler, abuse_intake, create_checkout, create_portal, list_invoices, get_usage, receive_stripe_webhook, receive_razorpay_webhook),
     components(schemas(
         Problem,
         Readiness,
@@ -160,6 +164,8 @@ use crate::AppState;
         ResolveAbuseReportRequest,
         AbuseIntakeRequest,
         AbuseReportResponse,
+        EnforcementResponse,
+        EnforcementStep,
         crate::services::webhook::WebhookReceipt,
         detag_billing::CatalogDriftReport,
         detag_billing::PlanSyncResult,

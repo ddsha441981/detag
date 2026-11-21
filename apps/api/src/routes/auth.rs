@@ -398,6 +398,16 @@ pub async fn login(
             None,
         ))
         .into_response(),
+        // 403 PF-1004 (P1-091): the account was terminated by
+        // an admin. Same shape as the suspension above — a
+        // correct password reaches here, a wrong one is the
+        // generic 401 — so probing learns nothing new.
+        Err(LoginError::Terminated) => ProblemResponse(AppError::AccountTerminated.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response(),
         Err(LoginError::Locked { retry_after_secs }) => {
             // 423 PF-1008 (P1-004). Same problem+json envelope
             // as every error, plus Retry-After — the client

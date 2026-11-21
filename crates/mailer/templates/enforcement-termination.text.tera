@@ -1,0 +1,9 @@
+Hi,
+
+Your {{ app_name }} account is scheduled for deletion following repeated violations of our acceptable-use policy.
+
+Reason: {{ reason }}
+
+Your account will be permanently deleted in 30 days. Your sessions have been signed out and your queued jobs are on hold. This is the final step of our enforcement ladder. If you believe this termination was made in error, contact support before the 30 days run out.
+
+— The {{ app_name }} team

@@ -34,6 +34,7 @@ fn context() -> serde_json::Value {
         "used": 8,
         "limit": 10,
         "percent": 80,
+        "reason": "repeated stock-agency template matches",
     })
 }
 
