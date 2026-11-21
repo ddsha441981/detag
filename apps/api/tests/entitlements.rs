@@ -368,6 +368,7 @@ async fn free_image_limit_trips_at_ten() {
     let (user, token) = authed_user(&app, "ent-free-9").await;
     seed_usage_on_day(&app, user, today, 9, 0).await;
     let upload = seed_upload(&app, user, "image", None).await;
+    app.seed_attestation(user, upload).await;
     let res = post_job(&app, &token, json!({ "upload_id": upload })).await;
     assert_problem(
         &res,
@@ -404,6 +405,7 @@ async fn pro_image_limit_trips_at_five_hundred() {
     app.grant_plan(user, "pro").await;
     seed_usage_on_day(&app, user, today, 499, 0).await;
     let upload = seed_upload(&app, user, "image", None).await;
+    app.seed_attestation(user, upload).await;
     let res = post_job(&app, &token, json!({ "upload_id": upload })).await;
     assert_problem(
         &res,
@@ -444,6 +446,10 @@ async fn utc_midnight_resets_the_free_limit() {
     let (user, token) = authed_user(&app, "ent-utc").await;
     seed_usage_on_day(&app, user, day_15, 10, 0).await;
     let upload = seed_upload(&app, user, "image", None).await;
+    // Attest once up front: the first post is denied on quota
+    // anyway, and the next-day post (past midnight) needs the
+    // row to reach the stub.
+    app.seed_attestation(user, upload).await;
 
     // 23:59 on the 15th, 10/10 used: denied.
     let res = post_job(&app, &token, json!({ "upload_id": upload })).await;
@@ -500,6 +506,7 @@ async fn pro_concurrency_is_three_slots() {
     let upload = seed_upload(&app, user, "image", None).await;
     seed_job(&app, user, upload, "image", "queued").await;
     seed_job(&app, user, upload, "image", "queued").await;
+    app.seed_attestation(user, upload).await;
 
     // 2 of 3 slots held: the create reaches the stub.
     let res = post_job(&app, &token, json!({ "upload_id": upload })).await;
@@ -650,6 +657,7 @@ async fn reconciliation_catches_drift_without_changing_enforcement() {
     // The gate still enforces the DB truth: 3 used, 7 left
     // — the drifted hash never leaks into a decision.
     let upload = seed_upload(&app, user, "image", None).await;
+    app.seed_attestation(user, upload).await;
     let res = post_job(&app, &token, json!({ "upload_id": upload })).await;
     assert_problem(
         &res,

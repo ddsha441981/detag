@@ -419,6 +419,7 @@ async fn allowed_create_carries_no_plan_link() {
     let app = quota_app().await;
     let (user_id, token) = authed_user(&app, "overage-ok").await;
     let upload_id = seed_upload(&app, user_id, "image", None).await;
+    app.seed_attestation(user_id, upload_id).await;
 
     let res = post_job(&app, &token, json!({ "upload_id": upload_id })).await;
     assert_eq!(

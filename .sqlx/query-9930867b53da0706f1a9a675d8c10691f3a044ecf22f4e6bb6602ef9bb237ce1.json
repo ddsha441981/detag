@@ -1,0 +1,101 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT id, user_id, upload_id, text_version, ip_hash, client,\n                  created_at\n           FROM attestations\n           WHERE user_id = $1 AND upload_id = $2\n           ORDER BY created_at DESC, id DESC\n           LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attestations",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attestations",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "upload_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "attestations",
+            "name": "upload_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "text_version",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attestations",
+            "name": "text_version"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "ip_hash",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attestations",
+            "name": "ip_hash"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "client",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attestations",
+            "name": "client"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "created_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "attestations",
+            "name": "created_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "9930867b53da0706f1a9a675d8c10691f3a044ecf22f4e6bb6602ef9bb237ce1"
+}
