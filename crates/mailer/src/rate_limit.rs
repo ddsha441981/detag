@@ -198,6 +198,9 @@ mod tests {
             "quota-warning-80",
             "quota-warning-100",
             "abuse-report-ack",
+            "enforcement-warning",
+            "enforcement-suspension",
+            "enforcement-termination",
         ] {
             assert_eq!(template_class(template), MailClass::Transactional);
         }

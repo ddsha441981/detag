@@ -250,8 +250,12 @@ struct WriteRow {
     target: &'static str,
 }
 
-/// All 9 admin write (method, path) pairs: 3 user writes +
-/// impersonation + 2 job writes + flags + plans + resolve.
+/// All 11 write rows the test walks: 4 user writes +
+/// quota-grant + impersonation + 2 job writes + flags +
+/// plans + resolve. (The catalog-sync and billing-cancel
+/// writes are not walked here — the guard walk covers
+/// them; this test's rows are the ones with a sacrificial
+/// target to assert unchanged afterwards.)
 const WRITE_ROWS: &[WriteRow] = &[
     WriteRow {
         method: "POST",
@@ -261,6 +265,16 @@ const WRITE_ROWS: &[WriteRow] = &[
     WriteRow {
         method: "POST",
         path: "/v1/admin/users/{id}/restore",
+        target: "restore",
+    },
+    WriteRow {
+        method: "POST",
+        path: "/v1/admin/users/{id}/warn",
+        target: "suspend",
+    },
+    WriteRow {
+        method: "POST",
+        path: "/v1/admin/users/{id}/terminate",
         target: "restore",
     },
     WriteRow {
@@ -349,7 +363,7 @@ fn support_matrix_is_read_only() {
         .filter(|(_, path)| path.starts_with("/v1/admin"))
         .map(|(method, path)| (*method, *path))
         .collect();
-    assert_eq!(admin_routes.len(), 23, "23 admin routes");
+    assert_eq!(admin_routes.len(), 25, "25 admin routes");
     let mut seen = HashSet::new();
     for (method, path) in &admin_routes {
         let m = Method::from_bytes(method.as_bytes()).unwrap();

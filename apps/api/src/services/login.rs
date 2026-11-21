@@ -144,6 +144,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::deletion::cancel_deletion_in_tx;
+use super::enforcement::terminated_by_admin;
 use crate::rate_limit::RateLimitScope;
 use crate::AppState;
 
@@ -248,6 +249,8 @@ pub enum LoginError {
     Invalid,
     #[error("account suspended")]
     Suspended,
+    #[error("account terminated")]
+    Terminated,
     #[error("account locked")]
     Locked {
         /// Seconds until the lock lifts (the later of the
@@ -493,6 +496,48 @@ pub async fn login_user(
             return Err(LoginError::Internal);
         }
         return Err(LoginError::Suspended);
+    }
+
+    // A terminated account cannot log in either (P1-091) —
+    // but only when the pending deletion was admin-initiated.
+    // A self-requested deletion still cancels on login
+    // (P1-007, below): the audit trail tells the two apart
+    // (`terminated_by_admin` reads the latest of
+    // `user.terminated` / `account.delete_requested`). Same
+    // shape as the suspended refusal — the password verify
+    // ran first, the attempt is audited (`login.failure`,
+    // reason `terminated`), no lockout counter is recorded —
+    // but the code is PF-1004, not PF-1003: termination is
+    // its own refusal, not a suspension.
+    if user.status == "deletion_pending" {
+        let terminated = match terminated_by_admin(&state.pool, &user).await {
+            Ok(terminated) => terminated,
+            Err(err) => {
+                tracing::error!(error = ?err, "login: termination check failed");
+                return Err(LoginError::Internal);
+            }
+        };
+        if terminated {
+            if let Err(err) = record(
+                &state.pool,
+                &NewAuditLog {
+                    actor_user_id: Some(user.id),
+                    actor_client: None,
+                    action: "login.failure".to_string(),
+                    target_type: "user".to_string(),
+                    target_id: Some(user.id.to_string()),
+                    before: None,
+                    after: None,
+                    reason: Some("terminated".to_string()),
+                },
+            )
+            .await
+            {
+                tracing::error!(error = ?err, "login: terminated-attempt audit failed");
+                return Err(LoginError::Internal);
+            }
+            return Err(LoginError::Terminated);
+        }
     }
 
     // Rehash-on-login (P1-027): a stored hash whose params

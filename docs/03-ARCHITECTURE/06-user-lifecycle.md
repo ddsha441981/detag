@@ -14,7 +14,7 @@ that prove each transition in the
 
 ```mermaid
 stateDiagram-v2
-    [*] --> active : register + verify*    active --> suspended : admin suspend (reason)\n    suspended --> active : admin restore\n    active --> deletion_pending : DELETE /v1/me\n    deletion_pending --> active : login cancels grace\n    deletion_pending --> suspended : admin suspend (cancels grace)\n    suspended --> deletion_pending : DELETE /v1/me (fresh grace)\n    deletion_pending --> purged : gc purge after 30-day grace\n    purged --> [*]
+    [*] --> active : register + verify*    active --> suspended : admin suspend (reason)\n    suspended --> active : admin restore\n    active --> deletion_pending : DELETE /v1/me\n    deletion_pending --> active : login cancels grace\n    deletion_pending --> suspended : admin suspend (cancels grace)\n    suspended --> deletion_pending : DELETE /v1/me (fresh grace)\n    suspended --> deletion_pending : admin terminate (P1-091)\n    deletion_pending --> purged : gc purge after 30-day grace\n    purged --> [*]
 ```
 
 \* Registration creates the account as `active` immediately
@@ -52,6 +52,23 @@ Notes on the diagram:
   DELETE while pending are all 200/204 no-ops — no write, no
   audit, no second mail. The grace always runs from the
   FIRST deletion request, never restarted.
+- **Enforcement ladder** (P1-091, FR-C-02). Warning →
+  suspension → termination: `POST /v1/admin/users/{id}/warn`
+  (active only, repeatable — each call is a warning event
+  audited `user.warned`), then `/suspend`, then `POST
+  /v1/admin/users/{id}/terminate` (suspended only — the
+  ladder is sequential, 422 on an active account). A
+  termination is the P1-007 grace started by an admin
+  (status `deletion_pending`, 30 days), with sessions
+  revoked, queued jobs held, and `user.terminated` audited
+  — and it is STICKY: unlike a self-requested deletion,
+  which a login cancels, a terminated account's login is
+  403 `PF-1004` (`account_terminated`). The ladder state is
+  derived, not stored — the status plus the count of
+  `user.warned` rows — so a warning survives a restore.
+  Every rung mails the user (`enforcement-warning` /
+  `enforcement-suspension` / `enforcement-termination`).
+  Termination does not cancel subscriptions.
 - **Lockout is not a state.** A locked account (P1-004: 5
   failures in 15 min, 60 s doubling to a 1-hour cap, 423
   `PF-1008`) is still `active` — the lock lives in
@@ -63,11 +80,12 @@ Notes on the diagram:
 
 | | active | suspended | deletion_pending |
 | --- | --- | --- | --- |
-| Log in | yes (verified email not required) | no — 403 `PF-1003` after a correct password, generic 401 after a wrong one (no info leak) | yes — and the login CANCELS the grace (status back to `active`, in the same tx as the new session) |
+| Log in | yes (verified email not required) | no — 403 `PF-1003` after a correct password, generic 401 after a wrong one (no info leak) | yes — and the login CANCELS the grace (status back to `active`, in the same tx as the new session) — UNLESS the account was terminated by an admin (P1-091): then 403 `PF-1004` (`account_terminated`), and the grace stands |
 | Create jobs | yes, if the email is verified (PF-1009) and quota allows | no new token, so no new jobs — but see the residual window below | yes (the grace is a cooling-off, not a lockout) |
 | Read / change profile (`GET` / `PATCH /v1/me`) | yes | yes, while a token is still valid — the extractor does not check status (see below) | yes |
 | Request deletion (`DELETE /v1/me`) | yes → `deletion_pending`, 30-day grace | yes → `deletion_pending` with a FRESH grace (the suspend is undone by the user's own request) | no-op (grace runs from the first request) |
 | Admin suspend / restore | suspend → `suspended` | restore → `active`; suspend again is a no-op | suspend → `suspended` (cancels the grace); restore is a no-op (restore only acts on `suspended`) |
+| Admin warn / terminate (P1-091) | warn → stays `active` (a warning event, audited `user.warned`); terminate → 422 (the ladder is sequential) | warn → 422; terminate → `deletion_pending` (sticky — the login no longer cancels it) | warn → 422; terminate → 200 no-op (already terminated) |
 | Purged by gc | no | no | yes, once `deleted_at` is 30+ days old (`detag-gc --purge-users`, nightly, dry-run by default) |
 
 **The residual window (suspended).** Suspension revokes

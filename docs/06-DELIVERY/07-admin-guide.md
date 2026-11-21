@@ -64,6 +64,8 @@ views — and neither are denials, 404s, or 501 stubs.
 | GET | `/v1/admin/users` | `admin.users.read` | admin, support | live | — |
 | POST | `/v1/admin/users/{id}/suspend` | `admin.users.write` | admin | live | `user.suspended` |
 | POST | `/v1/admin/users/{id}/restore` | `admin.users.write` | admin | live | `user.restored` |
+| POST | `/v1/admin/users/{id}/warn` | `admin.users.write` | admin | live | `user.warned` |
+| POST | `/v1/admin/users/{id}/terminate` | `admin.users.write` | admin | live | `user.terminated` |
 | POST | `/v1/admin/users/{id}/quota-grant` | `admin.users.write` | admin | stub | `admin.users.quota_granted` |
 | POST | `/v1/admin/users/{id}/impersonate` | `admin.users.impersonate` | admin | live | `user.impersonated` |
 | GET | `/v1/admin/jobs` | `admin.jobs.read` | admin, support | live | — |
@@ -94,6 +96,30 @@ Notes on the live routes:
   `active`, releases held jobs to `queued`, leaves sessions
   revoked (the user logs in again), and audits
   `user.restored`. A suspend cancels a pending deletion.
+- **Enforcement ladder** (P1-091, FR-C-02): warning →
+  suspension → termination, one endpoint per rung. `warn`
+  takes `{"reason": "..."}` and does not change the status —
+  each call is a new warning event, audited `user.warned`
+  (the `warnings` count in `after` is the running total)
+  and mailed (`enforcement-warning`). It requires an
+  `active` account. `terminate` takes the same body and
+  requires a `suspended` account — the ladder is
+  sequential, an active account cannot be terminated
+  outright (422). It runs the P1-007 deletion grace
+  (`deletion_pending`, 30 days), revokes every session,
+  holds every queued job, audits `user.terminated`, and
+  mails (`enforcement-termination`). Terminating an
+  already-terminated account is a 200 no-op. The rung
+  comes from the status plus the `user.warned` count, so a
+  warning survives a restore — a warned-then-restored
+  repeat offender goes straight to suspension next time.
+  Termination is sticky: the terminated user cannot log
+  back in (403 `PF-1004`), unlike a self-requested
+  deletion, which a login cancels. Termination does not
+  cancel subscriptions — cancel those separately (P1-071).
+  Suspension mails the user too, from the P1-008 endpoint
+  and from the abuse-queue resolve, on a real transition
+  only.
 - **Impersonate** (P1-010): mints a 15-minute scoped token
   that acts as the target user (`expires_in: 900`,
   `impersonator_id` in the claims, no refresh, no session

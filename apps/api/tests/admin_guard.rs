@@ -15,7 +15,7 @@
 //! and `POST /v1/admin/abuse-reports/{id}/resolve`), so the
 //! walk now covers 14 live routes and 9 stubs. The three tests:
 //!
-//! - `admin_guard_on_every_route` — the walk: all 23 admin
+//! - `admin_guard_on_every_route` — the walk: all 25 admin
 //!   routes × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key). Anonymous is 401
 //!   `PF-1001`, a wrong role or a key is 403 `PF-1002`, an
@@ -320,6 +320,18 @@ const GUARD_ROWS: &[GuardRow] = &[
     },
     GuardRow {
         method: "POST",
+        path: "/v1/admin/users/{id}/warn",
+        live: true,
+        read: false,
+    },
+    GuardRow {
+        method: "POST",
+        path: "/v1/admin/users/{id}/terminate",
+        live: true,
+        read: false,
+    },
+    GuardRow {
+        method: "POST",
         path: "/v1/admin/users/{id}/quota-grant",
         live: false,
         read: false,
@@ -436,7 +448,7 @@ const GUARD_ROWS: &[GuardRow] = &[
 
 #[tokio::test]
 async fn admin_guard_on_every_route() {
-    // The walk: all 23 admin routes × 5 caller kinds. The
+    // The walk: all 25 admin routes × 5 caller kinds. The
     // read/write flag must agree with the matrix — a row
     // whose flag disagrees with its capability fails here,
     // so the walk cannot drift from the P1-042 table.
@@ -452,7 +464,7 @@ async fn admin_guard_on_every_route() {
             row.path
         );
     }
-    assert_eq!(GUARD_ROWS.len(), 23, "one row per admin route");
+    assert_eq!(GUARD_ROWS.len(), 25, "one row per admin route");
 
     let app = guard_app().await;
     let (user_token, support_token, admin_token, admin_key, _admin_id) = callers(&app).await;
@@ -461,6 +473,23 @@ async fn admin_guard_on_every_route() {
     let (suspend_target, _) = make_role(&app, &unique_email("target-s"), "user").await;
     let (restore_target, _) = make_role(&app, &unique_email("target-r"), "user").await;
     let (impersonate_target, _) = make_role(&app, &unique_email("target-i"), "user").await;
+    // The warn row needs an active user to reach 200; the
+    // terminate row needs a suspended one (the ladder is
+    // sequential — terminating an active account is 422).
+    // Suspend the terminate target up front, with the same
+    // probe the walk uses for the suspend row.
+    let (warn_target, _) = make_role(&app, &unique_email("target-w"), "user").await;
+    let (terminate_target, _) = make_role(&app, &unique_email("target-t"), "user").await;
+    let res = probe(
+        &app,
+        "POST",
+        "/v1/admin/users/{id}/suspend",
+        Some(&admin_token),
+        Some(terminate_target),
+        Some(json!({ "reason": "guard setup" })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
     // The cancel row needs a real subscription to reach 200
     // (an unknown id is 404): seed one for a sacrificial
     // user.
@@ -483,6 +512,13 @@ async fn admin_guard_on_every_route() {
                 Some(json!({ "reason": "guard probe" })),
             ),
             "/v1/admin/users/{id}/restore" => (Some(restore_target), None),
+            "/v1/admin/users/{id}/warn" => {
+                (Some(warn_target), Some(json!({ "reason": "guard probe" })))
+            }
+            "/v1/admin/users/{id}/terminate" => (
+                Some(terminate_target),
+                Some(json!({ "reason": "guard probe" })),
+            ),
             "/v1/admin/users/{id}/impersonate" => (
                 Some(impersonate_target),
                 Some(json!({ "reason": "guard probe" })),

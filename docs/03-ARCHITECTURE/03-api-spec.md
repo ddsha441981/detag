@@ -124,7 +124,12 @@ an address learns nothing about whether it is suspended. A
 suspended user who is ALSO locked gets the 423 first (the
 lockout check runs before the password verify). A login
 cancels a pending deletion (P1-007) — the grace ends in the
-same transaction as the new session. Rate limits:
+same transaction as the new session — UNLESS the deletion
+was admin-initiated (P1-091): a terminated account's login
+is 403 `PF-1004` (`account_terminated`) after a correct
+password and audits `login.failure` with reason
+`terminated`, so a termination cannot be undone by signing
+in; a wrong password is still the generic 401. Rate limits:
 per-IP via the middleware bucket (P0-103) + per-account via
 the `login_account` bucket (10 burst / 1 per min,
 `PF_RATE_LIMIT_LOGIN_ACCOUNT_*`, keyed by the sha256 of the
@@ -757,6 +762,8 @@ P1-047).
 | GET | `/v1/admin/users?query=` | search (email/name/id prefix), cursor pagination, plan + status + usage today; admin + support |
 | POST | `/v1/admin/users/{id}/suspend` | body: reason; audited |
 | POST | `/v1/admin/users/{id}/restore` | audited |
+| POST | `/v1/admin/users/{id}/warn` | P1-091 (FR-C-02): the ladder's first rung — body: reason; audited as `user.warned`; the `enforcement-warning` mail goes out |
+| POST | `/v1/admin/users/{id}/terminate` | P1-091 (FR-C-02): the ladder's third rung — body: reason; requires `suspended`, audited as `user.terminated`; the `enforcement-termination` mail goes out |
 | POST | `/v1/admin/users/{id}/quota-grant` | temporary quota bump; audited |
 | POST | `/v1/admin/billing/subscriptions/{id}/cancel` | support cancel (P1-071, FR-P-03): body: reason; admin only; cancels NOW, audited as `billing.subscription.status_changed` |
 | GET | `/v1/admin/usage/{id}` | P1-081 (FR-P-07): the admin usage view — the P1-080 shape for an arbitrary user: `today` + the 30 daily buckets ending today (oldest first, missing days are zeros) from the durable `usage_counters` rows, plus the all-time `totals` (the SUM over every row the user has, not just the window) and today's per-key breakdown `by_key` (always present here — an admin sees everything; calling key, sibling keys, and the unattributed row, ordered by images desc). Admin + support (read-only role); a verified plain user is 403 `PF-1002`, an API key is 403, anonymous is 401 `PF-1001`. A user who does not exist is 404 `PF-2010`; a user who exists but used nothing gets zeros, not a 404. No audit row (a read creates nothing); the DB is the source of truth, never the Redis hot hash. The per-key `video_seconds` is 0 until Phase 2 records durations (jobs carry no duration — the count is in `video_jobs`); the buckets' and totals' `video_seconds` are real. |
@@ -788,8 +795,13 @@ exactly when status is `deletion_pending`. Only `queued`
 jobs are held — a job already running finishes; the Phase 2
 intake/claim must treat `held` as "do not start" (a held job
 is never claimed, and a restore releases it, so no job is
-lost to the hold). No suspension mail is sent (the spec does
-not ask for one). Access: both routes take the `AdminContext`
+lost to the hold). The suspension mails the user (P1-091):
+the `enforcement-suspension` mail is enqueued in the same
+transaction as the suspension — the P1-008 "no suspension
+mail is sent" is corrected by this ticket; the mail belongs
+to the ladder's second rung, so the P1-090 queue suspend
+mails too, and only on a real transition (a no-op suspend
+mails nothing). Access: both routes take the `AdminContext`
 extractor — a verified non-admin gets 403 `PF-1002`, no
 credential gets 401 `PF-1001`, an unknown target gets 404
 `PF-2010`. Residual window: the access token already issued
@@ -798,6 +810,46 @@ the extractor does NOT check status (that check is the
 login's, plus the revocation) — the window closes at expiry
 and cannot be reopened, because the refresh sessions are
 dead and the next login is blocked.
+
+Enforcement ladder (P1-091, FR-C-02): warning →
+suspension → termination, one endpoint per rung. `POST
+/v1/admin/users/{id}/warn` takes `{"reason": "..."}` (the
+P1-008 shape, 1–500 chars) and returns 200 with the user +
+the rung that ran (`{"user", "step": "warn", "already",
+"sessions_revoked", "jobs_held"}`): the status does not
+change; one transaction writes the `user.warned` audit
+(`after` carries `{status, warnings}` — the running count)
+and enqueues the `enforcement-warning` mail. A warning is
+repeatable — each call is a new warning event. Requires an
+`active` account (422 otherwise). `POST
+/v1/admin/users/{id}/terminate` takes the same body and
+returns the same shape with `"step": "terminate"`: one
+transaction runs the P1-007 deletion request (status
+`deletion_pending`, `deleted_at = now()` — the 30-day
+grace) + every live session revoked + every queued job held
++ the `user.terminated` audit (`after` carries `{status:
+"deletion_pending", deleted_at, sessions_revoked,
+jobs_held}`) + the `enforcement-termination` mail.
+Requires a `suspended` account — the ladder is sequential,
+an active account cannot be terminated outright (422).
+Terminating an already-terminated account is a 200 no-op
+(no write, no audit, no mail). The ladder state is derived,
+not stored: the rung comes from `users.status` plus the
+count of `user.warned` rows (`next_step` in the service —
+`active` + 0 warnings → warn, `active` + ≥1 → suspend,
+`suspended` → terminate, `deletion_pending` → nothing), so
+a suspension through any path composes with the ladder.
+Termination is sticky: a terminated account's login is
+403 `PF-1004` (`account_terminated`, after a correct
+password — a wrong password is still the generic 401, and
+the attempt audits `login.failure` with reason
+`terminated`); the login does NOT cancel an
+admin-initiated termination the way it cancels a
+self-requested deletion. Termination does not cancel the
+user's subscriptions (billing cancellation is the P1-071
+support flow). Access: admin only on both routes
+(`AdminUsersWrite` — support 403, a key 403, anonymous
+401, unknown user 404).
 
 User search (P1-009, FR-A-01): `GET /v1/admin/users` lists
 users in `created_at` order, oldest first (the list is a

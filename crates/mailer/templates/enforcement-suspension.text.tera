@@ -1,0 +1,9 @@
+Hi,
+
+Your {{ app_name }} account is suspended for violating our acceptable-use policy.
+
+Reason: {{ reason }}
+
+While suspended you cannot sign in, your sessions have been signed out, and your queued jobs are on hold. This is the second step of our enforcement ladder: a further violation may lead to termination of your account. If you believe this suspension was made in error, contact support.
+
+— The {{ app_name }} team
