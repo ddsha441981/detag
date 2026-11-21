@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, reporter_contact, job_id, reason, status,\n                  resolution, notes, created_at, updated_at\n           FROM abuse_reports\n           WHERE user_id = $1 AND status = 'open' AND created_at >= $2\n           ORDER BY created_at DESC, id DESC\n           LIMIT 1",
+  "query": "UPDATE abuse_reports\n           SET status = 'reviewing', updated_at = now()\n           WHERE id = $1 AND status = 'open'\n           RETURNING id, user_id, reporter_contact, job_id, reason, status,\n                     resolution, notes, created_at, updated_at, resolved_at,\n                     resolved_by",
   "describe": {
     "columns": [
       {
@@ -112,12 +112,33 @@
             "name": "updated_at"
           }
         }
+      },
+      {
+        "ordinal": 10,
+        "name": "resolved_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "abuse_reports",
+            "name": "resolved_at"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "resolved_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "abuse_reports",
+            "name": "resolved_by"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
-        "Uuid",
-        "Timestamptz"
+        "Uuid"
       ]
     },
     "nullable": [
@@ -130,8 +151,10 @@
       true,
       true,
       false,
-      false
+      false,
+      true,
+      true
     ]
   },
-  "hash": "aa381ad2786220d213f59fd33cc0cda16db9f03476ec2a729a54c145314c2885"
+  "hash": "5de1e200e9a5e1cf8a0ab2c4335726f8337a51b18b9cc1fd48de7284bca93ce5"
 }

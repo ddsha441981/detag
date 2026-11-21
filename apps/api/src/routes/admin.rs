@@ -20,7 +20,10 @@
 //! /v1/admin/usage/{id}` + `GET
 //! /v1/admin/usage/{id}/export`, real since P1-081 (in
 //! this file), and `GET /v1/admin/audit`, real since
-//! P1-088 (in this file), and `POST /v1/abuse`, real since
+//! P1-088 (in this file), and `GET
+//! /v1/admin/abuse-reports` + `POST
+//! /v1/admin/abuse-reports/{id}/resolve`, real since
+//! P1-090 (in this file), and `POST /v1/abuse`, real since
 //! P1-089 (in this file — the public intake, no guard).
 //! Every route — live or stub — sits behind the matrix guard
 //! (P1-043): the stubs take `admin_stub` / `admin_read_stub`
@@ -55,6 +58,10 @@ use crate::{
         admin::{
             impersonate_user, list_jobs, restore_user, search_users, suspend_user, AdminError,
             AdminJobsPage, ImpersonateResponse, ReasonRequest, UserSearchPage,
+        },
+        admin_abuse_queue::{
+            list_abuse_queue, resolve_abuse_report, AbuseQueueError, AbuseQueuePage,
+            AbuseReportItem, ResolveAbuseReportRequest,
         },
         admin_audit::{list_audit, AdminAuditError, AuditPage},
         admin_plans::{
@@ -867,6 +874,170 @@ pub async fn admin_audit_handler(
     }
 }
 
+/// Query params for `GET /v1/admin/abuse-reports`
+/// (P1-090): all optional. `status` filters to one queue
+/// state (`open` | `reviewing` | `resolved` — an unknown
+/// value is 422, not an empty page); `limit` clamps to
+/// 1..=100 (default 20); `cursor` is the opaque keyset from
+/// the previous page.
+#[derive(Debug, Deserialize)]
+pub struct AbuseQueueQuery {
+    pub status: Option<String>,
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
+}
+
+/// GET /v1/admin/abuse-reports (P1-090): one page of the
+/// abuse queue, newest first. Admin + support (the
+/// read-only role) may call it; a verified plain user gets
+/// 403 `PF-1002` from the extractor, no credential gets 401
+/// `PF-1001`, an API key gets 403. Answers the api-spec
+/// pagination shape (`{"items": [...], "next_cursor":
+/// "..."}` — `next_cursor` omitted on the last page). Every
+/// item carries the SLA pair: `sla_due_at` (`created_at` +
+/// 72 h) and `sla_breached` (a resolved report: its
+/// `resolved_at` is past the due time; an open or
+/// reviewing one: the clock is past it). An unknown
+/// `status` or a tampered cursor is 422 `PF-2002`. No audit
+/// row (a read creates nothing).
+#[utoipa::path(
+    get,
+    path = "/v1/admin/abuse-reports",
+    params(
+        ("status" = Option<String>, Query, description = "Only reports in this state: open | reviewing | resolved"),
+        ("limit" = Option<u32>, Query, description = "Page size, clamped to 1..=100 (default 20)"),
+        ("cursor" = Option<String>, Query, description = "Opaque keyset from the previous page's next_cursor")
+    ),
+    responses(
+        (status = 200, description = "One page of abuse reports, newest first", body = AbuseQueuePage),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified plain user, or an API key)", body = Problem),
+        (status = 422, description = "Unknown status filter or tampered cursor", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn admin_abuse_queue_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    _admin: AdminReadContext,
+    Query(params): Query<AbuseQueueQuery>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    match list_abuse_queue(&state, params.status, params.limit, params.cursor).await {
+        Ok(page) => Json(page).into_response(),
+        Err(AbuseQueueError::InvalidStatus | AbuseQueueError::InvalidCursor) => ProblemResponse(
+            AppError::ValidationFailed.to_problem(Profile::Production, request_id, None),
+        )
+        .into_response(),
+        Err(AbuseQueueError::Internal) => {
+            tracing::error!("admin abuse queue: list failed");
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        // The list takes no body and no target id — the
+        // resolve-only variants are unreachable here.
+        Err(
+            AbuseQueueError::Validation(_)
+            | AbuseQueueError::NotFound
+            | AbuseQueueError::ActionNotApplicable,
+        ) => ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+            .into_response(),
+    }
+}
+
+/// POST /v1/admin/abuse-reports/{id}/resolve (P1-090):
+/// act on one report. Admin only — support is read-only
+/// and gets 403 `PF-1002` from the extractor, no credential
+/// gets 401 `PF-1001`, an API key gets 403. The body is
+/// `{"action": "start_review" | "reject_job" |
+/// "suspend_user" | "dismiss", "reason": "...", "notes"?}`:
+/// `start_review` picks the report up (open → reviewing),
+/// the other three resolve it (`dismissed` |
+/// `job_rejected` | `user_suspended`) with the resolution
+/// stamps (`resolved_at` from the DB clock, `resolved_by`
+/// the admin). `reject_job` sets the reported job's status
+/// to `rejected`; `suspend_user` runs the full P1-008
+/// sequence on the reported user. Every action is audited
+/// in the same transaction as the mutation (the AC):
+/// `admin.abuse_reports.resolved` for the three terminal
+/// actions, `abuse.report_reviewing` for the pickup, plus
+/// `user.suspended` for a suspension — so the handler
+/// marks the response `AuditHandled` and the P1-046
+/// middleware stands down. Idempotent: resolving an
+/// already-resolved report (or picking up an
+/// already-reviewing one) is a 200 with the report as it
+/// stands — no write, no audit. An unknown report id is
+/// 404 `PF-2010`; an action the report cannot take
+/// (`reject_job` with no job, `suspend_user` with no user)
+/// is 422 `PF-2002`; a bad reason/notes is 422 with the
+/// field list (the `ValidatedJson` extractor).
+#[utoipa::path(
+    post,
+    path = "/v1/admin/abuse-reports/{id}/resolve",
+    request_body = ResolveAbuseReportRequest,
+    responses(
+        (status = 200, description = "Resolved (or already resolved — the report as it stands)", body = AbuseReportItem),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified non-admin, including support)", body = Problem),
+        (status = 404, description = "No such report, or the named job/user no longer exists", body = Problem),
+        (status = 422, description = "Bad reason/notes, an action that does not apply to this report, or an unknown action", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn resolve_abuse_report_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    admin: AdminContext,
+    Path(report_id): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<ResolveAbuseReportRequest>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let Some(admin_user) = admin.auth.user else {
+        // The extractor guarantees a user for a verified context.
+        return ProblemResponse(AppError::Internal.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
+    match resolve_abuse_report(&state, &admin_user, report_id, &req).await {
+        Ok(outcome) => {
+            // The service wrote the audit row(s) in the same
+            // transaction as the mutation (P1-090) — mark the
+            // response so the P1-046 middleware stands down and
+            // the row exists exactly once (also on the
+            // idempotent no-op, which deliberately writes none).
+            let mut response = Json(outcome.report).into_response();
+            response.extensions_mut().insert(AuditHandled);
+            response
+        }
+        Err(AbuseQueueError::Validation(errors)) => {
+            ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
+        }
+        Err(AbuseQueueError::NotFound) => {
+            ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(
+            AbuseQueueError::InvalidStatus
+            | AbuseQueueError::InvalidCursor
+            | AbuseQueueError::ActionNotApplicable,
+        ) => ProblemResponse(AppError::ValidationFailed.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response(),
+        Err(AbuseQueueError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// The guarded 501 stubs (P1-043): the same 501 `PF-5004` as
 /// the shared [`stub`](super::stub), but behind the matrix
 /// guard — so a route whose handler has not landed yet still
@@ -966,7 +1137,7 @@ pub async fn abuse_intake(
 /// The nest carries the P1-046 audit middleware
 /// ([`audit_admin_writes`]): a successful admin write gets
 /// exactly one audit row from the route metadata, unless the
-/// handler marked its response [`AuditHandled`] (the four live
+/// handler marked its response [`AuditHandled`] (the live
 /// writes do — their services write the row in the mutation's
 /// transaction). Reads and non-2xx responses audit nothing.
 /// The middleware needs the state ([`middleware::from_fn`]
@@ -998,8 +1169,11 @@ pub fn router(state: AppState) -> Router<AppState> {
                 .route("/usage/{id}", get(admin_usage_handler))
                 .route("/usage/{id}/export", get(admin_usage_export_handler))
                 .route("/audit", get(admin_audit_handler))
-                .route("/abuse-reports", get(admin_read_stub))
-                .route("/abuse-reports/{id}/resolve", post(admin_stub))
+                .route("/abuse-reports", get(admin_abuse_queue_handler))
+                .route(
+                    "/abuse-reports/{id}/resolve",
+                    post(resolve_abuse_report_handler),
+                )
                 .route("/attestations", get(admin_read_stub))
                 .route("/system", get(admin_read_stub))
                 .layer(middleware::from_fn_with_state(state, audit_admin_writes)),

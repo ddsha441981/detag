@@ -11,15 +11,22 @@
 //! intake report, and find a user's still-open spike report
 //! inside a window (the dedup scan — one open report per user
 //! per window, so a sustained spike files once, not once per
-//! job).
+//! job). The admin queue (P1-090) reads through
+//! [`list_filtered`] and resolves through [`mark_reviewing`] /
+//! [`resolve`] — the resolution stamps `resolved_at` /
+//! `resolved_by` (migration `20261121001300`), so the SLA
+//! check can tell a late resolution from an on-time one.
 
 use super::error::RepoError;
+use crate::pagination::Cursor;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 /// One abuse report row (the fields the detector and its tests
 /// need). `reporter_contact` is the public intake's field; the
-/// detector leaves it `NULL`.
+/// detector leaves it `NULL`. `resolved_at` / `resolved_by`
+/// are set only by a resolve (P1-090) — NULL while the report
+/// is open or reviewing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbuseReport {
     pub id: Uuid,
@@ -32,6 +39,8 @@ pub struct AbuseReport {
     pub notes: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    pub resolved_at: Option<DateTime<Utc>>,
+    pub resolved_by: Option<Uuid>,
 }
 
 /// Insert a reporter-filed intake report (P1-089, FR-C-06):
@@ -53,7 +62,8 @@ pub async fn insert_intake(
         r#"INSERT INTO abuse_reports (job_id, reporter_contact, reason, status)
            VALUES ($1, $2, $3, 'open')
            RETURNING id, user_id, reporter_contact, job_id, reason, status,
-                     resolution, notes, created_at, updated_at"#,
+                     resolution, notes, created_at, updated_at, resolved_at,
+                     resolved_by"#,
         job_id,
         reporter_contact,
         reason,
@@ -100,7 +110,8 @@ pub async fn open_since(
     sqlx::query_as!(
         AbuseReport,
         r#"SELECT id, user_id, reporter_contact, job_id, reason, status,
-                  resolution, notes, created_at, updated_at
+                  resolution, notes, created_at, updated_at, resolved_at,
+                  resolved_by
            FROM abuse_reports
            WHERE user_id = $1 AND status = 'open' AND created_at >= $2
            ORDER BY created_at DESC, id DESC
@@ -122,10 +133,131 @@ pub async fn by_id(
     sqlx::query_as!(
         AbuseReport,
         r#"SELECT id, user_id, reporter_contact, job_id, reason, status,
-                  resolution, notes, created_at, updated_at
+                  resolution, notes, created_at, updated_at, resolved_at,
+                  resolved_by
            FROM abuse_reports
            WHERE id = $1"#,
         id,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
+/// List the queue newest first, keyset-paginated over
+/// `(created_at, id)` (the P1-088 audit-list precedent — the
+/// same `date_trunc('milliseconds', ...)` comparison, because
+/// the cursor carries Unix milliseconds). `status` filters to
+/// one queue state (`open` | `reviewing` | `resolved`) when
+/// given — `None` lists the whole queue. The caller validates
+/// the status value (an unknown one is a 422, never an empty
+/// page) and range-checks the cursor's `ts` first (the repo's
+/// `from_timestamp_millis(...).expect(...)` would panic on an
+/// out-of-range `ts` — the P1-088 adoption-review lesson).
+pub async fn list_filtered(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    status: Option<&str>,
+    cursor: Option<Cursor>,
+    limit: u32,
+) -> Result<Vec<AbuseReport>, RepoError> {
+    match cursor {
+        Some(cursor) => {
+            let cursor_ts = DateTime::from_timestamp_millis(cursor.ts)
+                .expect("a cursor ts is a valid Unix-millis timestamp");
+            sqlx::query_as!(
+                AbuseReport,
+                r#"SELECT id, user_id, reporter_contact, job_id, reason, status,
+                          resolution, notes, created_at, updated_at, resolved_at,
+                          resolved_by
+                   FROM abuse_reports
+                   WHERE ($1::text IS NULL OR status = $1)
+                     AND (date_trunc('milliseconds', created_at), id) < ($2, $3)
+                   ORDER BY date_trunc('milliseconds', created_at) DESC, id DESC
+                   LIMIT $4"#,
+                status,
+                cursor_ts,
+                cursor.id,
+                limit as i64,
+            )
+            .fetch_all(pool)
+            .await
+            .map_err(RepoError::from_sqlx)
+        }
+        None => sqlx::query_as!(
+            AbuseReport,
+            r#"SELECT id, user_id, reporter_contact, job_id, reason, status,
+                      resolution, notes, created_at, updated_at, resolved_at,
+                      resolved_by
+               FROM abuse_reports
+               WHERE ($1::text IS NULL OR status = $1)
+               ORDER BY date_trunc('milliseconds', created_at) DESC, id DESC
+               LIMIT $2"#,
+            status,
+            limit as i64,
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(RepoError::from_sqlx),
+    }
+}
+
+/// Move an open report to reviewing (the admin picks it up).
+/// The `WHERE status = 'open'` makes the move conditional:
+/// `None` when the report is already reviewing or resolved —
+/// the caller re-reads the row and answers the idempotent
+/// 200 with its current state. `updated_at` bumps (there is
+/// no trigger on this table — the UPDATE stamps it); the
+/// resolution columns stay NULL (the report is not resolved).
+pub async fn mark_reviewing(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> Result<Option<AbuseReport>, RepoError> {
+    sqlx::query_as!(
+        AbuseReport,
+        r#"UPDATE abuse_reports
+           SET status = 'reviewing', updated_at = now()
+           WHERE id = $1 AND status = 'open'
+           RETURNING id, user_id, reporter_contact, job_id, reason, status,
+                     resolution, notes, created_at, updated_at, resolved_at,
+                     resolved_by"#,
+        id,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
+/// Resolve a report (P1-090): status `resolved`, the
+/// resolution naming the action (`dismissed` |
+/// `job_rejected` | `user_suspended`), the admin's notes when
+/// given, and the resolution stamps — `resolved_at` from the
+/// DB clock, `resolved_by` the acting admin. The `WHERE
+/// status IN ('open', 'reviewing')` makes the resolve
+/// conditional: `None` when the report is already resolved
+/// (or a concurrent resolve won the race) — the caller
+/// re-reads the row and answers the idempotent 200 with its
+/// current state. `updated_at` bumps with the resolve (no
+/// trigger on this table).
+pub async fn resolve(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+    resolution: &str,
+    notes: Option<&str>,
+    resolved_by: Uuid,
+) -> Result<Option<AbuseReport>, RepoError> {
+    sqlx::query_as!(
+        AbuseReport,
+        r#"UPDATE abuse_reports
+           SET status = 'resolved', resolution = $2, notes = $3,
+               resolved_at = now(), resolved_by = $4, updated_at = now()
+           WHERE id = $1 AND status IN ('open', 'reviewing')
+           RETURNING id, user_id, reporter_contact, job_id, reason, status,
+                     resolution, notes, created_at, updated_at, resolved_at,
+                     resolved_by"#,
+        id,
+        resolution,
+        notes,
+        resolved_by,
     )
     .fetch_optional(pool)
     .await

@@ -14,14 +14,14 @@
 //!   `Capability::for_route`, and the role table behind it
 //!   admits exactly admin + support on read rows and admin
 //!   only on write/impersonate rows.
-//! - `admin_matrix_live` — the live walk: the 12 live routes
+//! - `admin_matrix_live` — the live walk: the 14 live routes
 //!   × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key), asserting the status
 //!   the matrix predicts — 401 `PF-1001` with no credential,
 //!   403 `PF-1002` for a wrong role or a key ("no admin
 //!   ever"), 200 for an admitted role.
 //!
-//! The 11 stub rows are enforced promises since P1-043
+//! The 9 stub rows are enforced promises since P1-043
 //! (`admin_stub` / `admin_read_stub` — guard first, 501
 //! after): the live walk in `admin_guard.rs` asserts the
 //! guard (401 / 403 / 501) on every stub, and the handler
@@ -67,7 +67,7 @@ struct MatrixRow {
 /// `POST /v1/abuse` intake lives in the admin module but is
 /// not an admin route — it has no row (and no capability).
 const MATRIX: &[MatrixRow] = &[
-    // Live (12)
+    // Live (14)
     MatrixRow {
         method: "GET",
         path: "/v1/admin/users",
@@ -122,7 +122,7 @@ const MATRIX: &[MatrixRow] = &[
         capability: Capability::AdminUsageRead,
         live: true,
     },
-    // Stubs (13) — guard lands with the handler ticket (P1-043)
+    // Stubs (9) — guard lands with the handler ticket (P1-043)
     MatrixRow {
         method: "GET",
         path: "/v1/admin/metrics/dashboard",
@@ -187,13 +187,13 @@ const MATRIX: &[MatrixRow] = &[
         method: "GET",
         path: "/v1/admin/abuse-reports",
         capability: Capability::AdminAbuseRead,
-        live: false,
+        live: true,
     },
     MatrixRow {
         method: "POST",
         path: "/v1/admin/abuse-reports/{id}/resolve",
         capability: Capability::AdminAbuseWrite,
-        live: false,
+        live: true,
     },
     MatrixRow {
         method: "GET",
@@ -415,6 +415,19 @@ async fn create_key(app: &TestApp, token: &str) -> String {
 /// Seed an active Pro subscription for the user; return its
 /// id. The cancel row in the live walk needs a real
 /// subscription to reach 200 (an unknown id is 404).
+/// Seed one open intake-style report; return its id. The
+/// report names no job and no user (a general-abuse filing),
+/// so only `dismiss` / `start_review` apply to it.
+async fn seed_report(app: &TestApp) -> Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO abuse_reports (reporter_contact, reason, status) \
+         VALUES ('reporter@example.com', 'matrix probe report', 'open') RETURNING id",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .expect("seed abuse report")
+}
+
 async fn seed_subscription(app: &TestApp, user_id: Uuid) -> Uuid {
     let plan_id: Uuid = sqlx::query_scalar("SELECT id FROM plans WHERE code = $1")
         .bind("pro")
@@ -473,7 +486,7 @@ fn problem_code(res: &common::TestResponse) -> String {
 
 #[tokio::test]
 async fn admin_matrix_live() {
-    // The live walk: the 11 live rows × 5 caller kinds.
+    // The live walk: the 14 live rows × 5 caller kinds.
     // Order per row is anonymous → user → support → admin
     // → key, so the mutating admin call (suspend,
     // impersonate) runs last and cannot affect the earlier
@@ -500,6 +513,10 @@ async fn admin_matrix_live() {
     // The usage rows need a real user id to reach 200 (an
     // unknown id is 404): any registered user works.
     let (usage_target, _) = make_role(&app, &unique_email("target-u"), "user").await;
+    // The resolve row needs a real open report to reach 200
+    // (an unknown id is 404): seed one, dismissed by the
+    // admitted admin probe.
+    let resolve_target = seed_report(&app).await;
 
     for row in MATRIX.iter().filter(|row| row.live) {
         let is_read = row.capability.code().ends_with(".read");
@@ -525,6 +542,14 @@ async fn admin_matrix_live() {
             // admitted caller to reach 200 (an unknown id
             // is 404, not 200).
             "/v1/admin/usage/{id}" | "/v1/admin/usage/{id}/export" => (Some(usage_target), None),
+            // The resolve row needs a real open report id +
+            // a dismiss body for the admitted caller to
+            // reach 200 (an unknown id is 404, an empty body
+            // is 422).
+            "/v1/admin/abuse-reports/{id}/resolve" => (
+                Some(resolve_target),
+                Some(json!({ "action": "dismiss", "reason": "matrix probe" })),
+            ),
             // The plans PUT needs a valid body for the
             // admitted caller to reach 200: the empty edit
             // is a no-op 200 on the shared harness DB (P1-056).

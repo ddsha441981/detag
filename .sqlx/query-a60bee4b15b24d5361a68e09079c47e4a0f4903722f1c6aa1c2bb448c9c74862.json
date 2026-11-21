@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, reporter_contact, job_id, reason, status,\n                  resolution, notes, created_at, updated_at\n           FROM abuse_reports\n           WHERE id = $1",
+  "query": "SELECT id, user_id, reporter_contact, job_id, reason, status,\n                          resolution, notes, created_at, updated_at, resolved_at,\n                          resolved_by\n                   FROM abuse_reports\n                   WHERE ($1::text IS NULL OR status = $1)\n                     AND (date_trunc('milliseconds', created_at), id) < ($2, $3)\n                   ORDER BY date_trunc('milliseconds', created_at) DESC, id DESC\n                   LIMIT $4",
   "describe": {
     "columns": [
       {
@@ -112,11 +112,36 @@
             "name": "updated_at"
           }
         }
+      },
+      {
+        "ordinal": 10,
+        "name": "resolved_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "abuse_reports",
+            "name": "resolved_at"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "resolved_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "abuse_reports",
+            "name": "resolved_by"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Text",
+        "Timestamptz",
+        "Uuid",
+        "Int8"
       ]
     },
     "nullable": [
@@ -129,8 +154,10 @@
       true,
       true,
       false,
-      false
+      false,
+      true,
+      true
     ]
   },
-  "hash": "55ad28b64b4fa4f141c00477e811da598806d9b112ca92b0efcff85b0852f523"
+  "hash": "a60bee4b15b24d5361a68e09079c47e4a0f4903722f1c6aa1c2bb448c9c74862"
 }

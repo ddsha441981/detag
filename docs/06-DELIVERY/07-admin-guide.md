@@ -77,8 +77,8 @@ views — and neither are denials, 404s, or 501 stubs.
 | POST | `/v1/admin/billing/catalog-sync` | `admin.billing.write` | admin | live | `admin.billing.catalog_synced` |
 | POST | `/v1/admin/billing/subscriptions/{id}/cancel` | `admin.billing.write` | admin | live | `billing.subscription.status_changed` |
 | GET | `/v1/admin/audit` | `admin.audit.read` | admin, support | live | — |
-| GET | `/v1/admin/abuse-reports` | `admin.abuse.read` | admin, support | stub | — |
-| POST | `/v1/admin/abuse-reports/{id}/resolve` | `admin.abuse.write` | admin | stub | `admin.abuse_reports.resolved` |
+| GET | `/v1/admin/abuse-reports` | `admin.abuse.read` | admin, support | live | — |
+| POST | `/v1/admin/abuse-reports/{id}/resolve` | `admin.abuse.write` | admin | live | `admin.abuse_reports.resolved` (+ `abuse.report_reviewing` / `user.suspended`) |
 | GET | `/v1/admin/attestations` | `admin.attestations.read` | admin, support | stub | — |
 | GET | `/v1/admin/system` | `admin.system.read` | admin, support | stub | — |
 
@@ -127,17 +127,37 @@ Notes on the live routes:
 - The public abuse intake (`POST /v1/abuse`) is **not** an
   admin route: it takes no credential and never reaches the
   matrix or the audit middleware.
+- **Abuse queue** (P1-090): `GET /v1/admin/abuse-reports`
+  lists newest first, `?status=` filters to `open` |
+  `reviewing` | `resolved`; every item carries `sla_due_at`
+  (`created_at` + 72 h) and `sla_breached`. `POST
+  /v1/admin/abuse-reports/{id}/resolve` takes
+  `{"action": "start_review" | "reject_job" |
+  "suspend_user" | "dismiss", "reason": "...", "notes"?}`:
+  `start_review` picks the report up, `reject_job` sets the
+  reported job's status to `rejected`, `suspend_user` runs
+  the full P1-008 sequence on the reported user, `dismiss`
+  drops it — all three terminal actions resolve the report
+  (`dismissed` | `job_rejected` | `user_suspended`) with
+  `resolved_at` / `resolved_by` stamped. Resolving an
+  already-resolved report is a 200 no-op; `reject_job` needs
+  a job on the report and `suspend_user` needs a user (both
+  422 otherwise).
 
 ## The audit trail
 
 A successful admin write writes exactly one audit row —
 actor (the admin), action (the table above), target type +
-id, and before/after where the service has them. The four
-live writes write their row inside the same transaction as
+id, and before/after where the service has them. The live writes write their row inside the same transaction as
 the mutation (P1-008's atomicity) and mark the response
 `AuditHandled`; every other write is audited by the P1-046
 middleware from the route metadata, so a handler can never
-forget its row. An audit insert that fails answers 500: a
+forget its row. One exception to "exactly one": a queue
+suspension writes two rows in one transaction —
+`user.suspended` for the suspension itself plus
+`admin.abuse_reports.resolved` for the resolution (P1-090) —
+because the suspension is a privileged action of its own
+and the trail must show it under its own name. An audit insert that fails answers 500: a
 privileged action without its audit row is a failed request,
 not a silent gap — re-read state rather than blindly
 retrying (the admin writes are idempotent, so a retry after
