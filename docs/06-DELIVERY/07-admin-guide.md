@@ -156,7 +156,11 @@ Notes on the live routes:
 - **Abuse queue** (P1-090): `GET /v1/admin/abuse-reports`
   lists newest first, `?status=` filters to `open` |
   `reviewing` | `resolved`; every item carries `sla_due_at`
-  (`created_at` + 72 h) and `sla_breached`. `POST
+  (`created_at` + 72 h) and `sla_breached`. The operator
+  procedure — triage checklist, evidence preservation
+  within the artifact TTLs, and the DMCA-style takedown
+  response stub — is `docs/06-DELIVERY/14-abuse-ops-playbook.md`
+  (P1-093). `POST
   /v1/admin/abuse-reports/{id}/resolve` takes
   `{"action": "start_review" | "reject_job" |
   "suspend_user" | "dismiss", "reason": "...", "notes"?}`:
