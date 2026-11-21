@@ -1285,7 +1285,7 @@ async fn jobs_admin_list_shows_key_prefix() {
     let job_web = jobs::create(&pool, &mk(user.id, None, "idem-p138-a2"))
         .await
         .expect("web job");
-    jobs::create(&pool, &mk(other.id, None, "idem-p138-a3"))
+    let job_other = jobs::create(&pool, &mk(other.id, None, "idem-p138-a3"))
         .await
         .expect("other user job");
 
@@ -1308,6 +1308,28 @@ async fn jobs_admin_list_shows_key_prefix() {
         .await
         .expect("admin list by user");
     assert_eq!(rows.len(), 2);
+
+    // FLAKY-010 regression: pin all three jobs onto one shared
+    // millisecond with their microsecond order exactly opposite
+    // their UUID order (smallest UUID = latest microsecond).
+    // Before the fix the no-cursor page ordered by
+    // full-microsecond `created_at` while the cursor page
+    // truncated to milliseconds, so page 1 was [smallest-id,
+    // middle-id] and the cursor re-included the smallest-id row
+    // on page 2; with the fix both pages order by the truncated
+    // timestamp and the walk has no duplicates.
+    let mut ids = vec![job_key.id, job_web.id, job_other.id];
+    ids.sort();
+    let base = DateTime::from_timestamp_millis(job_web.created_at.timestamp_millis())
+        .expect("a millis timestamp is valid");
+    for (id, micros) in ids.into_iter().zip([900, 500, 100]) {
+        sqlx::query("UPDATE jobs SET created_at = $1 WHERE id = $2")
+            .bind(base + Duration::microseconds(micros))
+            .bind(id)
+            .execute(&pool)
+            .await
+            .expect("pin job to the shared millisecond");
+    }
 
     // Newest-first keyset pagination walks without duplicates.
     let page1 = jobs::list_for_admin(&pool, None, None, None, 2)

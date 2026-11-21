@@ -291,7 +291,13 @@ pub async fn usage_breakdown_for_user(
 /// `(created_at, id)` shape as the users search, with
 /// the same `date_trunc('milliseconds', …)` comparison — the
 /// cursor stores Unix millis while `created_at` carries
-/// microseconds). `limit` is the `limit + 1` fetch size: the
+/// microseconds). Both branches order by the TRUNCATED
+/// timestamp (FLAKY-010: the no-cursor branch used to order
+/// by full-microsecond `created_at`, so when the two newest
+/// jobs shared a millisecond the cursor page re-included
+/// page 1's first row whenever its UUID sorted below page
+/// 1's second row — a real duplicate-row production bug,
+/// not just test flakiness). `limit` is the `limit + 1` fetch size: the
 /// caller builds the page with `Page::from_window`.
 pub async fn list_for_admin(
     pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
@@ -338,7 +344,7 @@ pub async fn list_for_admin(
              FROM jobs j LEFT JOIN api_keys k ON k.id = j.key_id
              WHERE ($1::uuid IS NULL OR j.user_id = $1)
                AND ($2::uuid IS NULL OR j.key_id = $2)
-             ORDER BY j.created_at DESC, j.id DESC
+             ORDER BY date_trunc('milliseconds', j.created_at) DESC, j.id DESC
              LIMIT $3"#,
             user_id,
             key_id,
