@@ -27,6 +27,18 @@
 //! enqueues nothing (the overage policy is
 //! `docs/06-DELIVERY/09-overage-policy.md`).
 //!
+//! P1-094: an inside-quota create also needs the ownership
+//! attestation (FR-C-01): after the quota allow, the gate
+//! requires the caller's attestation row for the upload —
+//! without one the create is 403 `PF-4001` (problem+json,
+//! with the `X-Quota-*` headers, like every job-creating
+//! response). Check order is quota first, then attestation:
+//! an over-quota request is denied on quota before the
+//! attestation is ever consulted, so the quota tests' 429s
+//! are unchanged. A request with no body, or no `upload_id`,
+//! names no upload to attest for and reaches the stub
+//! untouched (there is no job to reject).
+//!
 //! P1-052: every job-creating response carries the
 //! `X-Quota-*` headers — a request with no body, or no
 //! `upload_id`, reaches the stub WITH the caller's headers
@@ -67,6 +79,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use detag_core::attestation::{self, AttestationError};
 use detag_core::error::{AppError, Profile};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -172,7 +185,35 @@ async fn create_job(
     };
     match quota::precheck_for_create(&state, user.id, upload_id).await {
         Ok(QuotaOutcome::Allowed(decision)) => {
-            with_quota_headers(stub_response(request_id), &decision.snapshot)
+            // P1-094 (FR-C-01): the attestation gate — the
+            // caller's attestation row for this upload must
+            // exist before a job may be created from it.
+            // Without one the create is 403 PF-4001 (with the
+            // quota headers, like every job-creating
+            // response); with one the stub's 501 answers, as
+            // before. A repo failure is a 500, like the
+            // gate's own failure arm.
+            match attestation::require_for_upload(&state.pool, user.id, upload_id).await {
+                Ok(_) => with_quota_headers(stub_response(request_id), &decision.snapshot),
+                Err(AttestationError::AttestationMissing) => {
+                    let res = ProblemResponse(AppError::AttestationMissing.to_problem(
+                        Profile::Production,
+                        request_id,
+                        None,
+                    ))
+                    .into_response();
+                    with_quota_headers(res, &decision.snapshot)
+                }
+                Err(err) => {
+                    tracing::error!(error = ?err, "attestation gate failed");
+                    ProblemResponse(AppError::Internal.to_problem(
+                        Profile::Production,
+                        request_id,
+                        None,
+                    ))
+                    .into_response()
+                }
+            }
         }
         Ok(QuotaOutcome::Denied(err, snapshot)) => {
             // P1-054: the denial links the plan matrix, so the

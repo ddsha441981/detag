@@ -25,6 +25,7 @@
 pub mod abuse_reports;
 pub mod api_keys;
 pub mod artifacts;
+pub mod attestations;
 pub mod audit_logs;
 pub mod email_outbox;
 pub mod email_verification_tokens;

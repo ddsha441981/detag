@@ -6,7 +6,11 @@
 //! FR-P-06 upgrade hint (`PF-3001` images, `PF-3002`
 //! video-seconds, `PF-3008` concurrency — ADR-0026) and the
 //! `X-Quota-*` headers; an inside-quota request reaches the
-//! stub's 501 with the same headers. The nine tests:
+//! stub's 501 with the same headers. Since P1-094 the allow
+//! path also needs the caller's attestation row for the
+//! upload (403 `PF-4001` without one — see
+//! `attestations.rs`); the allow-path tests attest first via
+//! `app.seed_attestation`. The nine tests:
 //!
 //! - `image_quota_exceeded_is_429_pf3001_with_headers` —
 //!   Free at 10/10 images, image upload → 429 `PF-3001`,
@@ -404,6 +408,7 @@ async fn video_seconds_estimate_checked_against_remaining() {
 
     // 30 s needed, 50 s left: reaches the stub, headers show
     // the same remaining (the check records nothing).
+    app.seed_attestation(user, short).await;
     let res = post_job(&app, &token, json!({ "upload_id": short })).await;
     assert_problem(
         &res,
@@ -419,6 +424,7 @@ async fn under_quota_reaches_stub_with_headers() {
     let app = quota_app().await;
     let (user, token) = authed_user(&app, "quota-ok").await;
     let upload = seed_upload(&app, user, "image", None).await;
+    app.seed_attestation(user, upload).await;
 
     let res = post_job(&app, &token, json!({ "upload_id": upload })).await;
     assert_problem(
@@ -452,6 +458,7 @@ async fn concurrency_cap_is_429_pf3008() {
     let (user_b, token_b) = authed_user(&app, "quota-held").await;
     let upload_b = seed_upload(&app, user_b, "image", None).await;
     seed_job(&app, user_b, upload_b, "image", "held").await;
+    app.seed_attestation(user_b, upload_b).await;
     let res = post_job(&app, &token_b, json!({ "upload_id": upload_b })).await;
     assert_problem(
         &res,
@@ -552,6 +559,7 @@ async fn quota_headers_agree_with_profile_snapshot() {
     let (user, token) = authed_user(&app, "quota-agree").await;
     seed_usage(&app, user, 3, 0).await;
     let upload = seed_upload(&app, user, "image", None).await;
+    app.seed_attestation(user, upload).await;
 
     // The profile snapshot: 10 - 3 = 7 images remaining.
     let res = app

@@ -3,6 +3,7 @@
 
 pub mod abuse;
 pub mod api_keys;
+pub mod attestation;
 pub mod audit;
 pub mod checksum;
 pub mod clock;

@@ -460,6 +460,25 @@ impl TestApp {
         .await
         .expect("harness: grant_plan inserts");
     }
+
+    /// Capture an ownership attestation for the user's upload
+    /// (P1-094): the job-create gate requires one, so tests
+    /// that expect the stub's 501 after a quota allow attest
+    /// first. Captures as `web` from a TEST-NET-3 address —
+    /// the stored value is the address's hash, never the
+    /// address (NFR-42).
+    pub async fn seed_attestation(&self, user_id: Uuid, upload_id: Uuid) {
+        detag_core::attestation::capture(
+            &self.pool,
+            user_id,
+            upload_id,
+            detag_core::attestation::CURRENT_TEXT_VERSION,
+            "203.0.113.7",
+            detag_core::attestation::Client::Web,
+        )
+        .await
+        .expect("harness: seed_attestation captures");
+    }
 }
 
 /// `spawn_app()` — the spec's name for [`TestApp::spawn`].
