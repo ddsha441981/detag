@@ -11,15 +11,16 @@
 //! /v1/admin/billing/catalog-sync`; P1-071: `POST
 //! /v1/admin/billing/subscriptions/{id}/cancel`; P1-081:
 //! `GET /v1/admin/usage/{id}` + `/export`; P1-088: `GET
-//! /v1/admin/audit`), so the walk
-//! now covers 12 live routes and 11 stubs. The three tests:
+//! /v1/admin/audit`; P1-090: `GET /v1/admin/abuse-reports`
+//! and `POST /v1/admin/abuse-reports/{id}/resolve`), so the
+//! walk now covers 14 live routes and 9 stubs. The three tests:
 //!
 //! - `admin_guard_on_every_route` — the walk: all 23 admin
 //!   routes × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key). Anonymous is 401
 //!   `PF-1001`, a wrong role or a key is 403 `PF-1002`, an
-//!   admitted role is 200 on the 12 live routes and 501
-//!   `PF-5004` on the 11 stubs — except the catalog sync,
+//!   admitted role is 200 on the 14 live routes and 501
+//!   `PF-5004` on the 9 stubs — except the catalog sync,
 //!   whose admitted admin gets 503 `PF-5005` (billing is
 //!   unconfigured in the test environment: no Stripe key).
 //!   A route that answers 501 to an
@@ -163,6 +164,21 @@ async fn create_key(app: &TestApp, token: &str) -> String {
         .await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
     res.json()["secret"].as_str().unwrap().to_string()
+}
+
+/// Seed one open intake-style report; return its id. The
+/// resolve row in the walk needs a real report to reach 200
+/// (an unknown id is 404). The report names no job and no
+/// user (a general-abuse filing), so only `dismiss` /
+/// `start_review` apply to it.
+async fn seed_report(app: &TestApp) -> Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO abuse_reports (reporter_contact, reason, status) \
+         VALUES ('reporter@example.com', 'guard probe report', 'open') RETURNING id",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .expect("seed abuse report")
 }
 
 /// Seed an active Pro subscription for the user; return its
@@ -395,13 +411,13 @@ const GUARD_ROWS: &[GuardRow] = &[
     GuardRow {
         method: "GET",
         path: "/v1/admin/abuse-reports",
-        live: false,
+        live: true,
         read: true,
     },
     GuardRow {
         method: "POST",
         path: "/v1/admin/abuse-reports/{id}/resolve",
-        live: false,
+        live: true,
         read: false,
     },
     GuardRow {
@@ -453,6 +469,10 @@ async fn admin_guard_on_every_route() {
     // The usage rows need a real user id to reach 200 (an
     // unknown id is 404): any registered user works.
     let (usage_target, _) = make_role(&app, &unique_email("target-u"), "user").await;
+    // The resolve row needs a real open report to reach 200
+    // (an unknown id is 404): seed one, dismissed by the
+    // admitted admin probe.
+    let resolve_target = seed_report(&app).await;
 
     for row in GUARD_ROWS {
         // The target + body the row needs when the caller
@@ -477,6 +497,14 @@ async fn admin_guard_on_every_route() {
             // admitted caller to reach 200 (an unknown id
             // is 404, not 200).
             "/v1/admin/usage/{id}" | "/v1/admin/usage/{id}/export" => (Some(usage_target), None),
+            // The resolve row needs a real open report id +
+            // a dismiss body for the admitted caller to
+            // reach 200 (an unknown id is 404, an empty body
+            // is 422).
+            "/v1/admin/abuse-reports/{id}/resolve" => (
+                Some(resolve_target),
+                Some(json!({ "action": "dismiss", "reason": "guard probe" })),
+            ),
             // The plans PUT needs a valid body for the
             // admitted caller to reach 200: the empty edit
             // is a no-op 200 on the shared harness DB (P1-056).

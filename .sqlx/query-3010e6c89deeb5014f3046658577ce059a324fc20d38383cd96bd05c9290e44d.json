@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO abuse_reports (job_id, reporter_contact, reason, status)\n           VALUES ($1, $2, $3, 'open')\n           RETURNING id, user_id, reporter_contact, job_id, reason, status,\n                     resolution, notes, created_at, updated_at",
+  "query": "UPDATE abuse_reports\n           SET status = 'resolved', resolution = $2, notes = $3,\n               resolved_at = now(), resolved_by = $4, updated_at = now()\n           WHERE id = $1 AND status IN ('open', 'reviewing')\n           RETURNING id, user_id, reporter_contact, job_id, reason, status,\n                     resolution, notes, created_at, updated_at, resolved_at,\n                     resolved_by",
   "describe": {
     "columns": [
       {
@@ -112,13 +112,36 @@
             "name": "updated_at"
           }
         }
+      },
+      {
+        "ordinal": 10,
+        "name": "resolved_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "abuse_reports",
+            "name": "resolved_at"
+          }
+        }
+      },
+      {
+        "ordinal": 11,
+        "name": "resolved_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "abuse_reports",
+            "name": "resolved_by"
+          }
+        }
       }
     ],
     "parameters": {
       "Left": [
         "Uuid",
         "Text",
-        "Text"
+        "Text",
+        "Uuid"
       ]
     },
     "nullable": [
@@ -131,8 +154,10 @@
       true,
       true,
       false,
-      false
+      false,
+      true,
+      true
     ]
   },
-  "hash": "d57a52b1a46f7be1a1c4a83dddd637c48a0fd3630ccd2e582a9b1efdc3f0d0f9"
+  "hash": "3010e6c89deeb5014f3046658577ce059a324fc20d38383cd96bd05c9290e44d"
 }
