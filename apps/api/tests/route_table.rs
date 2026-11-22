@@ -5,7 +5,7 @@
 //! path a request takes):
 //!
 //! 1. The table itself has no duplicate (method, path) pairs
-//!    and has the 74 entries the route table lists (auth 21 +
+//!    and has the 75 entries the route table lists (auth 22 +
 //!    uploads 4 + jobs 9 + billing 12 + admin 26 — the 25
 //!    `/v1/admin/*` routes plus the public `POST /v1/abuse`
 //!    intake — + meta 2).
@@ -105,15 +105,15 @@ fn route_table_has_no_duplicates() {
     }
     assert_eq!(
         ROUTE_TABLE.len(),
-        74,
-        "ROUTE_TABLE must list the spec's 74 routes (auth 21 + uploads 4 + jobs 9 + billing 12 + admin 26 + meta 2)"
+        75,
+        "ROUTE_TABLE must list the spec's 75 routes (auth 22 + uploads 4 + jobs 9 + billing 12 + admin 26 + meta 2)"
     );
 }
 
 #[tokio::test]
 async fn every_table_entry_resolves_to_the_stub() {
     let router = test_router();
-    // The probes send 72 /v1 requests in one burst through the
+    // The probes send 73 /v1 requests in one burst through the
     // rate limiter (P0-103). They use a per-run XFF address so
     // they never share the oneshot "unknown" bucket with the
     // other test binaries running in parallel — the aggregate
@@ -254,7 +254,7 @@ async fn every_table_entry_resolves_to_the_stub() {
         // /v1/billing/invoices, and P1-071 POST
         // /v1/admin/billing/subscriptions/{id}/cancel, and
         // P1-080 GET /v1/usage, and P1-095 POST
-        // /v1/me/consent: real
+        // /v1/me/consent, and P1-096 GET /v1/me/onboarding: real
         // handlers behind an
         // auth extractor — the probe sends no credential, so
         // the extractor rejects with 401 PF-1001 (not 501)
@@ -262,6 +262,7 @@ async fn every_table_entry_resolves_to_the_stub() {
         // handler's own test covers its success paths).
         if ((*method == "GET" || *method == "PATCH" || *method == "DELETE") && *path == "/v1/me")
             || (*method == "POST" && *path == "/v1/me/consent")
+            || (*method == "GET" && *path == "/v1/me/onboarding")
             || (*method == "POST"
                 && (*path == "/v1/admin/users/{id}/suspend"
                     || *path == "/v1/admin/users/{id}/restore"

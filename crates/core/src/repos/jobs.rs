@@ -192,6 +192,25 @@ pub async fn list_by_user(
     .map_err(RepoError::from_sqlx)
 }
 
+/// The earliest job a user ever created (`None` when they
+/// have none). The onboarding checklist (P1-096) reads this
+/// as the `first_job` step's completion time: the step is
+/// done exactly when a first row exists, and `MIN(created_at)`
+/// is when it completed. No status filter — a held, cancelled
+/// or failed job still proves the user did the action once.
+pub async fn first_created_at_for_user(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+) -> Result<Option<DateTime<Utc>>, RepoError> {
+    sqlx::query_scalar!(
+        "SELECT MIN(created_at) FROM jobs WHERE user_id = $1",
+        user_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
 /// Newest-first page of one key's jobs (P1-038). `limit` caps
 /// the page. This is the attribution read: a key's jobs, and
 /// only that key's — the usage endpoints filter by key through

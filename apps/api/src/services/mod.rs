@@ -20,6 +20,7 @@ pub mod entitlements;
 pub mod invoices;
 pub mod login;
 pub mod logout;
+pub mod onboarding;
 pub mod password;
 pub mod password_reset;
 pub mod plan_changes;

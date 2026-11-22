@@ -261,6 +261,27 @@ pub async fn count_live_for_user(
     Ok(row.count)
 }
 
+/// The earliest API key a user ever created (`None` when
+/// they have none). The onboarding checklist (P1-096) reads
+/// this as the `create_api_key` step's completion time: the
+/// step is done exactly when a first row exists, and
+/// `MIN(created_at)` is when it completed. No live filter —
+/// a revoked or expired key still proves the user did the
+/// action once; revocation is lifecycle, not un-completion
+/// (ASSUMPTION-057).
+pub async fn first_created_at_for_user(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+) -> Result<Option<DateTime<Utc>>, RepoError> {
+    sqlx::query_scalar!(
+        "SELECT MIN(created_at) FROM api_keys WHERE user_id = $1",
+        user_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
 /// Lock a user's row for a key change (create / rotate /
 /// revoke): `SELECT ... FOR UPDATE` serialises concurrent
 /// creates for the same user, so the cap check + insert in
