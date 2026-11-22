@@ -338,6 +338,9 @@ pub struct ResolveOutcome {
 const QUEUE_STATUSES: [&str; 3] = ["open", "reviewing", "resolved"];
 
 /// List one page of the queue: the optional status filter,
+/// the optional user filter (P1-098 — the attestation
+/// review queue links here per user; `None` lists every
+/// report, an unknown user is an empty page, not a 404),
 /// the clamped limit, the decoded cursor. Fetches `limit +
 /// 1` rows so the page knows whether a next page exists.
 /// An unknown `status` is 422 (a list filter that names no
@@ -347,6 +350,7 @@ const QUEUE_STATUSES: [&str; 3] = ["open", "reviewing", "resolved"];
 pub async fn list_abuse_queue(
     state: &AppState,
     status: Option<String>,
+    user_id: Option<Uuid>,
     limit: Option<u32>,
     cursor: Option<String>,
 ) -> Result<AbuseQueuePage, AbuseQueueError> {
@@ -372,12 +376,13 @@ pub async fn list_abuse_queue(
         None => None,
     };
     let now = state.clock.now();
-    let rows = abuse_reports::list_filtered(&state.pool, status.as_deref(), cursor, limit + 1)
-        .await
-        .map_err(|err| {
-            tracing::error!(error = ?err, "abuse queue: list failed");
-            AbuseQueueError::Internal
-        })?;
+    let rows =
+        abuse_reports::list_filtered(&state.pool, status.as_deref(), user_id, cursor, limit + 1)
+            .await
+            .map_err(|err| {
+                tracing::error!(error = ?err, "abuse queue: list failed");
+                AbuseQueueError::Internal
+            })?;
     let page = Page::from_window(rows, limit, |row| Cursor {
         ts: row.created_at.timestamp_millis(),
         id: row.id,

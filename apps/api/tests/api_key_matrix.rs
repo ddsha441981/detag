@@ -187,7 +187,7 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow { method: "GET", path: "/v1/admin/audit", outcome: KeyOutcome::Forbidden, note: "live handler (P1-088) behind AdminReadContext; the extractor rejects keys first" },
     MatrixRow { method: "GET", path: "/v1/admin/abuse-reports", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
     MatrixRow { method: "POST", path: "/v1/admin/abuse-reports/{id}/resolve", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
-    MatrixRow { method: "GET", path: "/v1/admin/attestations", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
+    MatrixRow { method: "GET", path: "/v1/admin/attestations", outcome: KeyOutcome::Forbidden, note: "live handler (P1-098) behind AdminReadContext; the extractor rejects keys first" },
     MatrixRow { method: "GET", path: "/v1/admin/system", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
     MatrixRow { method: "POST", path: "/v1/abuse", outcome: KeyOutcome::Ignored, note: "public by design — abuse intake takes no credential; the handler validates the body (P1-089)" },
 ];

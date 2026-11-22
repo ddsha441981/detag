@@ -59,11 +59,11 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::{Config, SwaggerUi, Url};
 
 use crate::routes::admin::{
-    __path_abuse_intake, __path_admin_abuse_queue_handler, __path_admin_audit_handler,
-    __path_admin_usage_export_handler, __path_admin_usage_handler, __path_cancel_subscription,
-    __path_catalog_sync_handler, __path_impersonate, __path_list_jobs_handler,
-    __path_list_plans_handler, __path_resolve_abuse_report_handler, __path_restore,
-    __path_search_users_handler, __path_suspend, __path_terminate_user_handler,
+    __path_abuse_intake, __path_admin_abuse_queue_handler, __path_admin_attestations_handler,
+    __path_admin_audit_handler, __path_admin_usage_export_handler, __path_admin_usage_handler,
+    __path_cancel_subscription, __path_catalog_sync_handler, __path_impersonate,
+    __path_list_jobs_handler, __path_list_plans_handler, __path_resolve_abuse_report_handler,
+    __path_restore, __path_search_users_handler, __path_suspend, __path_terminate_user_handler,
     __path_update_plans_handler, __path_warn_user_handler,
 };
 use crate::routes::api_keys::{
@@ -90,6 +90,7 @@ use crate::services::admin::{
 use crate::services::admin_abuse_queue::{
     AbuseQueuePage, AbuseReportItem, ResolveAbuseReportRequest,
 };
+use crate::services::admin_attestations::{AttestationItem, AttestationsPage};
 use crate::services::admin_audit::{AuditLogItem, AuditPage};
 use crate::services::admin_plans::{
     PlanEdit, PlanEntitlementsEdit, PlanView, PlansResponse, UpdatePlansRequest,
@@ -121,7 +122,7 @@ use crate::AppState;
         version = "1.0.0",
         description = "Detag — watermark removal for images and videos you own. All errors are RFC 7807 problem+json with a stable PF-code (see the Problem schema)."
     ),
-    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, refresh, logout, logout_all, forgot_password, reset_password, get_me, patch_me, delete_me, accept_consent, get_onboarding, list_sessions, delete_session, create_api_key, rotate_api_key, revoke_api_key, suspend, restore, warn_user_handler, terminate_user_handler, search_users_handler, list_jobs_handler, impersonate, list_plans_handler, update_plans_handler, catalog_sync_handler, cancel_subscription, admin_usage_handler, admin_usage_export_handler, admin_audit_handler, admin_abuse_queue_handler, resolve_abuse_report_handler, abuse_intake, create_checkout, create_portal, list_invoices, get_usage, receive_stripe_webhook, receive_razorpay_webhook),
+    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, refresh, logout, logout_all, forgot_password, reset_password, get_me, patch_me, delete_me, accept_consent, get_onboarding, list_sessions, delete_session, create_api_key, rotate_api_key, revoke_api_key, suspend, restore, warn_user_handler, terminate_user_handler, search_users_handler, list_jobs_handler, impersonate, list_plans_handler, update_plans_handler, catalog_sync_handler, cancel_subscription, admin_usage_handler, admin_usage_export_handler, admin_audit_handler, admin_abuse_queue_handler, resolve_abuse_report_handler, admin_attestations_handler, abuse_intake, create_checkout, create_portal, list_invoices, get_usage, receive_stripe_webhook, receive_razorpay_webhook),
     components(schemas(
         Problem,
         Readiness,
@@ -170,6 +171,8 @@ use crate::AppState;
         AbuseQueuePage,
         AbuseReportItem,
         ResolveAbuseReportRequest,
+        AttestationsPage,
+        AttestationItem,
         AbuseIntakeRequest,
         AbuseReportResponse,
         EnforcementResponse,

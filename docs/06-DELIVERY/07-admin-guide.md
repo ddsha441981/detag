@@ -81,7 +81,7 @@ views — and neither are denials, 404s, or 501 stubs.
 | GET | `/v1/admin/audit` | `admin.audit.read` | admin, support | live | — |
 | GET | `/v1/admin/abuse-reports` | `admin.abuse.read` | admin, support | live | — |
 | POST | `/v1/admin/abuse-reports/{id}/resolve` | `admin.abuse.write` | admin | live | `admin.abuse_reports.resolved` (+ `abuse.report_reviewing` / `user.suspended`) |
-| GET | `/v1/admin/attestations` | `admin.attestations.read` | admin, support | stub | — |
+| GET | `/v1/admin/attestations` | `admin.attestations.read` | admin, support | live | — |
 | GET | `/v1/admin/system` | `admin.system.read` | admin, support | stub | — |
 
 Notes on the live routes:
@@ -173,6 +173,22 @@ Notes on the live routes:
   already-resolved report is a 200 no-op; `reject_job` needs
   a job on the report and `suspend_user` needs a user (both
   422 otherwise).
+
+- **Attestation review** (P1-098): `GET
+  /v1/admin/attestations` lists newest first, `?flagged=`
+  filters to flagged rows only (`true`), unflagged only
+  (`false`), or all rows (absent — any other value is 422).
+  Every item carries `velocity_count` (the user's
+  attestation count in the 24 h window ending at that row's
+  `created_at`), `flagged` (the count exceeds 10),
+  `flag_reasons` (`["velocity"]` when flagged, `[]`
+  otherwise), and `abuse_queue_url` (the abuse queue for
+  that user). The flag is a review signal, never a block —
+  the queue only surfaces rows for a human to open next to
+  the abuse queue; there is no resolve/flag action in v1
+  (read-model only). The `user_id` filter on `GET
+  /v1/admin/abuse-reports` is what the link lands on: an
+  unknown user is an empty page, a malformed uuid is 422.
 
 ## The audit trail
 

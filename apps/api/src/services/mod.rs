@@ -6,6 +6,7 @@
 pub mod abuse_intake;
 pub mod admin;
 pub mod admin_abuse_queue;
+pub mod admin_attestations;
 pub mod admin_audit;
 pub mod admin_plans;
 pub mod admin_usage;

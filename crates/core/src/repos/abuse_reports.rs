@@ -149,14 +149,20 @@ pub async fn by_id(
 /// same `date_trunc('milliseconds', ...)` comparison, because
 /// the cursor carries Unix milliseconds). `status` filters to
 /// one queue state (`open` | `reviewing` | `resolved`) when
-/// given — `None` lists the whole queue. The caller validates
-/// the status value (an unknown one is a 422, never an empty
-/// page) and range-checks the cursor's `ts` first (the repo's
+/// given — `None` lists the whole queue. `user_id` filters
+/// to reports naming that user (P1-098: the attestation
+/// review queue links here per user) — `None` lists every
+/// report; an unknown user is an empty page, not a 404 (a
+/// list never 404s on its filter — the P1-088 audit
+/// precedent). The caller validates the status value (an
+/// unknown one is a 422, never an empty page) and
+/// range-checks the cursor's `ts` first (the repo's
 /// `from_timestamp_millis(...).expect(...)` would panic on an
 /// out-of-range `ts` — the P1-088 adoption-review lesson).
 pub async fn list_filtered(
     pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     status: Option<&str>,
+    user_id: Option<Uuid>,
     cursor: Option<Cursor>,
     limit: u32,
 ) -> Result<Vec<AbuseReport>, RepoError> {
@@ -171,10 +177,12 @@ pub async fn list_filtered(
                           resolved_by
                    FROM abuse_reports
                    WHERE ($1::text IS NULL OR status = $1)
-                     AND (date_trunc('milliseconds', created_at), id) < ($2, $3)
+                     AND ($2::uuid IS NULL OR user_id = $2)
+                     AND (date_trunc('milliseconds', created_at), id) < ($3, $4)
                    ORDER BY date_trunc('milliseconds', created_at) DESC, id DESC
-                   LIMIT $4"#,
+                   LIMIT $5"#,
                 status,
+                user_id,
                 cursor_ts,
                 cursor.id,
                 limit as i64,
@@ -190,9 +198,11 @@ pub async fn list_filtered(
                       resolved_by
                FROM abuse_reports
                WHERE ($1::text IS NULL OR status = $1)
+                 AND ($2::uuid IS NULL OR user_id = $2)
                ORDER BY date_trunc('milliseconds', created_at) DESC, id DESC
-               LIMIT $2"#,
+               LIMIT $3"#,
             status,
+            user_id,
             limit as i64,
         )
         .fetch_all(pool)
