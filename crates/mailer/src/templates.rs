@@ -47,7 +47,7 @@ use crate::error::MailError;
 /// ("reset-password" is `password-reset`, "new-login" is
 /// `new-login-digest`, "lockout" is `lockout-notice`); the
 /// spec's "password-changed" and "verification-thanks" have no
-/// template because no api service enqueues them — the nineteen
+/// template because no api service enqueues them — the twenty
 /// names here are the contract, and the snapshots cover all of
 /// them. P1-064 adds the three subscription lifecycle mails
 /// (`subscription-welcome` / `subscription-dunning` /
@@ -68,7 +68,11 @@ use crate::error::MailError;
 /// service (warning + termination) and by both suspension
 /// paths (the P1-008 admin suspend and the P1-090 queue
 /// suspend) — one mail per ladder step, addressed to the
-/// user on record.
+/// user on record. P1-097 adds the welcome mail (`welcome`),
+/// enqueued by the verification service when a registration
+/// token is consumed — one mail per verified account, with
+/// the quickstart link and the compliance-approved
+/// quality-promise line (no invisible-watermark claims).
 pub const TEMPLATES: &[&str] = &[
     "verify-email",
     "email-change-verify",
@@ -89,6 +93,7 @@ pub const TEMPLATES: &[&str] = &[
     "enforcement-warning",
     "enforcement-suspension",
     "enforcement-termination",
+    "welcome",
 ];
 
 /// A rendered mail: subject + plain-text body + HTML body.
@@ -163,6 +168,7 @@ impl TemplateEngine {
         add!("enforcement-warning");
         add!("enforcement-suspension");
         add!("enforcement-termination");
+        add!("welcome");
         Ok(Self { tera })
     }
 
@@ -347,6 +353,58 @@ mod tests {
             "digest must name the revoked count:\n{}",
             rendered.text_body
         );
+    }
+
+    #[test]
+    fn welcome_carries_the_quickstart_link_and_the_honest_promise() {
+        // P1-097, AC "copy passes honesty rule"
+        // (05-compliance-aup.md §6): the one-liner is the
+        // compliance-approved sentence — visible marks only,
+        // with a verifiable no-quality-loss report — and
+        // nothing in the copy claims invisible-watermark
+        // removal, undetectability, or defeating SynthID.
+        let engine = TemplateEngine::new().expect("templates compile");
+        let rendered = engine.render("welcome", &ctx()).expect("welcome renders");
+        assert_eq!(rendered.subject, "Welcome to Detag");
+        assert!(
+            rendered
+                .text_body
+                .contains("http://localhost:8080/quickstart"),
+            "welcome mail must link the quickstart:\n{}",
+            rendered.text_body
+        );
+        assert!(
+            rendered
+                .text_body
+                .contains("removes visible marks from AI media you own, with a verifiable no-quality-loss report"),
+            "welcome mail must carry the approved quality promise:\n{}",
+            rendered.text_body
+        );
+        assert!(
+            rendered
+                .html_body
+                .contains("http://localhost:8080/quickstart"),
+            "html body must carry the same quickstart link:\n{}",
+            rendered.html_body
+        );
+        for forbidden in ["invisible", "undetectable", "SynthID", "defeats"] {
+            assert!(
+                !rendered
+                    .text_body
+                    .to_lowercase()
+                    .contains(&forbidden.to_lowercase()),
+                "welcome text must not claim {forbidden}:\n{}",
+                rendered.text_body
+            );
+            assert!(
+                !rendered
+                    .html_body
+                    .to_lowercase()
+                    .contains(&forbidden.to_lowercase()),
+                "welcome html must not claim {forbidden}:\n{}",
+                rendered.html_body
+            );
+        }
     }
 
     #[test]

@@ -812,6 +812,64 @@ async fn drain_sends_abuse_report_ack_to_the_reporter() {
 }
 
 #[tokio::test]
+async fn drain_sends_welcome_mail_with_quickstart_link() {
+    // P1-097: the welcome mail resolves the recipient from
+    // the user row (payload `{user_id}`), renders the
+    // quickstart link and the honest quality-promise line,
+    // and is marked sent — one drain pass, no duplicate.
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let user_id = make_user(&ctx, "heidi@example.com").await;
+    let id = enqueue(
+        &ctx,
+        "heidi@example.com",
+        "welcome",
+        json!({ "user_id": user_id }),
+    )
+    .await;
+    let now = Utc::now();
+
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &drain_config(), now)
+        .await
+        .expect("drain pass succeeds");
+    assert_eq!(outcome.claimed, 1);
+    assert_eq!(outcome.sent, 1);
+    assert_eq!(outcome.transient_failed, 0);
+    assert_eq!(outcome.permanent_failed, 0);
+
+    let sent = transport.sent();
+    assert_eq!(sent.len(), 1, "exactly one mail sent");
+    assert_eq!(sent[0].to, "heidi@example.com");
+    assert_eq!(sent[0].subject, "Welcome to Detag");
+    assert!(
+        sent[0]
+            .text_body
+            .contains("http://localhost:8080/quickstart"),
+        "the welcome mail links the quickstart:\n{}",
+        sent[0].text_body
+    );
+    assert!(
+        sent[0].text_body.contains(
+            "removes visible marks from AI media you own, with a verifiable no-quality-loss report"
+        ),
+        "the welcome mail carries the honest quality promise:\n{}",
+        sent[0].text_body
+    );
+
+    assert!(
+        email_outbox::unsent_for_template(&ctx.pool, "welcome")
+            .await
+            .expect("read back")
+            .iter()
+            .all(|r| r.id != id),
+        "the sent row must not be unsent anymore"
+    );
+
+    ctx.close().await;
+}
+
+#[tokio::test]
 async fn drain_parks_abuse_ack_with_bad_data() {
     // P1-089: an ack naming a report that does not exist, an
     // ack whose `to_hash` names a different address, and an

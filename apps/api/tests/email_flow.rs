@@ -642,10 +642,26 @@ async fn verify_flow_end_to_end_over_fake_smtp() {
         .expect("user row exists");
     assert!(user.email_verified_at.is_some(), "verified_at is set");
     // The row is marked sent: a second pass sends nothing.
+    // P1-097: the verify enqueues the welcome mail, so the
+    // second pass claims + sends exactly that one row — and
+    // the delivered mail is the welcome, not a second verify.
+    let outcome = drain_to_fake_smtp(&app, &smtp).await;
+    assert_eq!(outcome.claimed, 1, "the drain claims the welcome mail");
+    assert_eq!(outcome.sent, 1, "the drain sends it");
+    assert_eq!(outcome.transient_failed, 0);
+    assert_eq!(outcome.permanent_failed, 0);
+    assert_eq!(smtp.mails().len(), 2, "verify + welcome delivered");
+    let welcome = qp_decode(&smtp.mails()[1]);
+    assert_delivered_mail(&welcome, &email, "Welcome to Detag", None);
+    assert!(
+        welcome.contains("http://localhost:8080/quickstart"),
+        "the welcome links the quickstart:\n{welcome}"
+    );
+    // Both rows are marked sent: a third pass sends nothing.
     let outcome = drain_to_fake_smtp(&app, &smtp).await;
     assert_eq!(outcome.claimed, 0, "nothing left to claim");
     assert_eq!(outcome.sent, 0);
-    assert_eq!(smtp.mails().len(), 1, "no duplicate delivery");
+    assert_eq!(smtp.mails().len(), 2, "no duplicate delivery");
     smtp.stop();
     ctx.close().await;
 }

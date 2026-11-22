@@ -1,0 +1,9 @@
+Hi,
+
+Welcome to {{ app_name }} — your email is verified and your account is ready.
+
+{{ app_name }} removes visible marks from AI media you own, with a verifiable no-quality-loss report.
+
+Get started in a few minutes: {{ base_url }}/quickstart
+
+— The {{ app_name }} team
