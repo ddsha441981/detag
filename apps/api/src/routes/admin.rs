@@ -66,6 +66,7 @@ use crate::{
             list_abuse_queue, resolve_abuse_report, AbuseQueueError, AbuseQueuePage,
             AbuseReportItem, ResolveAbuseReportRequest,
         },
+        admin_attestations::{list_attestations, AttestationReviewError, AttestationsPage},
         admin_audit::{list_audit, AdminAuditError, AuditPage},
         admin_plans::{
             list_plans, update_plans, PlanEditorError, PlanView, PlansResponse, UpdatePlansRequest,
@@ -1024,12 +1025,17 @@ pub async fn admin_audit_handler(
 /// Query params for `GET /v1/admin/abuse-reports`
 /// (P1-090): all optional. `status` filters to one queue
 /// state (`open` | `reviewing` | `resolved` — an unknown
-/// value is 422, not an empty page); `limit` clamps to
-/// 1..=100 (default 20); `cursor` is the opaque keyset from
-/// the previous page.
+/// value is 422, not an empty page); `user_id` filters to
+/// reports naming that user (P1-098 — the attestation
+/// review queue links here per user; an unknown user is an
+/// empty page, not a 404; a malformed uuid is 422 via the
+/// `Query` extractor); `limit` clamps to 1..=100 (default
+/// 20); `cursor` is the opaque keyset from the previous
+/// page.
 #[derive(Debug, Deserialize)]
 pub struct AbuseQueueQuery {
     pub status: Option<String>,
+    pub user_id: Option<Uuid>,
     pub limit: Option<u32>,
     pub cursor: Option<String>,
 }
@@ -1071,7 +1077,15 @@ pub async fn admin_abuse_queue_handler(
     Query(params): Query<AbuseQueueQuery>,
 ) -> Response {
     let request_id = Some(id.0.as_str());
-    match list_abuse_queue(&state, params.status, params.limit, params.cursor).await {
+    match list_abuse_queue(
+        &state,
+        params.status,
+        params.user_id,
+        params.limit,
+        params.cursor,
+    )
+    .await
+    {
         Ok(page) => Json(page).into_response(),
         Err(AbuseQueueError::InvalidStatus | AbuseQueueError::InvalidCursor) => ProblemResponse(
             AppError::ValidationFailed.to_problem(Profile::Production, request_id, None),
@@ -1179,6 +1193,77 @@ pub async fn resolve_abuse_report_handler(
         ))
         .into_response(),
         Err(AbuseQueueError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
+/// Query params for `GET /v1/admin/attestations`
+/// (P1-098): all optional. `flagged` filters to flagged
+/// rows only (`true`), unflagged only (`false`), or all
+/// rows (absent — any other value is 422, not an empty
+/// page); `limit` clamps to 1..=100 (default 20); `cursor`
+/// is the opaque keyset from the previous page.
+#[derive(Debug, Deserialize)]
+pub struct AttestationsQuery {
+    pub flagged: Option<String>,
+    pub limit: Option<u32>,
+    pub cursor: Option<String>,
+}
+
+/// GET /v1/admin/attestations (P1-098): one page of the
+/// attestation review queue, newest first. Admin + support
+/// (the read-only role) may call it; a verified plain user
+/// gets 403 `PF-1002` from the extractor, no credential
+/// gets 401 `PF-1001`, an API key gets 403. Answers the
+/// api-spec pagination shape (`{"items": [...],
+/// "next_cursor": "..."}` — `next_cursor` omitted on the
+/// last page). Every item carries the velocity flag:
+/// `velocity_count` (the user's attestation count in the
+/// 24 h window ending at that row's `created_at`),
+/// `flagged` (the count exceeds 10), `flag_reasons`
+/// (`["velocity"]` when flagged, `[]` otherwise), and
+/// `abuse_queue_url` (the abuse queue for that user, a
+/// relative reference). An unknown `flagged` value or a
+/// tampered cursor is 422 `PF-2002`. No audit row (a read
+/// creates nothing).
+#[utoipa::path(
+    get,
+    path = "/v1/admin/attestations",
+    params(
+        ("flagged" = Option<String>, Query, description = "Only flagged rows (true), only unflagged rows (false), or all rows when absent"),
+        ("limit" = Option<u32>, Query, description = "Page size, clamped to 1..=100 (default 20)"),
+        ("cursor" = Option<String>, Query, description = "Opaque keyset from the previous page's next_cursor")
+    ),
+    responses(
+        (status = 200, description = "One page of attestations, newest first", body = AttestationsPage),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified plain user, or an API key)", body = Problem),
+        (status = 422, description = "Unknown flagged filter or tampered cursor", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn admin_attestations_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    _admin: AdminReadContext,
+    Query(params): Query<AttestationsQuery>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    match list_attestations(&state, params.flagged, params.limit, params.cursor).await {
+        Ok(page) => Json(page).into_response(),
+        Err(AttestationReviewError::InvalidFlagged | AttestationReviewError::InvalidCursor) => {
+            ProblemResponse(AppError::ValidationFailed.to_problem(
+                Profile::Production,
+                request_id,
+                None,
+            ))
+            .into_response()
+        }
+        Err(AttestationReviewError::Internal) => {
+            tracing::error!("attestation review: list failed");
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
                 .into_response()
         }
@@ -1323,7 +1408,7 @@ pub fn router(state: AppState) -> Router<AppState> {
                     "/abuse-reports/{id}/resolve",
                     post(resolve_abuse_report_handler),
                 )
-                .route("/attestations", get(admin_read_stub))
+                .route("/attestations", get(admin_attestations_handler))
                 .route("/system", get(admin_read_stub))
                 .layer(middleware::from_fn_with_state(state, audit_admin_writes)),
         )

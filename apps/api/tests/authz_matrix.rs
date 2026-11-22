@@ -14,14 +14,14 @@
 //!   `Capability::for_route`, and the role table behind it
 //!   admits exactly admin + support on read rows and admin
 //!   only on write/impersonate rows.
-//! - `admin_matrix_live` — the live walk: the 14 live routes
+//! - `admin_matrix_live` — the live walk: the 17 live routes
 //!   × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key), asserting the status
 //!   the matrix predicts — 401 `PF-1001` with no credential,
 //!   403 `PF-1002` for a wrong role or a key ("no admin
 //!   ever"), 200 for an admitted role.
 //!
-//! The 9 stub rows are enforced promises since P1-043
+//! The 8 stub rows are enforced promises since P1-043
 //! (`admin_stub` / `admin_read_stub` — guard first, 501
 //! after): the live walk in `admin_guard.rs` asserts the
 //! guard (401 / 403 / 501) on every stub, and the handler
@@ -211,7 +211,7 @@ const MATRIX: &[MatrixRow] = &[
         method: "GET",
         path: "/v1/admin/attestations",
         capability: Capability::AdminAttestationsRead,
-        live: false,
+        live: true,
     },
     MatrixRow {
         method: "GET",
@@ -499,7 +499,7 @@ fn problem_code(res: &common::TestResponse) -> String {
 
 #[tokio::test]
 async fn admin_matrix_live() {
-    // The live walk: the 16 live rows × 5 caller kinds.
+    // The live walk: the 17 live rows × 5 caller kinds.
     // Order per row is anonymous → user → support → admin
     // → key, so the mutating admin call (suspend,
     // impersonate) runs last and cannot affect the earlier

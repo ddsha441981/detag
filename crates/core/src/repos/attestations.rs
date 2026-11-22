@@ -14,6 +14,7 @@
 //! first (the P1-045 IDOR rule).
 
 use super::error::RepoError;
+use crate::pagination::Cursor;
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
@@ -107,4 +108,107 @@ pub async fn by_id(
     .fetch_optional(pool)
     .await
     .map_err(RepoError::from_sqlx)
+}
+
+/// One attestation row as the P1-098 admin review queue
+/// lists it: the stored fields, verbatim, plus
+/// `velocity_count` — the user's attestation count in the
+/// 24 h window ending at this row's `created_at`
+/// (inclusive), computed by the window function in
+/// [`list_filtered`]. The window is row-relative, not
+/// read-time: a burst that happened last week still reads
+/// flagged when an admin pages back through history.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttestationRow {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub upload_id: Uuid,
+    pub text_version: String,
+    pub ip_hash: String,
+    pub client: String,
+    pub created_at: DateTime<Utc>,
+    pub velocity_count: i64,
+}
+
+/// List one page of the review queue (P1-098, FR-C-01):
+/// newest first, keyset-paginated over `(created_at, id)`
+/// with the same `date_trunc('milliseconds', created_at)`
+/// comparison as the audit / abuse queues (the P1-088
+/// precedent — the cursor carries milliseconds, the DB
+/// microsecond stamps). `flagged` filters to flagged rows
+/// only (`Some(true)`), unflagged only (`Some(false)`), or
+/// all rows (`None`); `threshold` is the velocity count a
+/// row must exceed to be flagged (the service's
+/// `VELOCITY_THRESHOLD`). The window function runs over the
+/// whole table before the outer filters, so the count is
+/// the user's full history, not just the page — the table
+/// is one row per attestation and small; if it ever grows
+/// large this query wants a targeted rework, not a silent
+/// narrowing of the window (ADR-0061).
+pub async fn list_filtered(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    flagged: Option<bool>,
+    threshold: i64,
+    cursor: Option<Cursor>,
+    limit: u32,
+) -> Result<Vec<AttestationRow>, RepoError> {
+    match cursor {
+        Some(cursor) => {
+            let cursor_ts = DateTime::from_timestamp_millis(cursor.ts)
+                .expect("a cursor ts is a valid Unix-millis timestamp");
+            sqlx::query_as!(
+                AttestationRow,
+                r#"SELECT id, user_id, upload_id, text_version, ip_hash, client,
+                          created_at, velocity_count AS "velocity_count!"
+                   FROM (
+                       SELECT id, user_id, upload_id, text_version, ip_hash, client,
+                              created_at,
+                              COALESCE(COUNT(*) OVER (
+                                  PARTITION BY user_id
+                                  ORDER BY created_at
+                                  RANGE BETWEEN INTERVAL '24 hours' PRECEDING
+                                            AND CURRENT ROW
+                              ), 0) AS velocity_count
+                       FROM attestations
+                   ) AS w
+                   WHERE ($1::boolean IS NULL OR (velocity_count > $2) = $1)
+                     AND (date_trunc('milliseconds', created_at), id) < ($3, $4)
+                   ORDER BY date_trunc('milliseconds', created_at) DESC, id DESC
+                   LIMIT $5"#,
+                flagged,
+                threshold,
+                cursor_ts,
+                cursor.id,
+                limit as i64,
+            )
+            .fetch_all(pool)
+            .await
+            .map_err(RepoError::from_sqlx)
+        }
+        None => sqlx::query_as!(
+            AttestationRow,
+            r#"SELECT id, user_id, upload_id, text_version, ip_hash, client,
+                      created_at, velocity_count AS "velocity_count!"
+               FROM (
+                   SELECT id, user_id, upload_id, text_version, ip_hash, client,
+                          created_at,
+                          COALESCE(COUNT(*) OVER (
+                              PARTITION BY user_id
+                              ORDER BY created_at
+                              RANGE BETWEEN INTERVAL '24 hours' PRECEDING
+                                        AND CURRENT ROW
+                          ), 0) AS velocity_count
+                   FROM attestations
+               ) AS w
+               WHERE ($1::boolean IS NULL OR (velocity_count > $2) = $1)
+               ORDER BY date_trunc('milliseconds', created_at) DESC, id DESC
+               LIMIT $3"#,
+            flagged,
+            threshold,
+            limit as i64,
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(RepoError::from_sqlx),
+    }
 }

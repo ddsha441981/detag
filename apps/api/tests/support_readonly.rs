@@ -21,7 +21,7 @@
 //!   and writes no audit row (the stub writes are 403 before
 //!   their 501, so they never run either).
 //! - `support_reads_stub_views` — support is admitted on
-//!   the 5 stub read routes too (501 `PF-5004`: the guard
+//!   the 4 stub read routes too (501 `PF-5004`: the guard
 //!   passed, the handler has not landed yet).
 //! - `support_matrix_is_read_only` — the matrix assert:
 //!   support is admitted exactly on the `.read`
@@ -315,13 +315,12 @@ const WRITE_ROWS: &[WriteRow] = &[
     },
 ];
 
-/// The 5 stub read routes (the live reads are covered by
+/// The 4 stub read routes (the live reads are covered by
 /// `support_reads_live_views`, which checks users/jobs/plans).
 const STUB_READ_ROWS: &[(&str, &str)] = &[
     ("GET", "/v1/admin/metrics/dashboard"),
     ("GET", "/v1/admin/dlq"),
     ("GET", "/v1/admin/flags"),
-    ("GET", "/v1/admin/attestations"),
     ("GET", "/v1/admin/system"),
 ];
 
@@ -545,7 +544,7 @@ async fn support_writes_forbidden_and_change_nothing() {
 
 #[tokio::test]
 async fn support_reads_stub_views() {
-    // Support is admitted on the 5 stub read routes too:
+    // Support is admitted on the 4 stub read routes too:
     // 501 `PF-5004` — the guard passed, the handler has not
     // landed yet. A 403 here would mean the role table lost
     // support on a read; a 200 would mean a stub answered.

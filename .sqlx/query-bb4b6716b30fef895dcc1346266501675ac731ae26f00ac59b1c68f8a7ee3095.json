@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, user_id, reporter_contact, job_id, reason, status,\n                          resolution, notes, created_at, updated_at, resolved_at,\n                          resolved_by\n                   FROM abuse_reports\n                   WHERE ($1::text IS NULL OR status = $1)\n                     AND (date_trunc('milliseconds', created_at), id) < ($2, $3)\n                   ORDER BY date_trunc('milliseconds', created_at) DESC, id DESC\n                   LIMIT $4",
+  "query": "SELECT id, user_id, reporter_contact, job_id, reason, status,\n                      resolution, notes, created_at, updated_at, resolved_at,\n                      resolved_by\n               FROM abuse_reports\n               WHERE ($1::text IS NULL OR status = $1)\n                 AND ($2::uuid IS NULL OR user_id = $2)\n               ORDER BY date_trunc('milliseconds', created_at) DESC, id DESC\n               LIMIT $3",
   "describe": {
     "columns": [
       {
@@ -139,7 +139,6 @@
     "parameters": {
       "Left": [
         "Text",
-        "Timestamptz",
         "Uuid",
         "Int8"
       ]
@@ -159,5 +158,5 @@
       true
     ]
   },
-  "hash": "a60bee4b15b24d5361a68e09079c47e4a0f4903722f1c6aa1c2bb448c9c74862"
+  "hash": "bb4b6716b30fef895dcc1346266501675ac731ae26f00ac59b1c68f8a7ee3095"
 }
