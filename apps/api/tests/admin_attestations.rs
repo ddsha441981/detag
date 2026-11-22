@@ -479,8 +479,12 @@ async fn admin_attestations_filters_and_pagination() {
     let burst_ids = seed_velocity_burst(&app, burst_user).await;
 
     // Cursor round-trip at limit 2: the walk stops once all
-    // eleven seeded ids are seen, newest first — the queue
-    // never ends after them, older rows sit below.
+    // eleven seeded ids are seen, newest first. A page that
+    // promises another page is full; the last page (no next
+    // cursor) may be short — on a fresh database the queue
+    // can end right after the burst (CI-FAIL-028: no older
+    // rows sit below until sibling tests seed theirs, so
+    // the old unconditional full-page assert failed here).
     let mut seen: Vec<String> = Vec::new();
     let mut cursor: Option<String> = None;
     for _ in 0..20 {
@@ -492,7 +496,16 @@ async fn admin_attestations_filters_and_pagination() {
         assert_eq!(res.status, StatusCode::OK, "{}", res.text());
         let body = res.json();
         let items = body["items"].as_array().expect("items");
-        assert_eq!(items.len(), 2, "a full page at limit 2: {}", res.text());
+        let next = body["next_cursor"].as_str().map(|s| s.to_string());
+        if next.is_some() {
+            assert_eq!(items.len(), 2, "a full page at limit 2: {}", res.text());
+        } else {
+            assert!(
+                !items.is_empty(),
+                "empty page while rows unseen: {}",
+                res.text()
+            );
+        }
         for item in items {
             seen.push(item["id"].as_str().unwrap().to_string());
         }
@@ -500,7 +513,7 @@ async fn admin_attestations_filters_and_pagination() {
         if wanted.iter().all(|id| seen.contains(id)) {
             break;
         }
-        cursor = body["next_cursor"].as_str().map(|s| s.to_string());
+        cursor = next;
         assert!(cursor.is_some(), "more pages while rows unseen");
     }
     let wanted: Vec<String> = burst_ids.iter().map(|id| id.to_string()).collect();
