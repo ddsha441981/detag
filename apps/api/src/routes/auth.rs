@@ -705,6 +705,7 @@ pub fn router() -> Router<AppState> {
                         .patch(super::profile::patch_me)
                         .delete(super::profile::delete_me),
                 )
+                .route("/consent", post(super::profile::accept_consent))
                 .route("/sessions", get(super::sessions::list_sessions))
                 .route("/sessions/{id}", delete(super::sessions::delete_session))
                 .route("/export", post(stub)),

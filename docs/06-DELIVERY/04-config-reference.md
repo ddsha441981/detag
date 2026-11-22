@@ -24,6 +24,7 @@
 | `PF_ARGON2_M_COST_KIB` | `65536` | api |
 | `PF_ARGON2_P_COST` | `4` | api |
 | `PF_ARGON2_T_COST` | `3` | api |
+| `PF_AUP_CURRENT_VERSION` | `v1` | api |
 | `PF_BILLING_DUNNING_DAY3_DAYS` | `3` | billing |
 | `PF_BILLING_DUNNING_DAY7_DAYS` | `7` | billing |
 | `PF_BILLING_DUNNING_ENABLED` | `true` | billing |

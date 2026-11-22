@@ -3,7 +3,10 @@
 //! GET returns the profile (id, email, display name,
 //! verification state, role, status) + the current plan +
 //! today's quota snapshot (from the entitlements service —
-//! the plan's daily limits against today's durable usage row).
+//! the plan's daily limits against today's durable usage row),
+//! and the consent section (P1-095: the accepted ToS and AUP
+//! versions, the current versions, and whether the user is up
+//! to date — the re-accept banner).
 //!
 //! PATCH sets the display name and/or records an email-change
 //! INTENT (`pending_email`): the address is validated (shape,
@@ -24,12 +27,13 @@
 //! a display name.
 
 use super::verification::{clear_email_change_tokens, issue_email_change};
-use super::{entitlements, register::is_disposable};
+use super::{consent::ConsentStatus, entitlements, register::is_disposable};
 use crate::AppState;
 use chrono::{DateTime, Utc};
 use detag_core::{
     audit::{record, NewAuditLog},
     checksum::sha256_hex,
+    config::Settings,
     db::PoolConfig,
     error::FieldError,
     repos::{
@@ -75,6 +79,11 @@ pub struct ProfileResponse {
     /// 30 days after this timestamp unless a login cancels it).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deleted_at: Option<DateTime<Utc>>,
+    /// The consent state (P1-095): the ToS + AUP versions the
+    /// user accepted, the versions current in config, and
+    /// whether the user is up to date — `up_to_date: false` is
+    /// the re-accept banner (POST /v1/me/consent clears it).
+    pub consent: ConsentStatus,
     /// When the account was created.
     pub created_at: DateTime<Utc>,
     /// The current plan (the live subscription's plan, else
@@ -205,7 +214,7 @@ pub async fn get_profile(state: &AppState, user: &User) -> Result<ProfileRespons
         tracing::error!(error = ?err, "profile: quota read failed");
         ProfileError::Internal
     })?;
-    Ok(profile_response(user, &plan, &quota))
+    Ok(profile_response(user, &plan, &quota, &state.settings))
 }
 
 /// PATCH /v1/me: set the display name and/or record an
@@ -385,13 +394,14 @@ pub async fn patch_profile(
         tracing::error!(error = ?err, "profile: quota read failed");
         ProfileError::Internal
     })?;
-    Ok(profile_response(&updated, &plan, &quota))
+    Ok(profile_response(&updated, &plan, &quota, &state.settings))
 }
 
 fn profile_response(
     user: &User,
     plan: &detag_core::repos::plans::Plan,
     quota: &entitlements::QuotaSnapshot,
+    settings: &Settings,
 ) -> ProfileResponse {
     ProfileResponse {
         id: user.id,
@@ -403,6 +413,7 @@ fn profile_response(
         role: user.role.clone(),
         status: user.status.clone(),
         deleted_at: user.deleted_at,
+        consent: ConsentStatus::from_user(user, settings),
         created_at: user.created_at,
         plan: PlanResponse {
             code: plan.code.clone(),

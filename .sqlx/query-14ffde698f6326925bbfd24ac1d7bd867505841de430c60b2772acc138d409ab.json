@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, email, password_hash, email_verified_at, role, status,\n             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at\n         FROM users WHERE email = $1::citext",
+  "query": "INSERT INTO users (email, password_hash, tos_version, aup_version) VALUES ($1, $2, $3, $4)\n         RETURNING id, email, password_hash, email_verified_at, role, status,\n             tos_version, aup_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -87,6 +87,17 @@
       },
       {
         "ordinal": 7,
+        "name": "aup_version",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "aup_version"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
         "name": "deleted_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -97,7 +108,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "revoked_before",
         "type_info": "Timestamptz",
         "origin": {
@@ -108,7 +119,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "display_name",
         "type_info": "Text",
         "origin": {
@@ -119,7 +130,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "pending_email",
         "type_info": {
           "Custom": {
@@ -135,7 +146,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "settings",
         "type_info": "Jsonb",
         "origin": {
@@ -146,7 +157,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -157,7 +168,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -175,7 +186,10 @@
             "name": "citext",
             "kind": "Simple"
           }
-        }
+        },
+        "Text",
+        "Text",
+        "Text"
       ]
     },
     "nullable": [
@@ -190,10 +204,11 @@
       true,
       true,
       true,
+      true,
       false,
       false,
       false
     ]
   },
-  "hash": "2fa1fb565a72d9c03034ef5bd0a2f4018f0051d3b703ff3673301f02a07d110c"
+  "hash": "14ffde698f6326925bbfd24ac1d7bd867505841de430c60b2772acc138d409ab"
 }

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE users SET\n             status = 'active',\n             deleted_at = NULL,\n             updated_at = now()\n         WHERE id = $1 AND status = 'deletion_pending'\n         RETURNING id, email, password_hash, email_verified_at, role, status,\n             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
+  "query": "UPDATE users SET status = 'active', deleted_at = NULL, updated_at = now()\n         WHERE id = $1\n         RETURNING id, email, password_hash, email_verified_at, role, status,\n             tos_version, aup_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
   "describe": {
     "columns": [
       {
@@ -87,6 +87,17 @@
       },
       {
         "ordinal": 7,
+        "name": "aup_version",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "aup_version"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
         "name": "deleted_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -97,7 +108,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "revoked_before",
         "type_info": "Timestamptz",
         "origin": {
@@ -108,7 +119,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "display_name",
         "type_info": "Text",
         "origin": {
@@ -119,7 +130,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "pending_email",
         "type_info": {
           "Custom": {
@@ -135,7 +146,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "settings",
         "type_info": "Jsonb",
         "origin": {
@@ -146,7 +157,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -157,7 +168,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -185,10 +196,11 @@
       true,
       true,
       true,
+      true,
       false,
       false,
       false
     ]
   },
-  "hash": "a2daa1c2fda0bbcfd813a846a32adfc1030c57940680d31188027fbc8b059503"
+  "hash": "623ca74c009158fd7556a4ca52c92254a57784be948fb4be1907e0feb1fc88c7"
 }

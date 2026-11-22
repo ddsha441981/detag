@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE users SET\n             display_name = $2,\n             pending_email = $3::citext,\n             updated_at = now()\n         WHERE id = $1\n         RETURNING id, email, password_hash, email_verified_at, role, status,\n             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
+  "query": "SELECT id, email, password_hash, email_verified_at, role, status,\n             tos_version, aup_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at\n         FROM users WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -87,6 +87,17 @@
       },
       {
         "ordinal": 7,
+        "name": "aup_version",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "aup_version"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
         "name": "deleted_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -97,7 +108,7 @@
         }
       },
       {
-        "ordinal": 8,
+        "ordinal": 9,
         "name": "revoked_before",
         "type_info": "Timestamptz",
         "origin": {
@@ -108,7 +119,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 10,
         "name": "display_name",
         "type_info": "Text",
         "origin": {
@@ -119,7 +130,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 11,
         "name": "pending_email",
         "type_info": {
           "Custom": {
@@ -135,7 +146,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 12,
         "name": "settings",
         "type_info": "Jsonb",
         "origin": {
@@ -146,7 +157,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 13,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -157,7 +168,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 14,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -170,14 +181,7 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid",
-        "Text",
-        {
-          "Custom": {
-            "name": "citext",
-            "kind": "Simple"
-          }
-        }
+        "Uuid"
       ]
     },
     "nullable": [
@@ -192,10 +196,11 @@
       true,
       true,
       true,
+      true,
       false,
       false,
       false
     ]
   },
-  "hash": "fa5a120aa143c70464c9efb079195f58eb908e9f22404922d21f2d73c3ecf16a"
+  "hash": "0d44245f1c8d3e7cbe99f984d5a1aab8df20e7e9552b8e06f4d2690052b9da57"
 }

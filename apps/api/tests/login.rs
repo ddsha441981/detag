@@ -69,6 +69,7 @@ fn post_register(email: &str) -> Request<axum::body::Body> {
         "email": email,
         "password": PASSWORD,
         "accept_tos_version": "v1",
+        "accept_aup_version": "v1",
     });
     Request::builder()
         .method(Method::POST)

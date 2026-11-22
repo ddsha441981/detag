@@ -310,6 +310,7 @@ pub struct UserSearchItem {
     pub status: String,
     pub email_verified_at: Option<DateTime<Utc>>,
     pub tos_version: Option<String>,
+    pub aup_version: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub plan: String,
@@ -327,6 +328,7 @@ impl From<UserSearchRow> for UserSearchItem {
             status: row.status,
             email_verified_at: row.email_verified_at,
             tos_version: row.tos_version,
+            aup_version: row.aup_version,
             created_at: row.created_at,
             updated_at: row.updated_at,
             // The query COALESCEs these (see the row doc) — a

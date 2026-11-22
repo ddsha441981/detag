@@ -50,11 +50,12 @@ async fn register_app_with_email_limit() -> TestApp {
     TestApp::spawn_with_fixtures_and_settings(fixtures, settings).await
 }
 
-fn post_register(email: &str, password: &str, tos: &str) -> Request<axum::body::Body> {
+fn post_register(email: &str, password: &str, tos: &str, aup: &str) -> Request<axum::body::Body> {
     let body = json!({
         "email": email,
         "password": password,
         "accept_tos_version": tos,
+        "accept_aup_version": aup,
     });
     Request::builder()
         .method(Method::POST)
@@ -74,7 +75,12 @@ async fn happy_path_creates_user_audits_and_queues_mail() {
     let app = register_app().await;
     let email = unique_email();
     let res = app
-        .request(post_register(&email, "correct horse battery staple", "v1"))
+        .request(post_register(
+            &email,
+            "correct horse battery staple",
+            "v1",
+            "v1",
+        ))
         .await;
     assert_eq!(res.status, StatusCode::CREATED);
     let json = res.json();
@@ -82,6 +88,7 @@ async fn happy_path_creates_user_audits_and_queues_mail() {
     assert_eq!(json["role"], "user");
     assert_eq!(json["status"], "active");
     assert_eq!(json["tos_version"], "v1");
+    assert_eq!(json["aup_version"], "v1");
     assert!(json["email_verified_at"].is_null(), "{json}");
     assert!(json.get("password_hash").is_none(), "never leak the hash");
     assert!(json.get("password").is_none(), "never echo the password");
@@ -96,6 +103,7 @@ async fn happy_path_creates_user_audits_and_queues_mail() {
     assert!(user.password_hash.starts_with("$argon2id$v=19$"));
     assert!(verify_password("correct horse battery staple", &user.password_hash).unwrap());
     assert_eq!(user.tos_version.as_deref(), Some("v1"));
+    assert_eq!(user.aup_version.as_deref(), Some("v1"));
 
     // Both audit events landed (attempt anonymous, success for the user).
     let attempts = audit_logs::list_for_action(&app.state.pool, "register.attempt")
@@ -166,7 +174,12 @@ async fn duplicate_email_is_a_generic_409() {
     let app = register_app().await;
     let email = unique_email();
     let res = app
-        .request(post_register(&email, "correct horse battery staple", "v1"))
+        .request(post_register(
+            &email,
+            "correct horse battery staple",
+            "v1",
+            "v1",
+        ))
         .await;
     assert_eq!(res.status, StatusCode::CREATED);
     // Same email, different case: citext makes it the same user.
@@ -174,6 +187,7 @@ async fn duplicate_email_is_a_generic_409() {
         .request(post_register(
             &email.to_uppercase(),
             "another horse battery staple",
+            "v1",
             "v1",
         ))
         .await;
@@ -213,7 +227,12 @@ async fn disposable_domain_is_a_422_field_error() {
     let app = register_app().await;
     let email = format!("someone-{}@mailinator.com", Uuid::now_v7());
     let res = app
-        .request(post_register(&email, "correct horse battery staple", "v1"))
+        .request(post_register(
+            &email,
+            "correct horse battery staple",
+            "v1",
+            "v1",
+        ))
         .await;
     assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
     let json = res.json();
@@ -237,6 +256,7 @@ async fn wrong_tos_version_is_a_422_field_error() {
             &unique_email(),
             "correct horse battery staple",
             "v0",
+            "v1",
         ))
         .await;
     assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
@@ -249,22 +269,44 @@ async fn wrong_tos_version_is_a_422_field_error() {
 }
 
 #[tokio::test]
-async fn structural_validation_collects_every_failure() {
+async fn wrong_aup_version_is_a_422_field_error() {
     let app = register_app().await;
     let res = app
-        .request(post_register("not-an-email", "short", ""))
+        .request(post_register(
+            &unique_email(),
+            "correct horse battery staple",
+            "v1",
+            "v0",
+        ))
         .await;
     assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
     let json = res.json();
     assert_eq!(json["code"], "PF-2002", "{json}");
     let fields = json["field_errors"].as_array().expect("field errors");
-    assert_eq!(fields.len(), 3, "{json}");
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields[0]["field"], "accept_aup_version");
+    assert_eq!(fields[0]["code"], "aup_version_mismatch");
+}
+
+#[tokio::test]
+async fn structural_validation_collects_every_failure() {
+    let app = register_app().await;
+    let res = app
+        .request(post_register("not-an-email", "short", "", ""))
+        .await;
+    assert_eq!(res.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let json = res.json();
+    assert_eq!(json["code"], "PF-2002", "{json}");
+    let fields = json["field_errors"].as_array().expect("field errors");
+    assert_eq!(fields.len(), 4, "{json}");
     assert_eq!(fields[0]["field"], "email");
     assert_eq!(fields[0]["code"], "invalid_email");
     assert_eq!(fields[1]["field"], "password");
     assert_eq!(fields[1]["code"], "too_short");
     assert_eq!(fields[2]["field"], "accept_tos_version");
     assert_eq!(fields[2]["code"], "required");
+    assert_eq!(fields[3]["field"], "accept_aup_version");
+    assert_eq!(fields[3]["code"], "required");
 }
 
 #[tokio::test]
@@ -275,6 +317,7 @@ async fn email_is_normalized_before_storage() {
         .request(post_register(
             &format!("  {local}@Example.COM "),
             "correct horse battery staple",
+            "v1",
             "v1",
         ))
         .await;
@@ -333,12 +376,22 @@ async fn register_email_rate_limit_trips_with_headers() {
     let app = register_app_with_email_limit().await;
     let email = unique_email();
     let res = app
-        .request(post_register(&email, "correct horse battery staple", "v1"))
+        .request(post_register(
+            &email,
+            "correct horse battery staple",
+            "v1",
+            "v1",
+        ))
         .await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
     for i in 1..=4 {
         let res = app
-            .request(post_register(&email, "correct horse battery staple", "v1"))
+            .request(post_register(
+                &email,
+                "correct horse battery staple",
+                "v1",
+                "v1",
+            ))
             .await;
         assert_eq!(
             res.status,
@@ -348,7 +401,12 @@ async fn register_email_rate_limit_trips_with_headers() {
         );
     }
     let res = app
-        .request(post_register(&email, "correct horse battery staple", "v1"))
+        .request(post_register(
+            &email,
+            "correct horse battery staple",
+            "v1",
+            "v1",
+        ))
         .await;
     assert_eq!(res.status, StatusCode::TOO_MANY_REQUESTS, "{}", res.text());
     let json = res.json();
@@ -391,7 +449,7 @@ async fn weak_password_is_a_422_field_error() {
     let app = register_app().await;
     let email = unique_email();
     let res = app
-        .request(post_register(&email, "123456789012", "v1"))
+        .request(post_register(&email, "123456789012", "v1", "v1"))
         .await;
     assert_eq!(
         res.status,
@@ -422,7 +480,7 @@ async fn common_password_is_a_422_field_error() {
     let app = register_app().await;
     let email = unique_email();
     let res = app
-        .request(post_register(&email, "qwerty123456", "v1"))
+        .request(post_register(&email, "qwerty123456", "v1", "v1"))
         .await;
     assert_eq!(
         res.status,
@@ -462,7 +520,7 @@ async fn pwned_check_defaults_off() {
     let app = register_app().await;
     let email = unique_email();
     let res = app
-        .request(post_register(&email, "letmein2024!!", "v1"))
+        .request(post_register(&email, "letmein2024!!", "v1", "v1"))
         .await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
 }
