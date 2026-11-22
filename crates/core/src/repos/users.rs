@@ -23,6 +23,9 @@ pub struct User {
     pub role: String,
     pub status: String,
     pub tos_version: Option<String>,
+    /// The AUP version the user accepted (P1-095) — beside
+    /// `tos_version`. `None` means never accepted.
+    pub aup_version: Option<String>,
     pub deleted_at: Option<DateTime<Utc>>,
     /// The revocation epoch (P1-021): every access token of
     /// this user with `iat` earlier than this instant is dead.
@@ -45,31 +48,67 @@ pub async fn create(
     email: &str,
     password_hash: &str,
 ) -> Result<User, RepoError> {
-    create_with_tos(pool, email, password_hash, None).await
+    create_with_consent(pool, email, password_hash, None, None).await
 }
 
-/// Insert a user recording the accepted ToS version (P1-001).
-/// `tos_version` is the `accept_tos_version` the client sent —
-/// the caller has already checked it equals the current version;
-/// this function records, it does not validate.
-pub async fn create_with_tos(
+/// Insert a user recording the accepted ToS + AUP versions
+/// (P1-001 for ToS, P1-095 for AUP). `tos_version` is the
+/// `accept_tos_version` the client sent and `aup_version` the
+/// `accept_aup_version` — the caller has already checked each
+/// equals its current version; this function records, it does
+/// not validate.
+pub async fn create_with_consent(
     pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
     email: &str,
     password_hash: &str,
     tos_version: Option<&str>,
+    aup_version: Option<&str>,
 ) -> Result<User, RepoError> {
     sqlx::query_as!(
         User,
-        "INSERT INTO users (email, password_hash, tos_version) VALUES ($1, $2, $3)
+        "INSERT INTO users (email, password_hash, tos_version, aup_version) VALUES ($1, $2, $3, $4)
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
+             tos_version, aup_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
         email,
         password_hash,
-        tos_version
+        tos_version,
+        aup_version
     )
     .fetch_one(pool)
     .await
     .map_err(RepoError::from_sqlx)
+}
+
+/// Record a re-acceptance (P1-095): set both consent versions
+/// to the given (current) values. The caller has already
+/// checked each equals its current version and decided this is
+/// not a no-op — this function stores, it does not validate.
+/// Returns `NotFound` when the user does not exist.
+pub async fn update_consent(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+    tos_version: &str,
+    aup_version: &str,
+) -> Result<User, RepoError> {
+    sqlx::query_as!(
+        User,
+        "UPDATE users SET
+             tos_version = $2,
+             aup_version = $3,
+             updated_at = now()
+         WHERE id = $1
+         RETURNING id, email, password_hash, email_verified_at, role, status,
+             tos_version, aup_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
+        id,
+        tos_version,
+        aup_version,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|err| match err {
+        sqlx::Error::RowNotFound => RepoError::NotFound,
+        other => RepoError::from_sqlx(other),
+    })
 }
 
 /// Fetch by id. `None` when the id does not exist.
@@ -80,7 +119,7 @@ pub async fn by_id(
     sqlx::query_as!(
         User,
         "SELECT id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at
+             tos_version, aup_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at
          FROM users WHERE id = $1",
         id
     )
@@ -103,7 +142,7 @@ pub async fn by_email(
     sqlx::query_as!(
         User,
         "SELECT id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at
+             tos_version, aup_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at
          FROM users WHERE email = $1::citext",
         email
     )
@@ -136,7 +175,7 @@ pub async fn update_profile(
              updated_at = now()
          WHERE id = $1
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
+             tos_version, aup_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
         id,
         display_name,
         pending_email,
@@ -182,7 +221,7 @@ pub async fn set_email_verified(
         User,
         "UPDATE users SET email_verified_at = now() WHERE id = $1
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
+             tos_version, aup_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
         id
     )
     .fetch_one(pool)
@@ -282,7 +321,7 @@ pub async fn swap_email(
              updated_at = now()
          WHERE id = $1 AND pending_email IS NOT NULL
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
+             tos_version, aup_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
         id
     )
     .fetch_one(pool)
@@ -318,7 +357,7 @@ pub async fn request_deletion(
              updated_at = now()
          WHERE id = $1
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
+             tos_version, aup_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
         id
     )
     .fetch_one(pool)
@@ -346,7 +385,7 @@ pub async fn cancel_deletion(
              updated_at = now()
          WHERE id = $1 AND status = 'deletion_pending'
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
+             tos_version, aup_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
         id
     )
     .fetch_optional(pool)
@@ -415,7 +454,7 @@ pub async fn suspend(
         "UPDATE users SET status = 'suspended', deleted_at = NULL, updated_at = now()
          WHERE id = $1
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
+             tos_version, aup_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
         id
     )
     .fetch_one(pool)
@@ -444,7 +483,7 @@ pub async fn restore(
         "UPDATE users SET status = 'active', deleted_at = NULL, updated_at = now()
          WHERE id = $1
          RETURNING id, email, password_hash, email_verified_at, role, status,
-             tos_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
+             tos_version, aup_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
         id
     )
     .fetch_one(pool)
@@ -474,6 +513,7 @@ pub struct UserSearchRow {
     pub status: String,
     pub email_verified_at: Option<DateTime<Utc>>,
     pub tos_version: Option<String>,
+    pub aup_version: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub plan_code: Option<String>,
@@ -534,7 +574,7 @@ pub async fn search_users(
             sqlx::query_as!(
                 UserSearchRow,
                 "SELECT u.id, u.email, u.display_name, u.role, u.status,
-                    u.email_verified_at, u.tos_version, u.created_at, u.updated_at,
+                    u.email_verified_at, u.tos_version, u.aup_version, u.created_at, u.updated_at,
                     COALESCE((SELECT p.code FROM subscriptions s JOIN plans p ON p.id = s.plan_id
                               WHERE s.user_id = u.id AND s.status IN ('trialing', 'active')
                               ORDER BY s.created_at DESC LIMIT 1), 'free') AS plan_code,
@@ -560,7 +600,7 @@ pub async fn search_users(
         None => sqlx::query_as!(
             UserSearchRow,
             "SELECT u.id, u.email, u.display_name, u.role, u.status,
-                    u.email_verified_at, u.tos_version, u.created_at, u.updated_at,
+                    u.email_verified_at, u.tos_version, u.aup_version, u.created_at, u.updated_at,
                     COALESCE((SELECT p.code FROM subscriptions s JOIN plans p ON p.id = s.plan_id
                               WHERE s.user_id = u.id AND s.status IN ('trialing', 'active')
                               ORDER BY s.created_at DESC LIMIT 1), 'free') AS plan_code,

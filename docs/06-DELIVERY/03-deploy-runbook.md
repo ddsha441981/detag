@@ -241,6 +241,7 @@ in a real inbox.
 | `PF_ARGON2_M_COST_KIB`, `PF_ARGON2_T_COST`, `PF_ARGON2_P_COST` | api | 65536 / 3 / 4 | Argon2id password-hashing costs (P1-001; defaults raised P1-027 — m=64 MiB, t=3, p=4; old hashes rehashed on login); m 4096..=1048576 KiB, t/p 1..=16 |
 | `PF_PASSWORD_PWNED_CHECK`, `PF_PASSWORD_PWNED_URL` | api | off, https://api.pwnedpasswords.com | HIBP k-anonymity check on register + reset (P1-026); off by default (third-party call per registration/reset); fails open on transport error |
 | `PF_TOS_CURRENT_VERSION` | api | v1 | ToS version a registration must accept (P1-001); any other `accept_tos_version` is a 422 |
+| `PF_AUP_CURRENT_VERSION` | api | v1 | AUP version a registration must accept (P1-095); any other `accept_aup_version` is a 422; bumping either current version forces re-accept (GET /v1/me `consent.up_to_date`) |
 | `PF_DISPOSABLE_EMAIL_DOMAINS` | api | mailinator.com, guerrillamail.com, 10minutemail.com, tempmail.com, yopmail.com | comma-separated disposable domains rejected at registration (P1-001); empty = no denylist |
 | `PF_RATE_LIMIT_IP_BURST`, `PF_RATE_LIMIT_IP_REFILL_PER_MIN`, `PF_RATE_LIMIT_ROUTE_BURST`, `PF_RATE_LIMIT_ROUTE_REFILL_PER_MIN` | api | 120 / 120 / 600 / 600 | token-bucket caps, per-IP + per-route (P0-103); refill 0 = never refills |
 | `PF_RATE_LIMIT_LOGIN_ACCOUNT_BURST`, `PF_RATE_LIMIT_LOGIN_ACCOUNT_REFILL_PER_MIN` | api | 10 / 1 | per-account login-attempt bucket (P1-003): burst 10, then 1/min; keyed by the sha256 of the email; P1-004 lockout is the durable backstop |

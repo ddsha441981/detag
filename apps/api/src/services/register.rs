@@ -3,11 +3,11 @@
 //! Flow: normalize the email → per-email rate limit (P1-020,
 //! the `register-email` bucket, keyed by the sha256 of the
 //! email — pre-auth, before the Argon2id hash, so a spam run
-//! burns no CPU) → policy checks (disposable domain, ToS
-//! version — both need `Settings`, so they live here, not in
+//! burns no CPU) → policy checks (disposable domain, ToS +
+//! AUP versions — all need `Settings`, so they live here, not in
 //! the DTO's structural validation) → Argon2id hash (params
 //! from config) → audit `register.attempt` → one transaction:
-//! create the user (recording the accepted ToS version) +
+//! create the user (recording the accepted ToS + AUP versions) +
 //! audit `register.success` + mint the verification token and
 //! queue its mail (P1-002's `issue_verification` — the outbox
 //! payload carries `{user_id, token}`). The transaction is the
@@ -75,7 +75,8 @@ use crate::rate_limit::RateLimitScope;
 use crate::AppState;
 
 /// The register request body (api-spec: email, password,
-/// accept_tos_version → 201 user + verification email sent).
+/// accept_tos_version + accept_aup_version → 201 user +
+/// verification email sent).
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct RegisterRequest {
     /// The email address (trimmed + lowercased before storage).
@@ -86,6 +87,11 @@ pub struct RegisterRequest {
     /// The ToS version the user accepted; must equal the current
     /// version (`PF_TOS_CURRENT_VERSION`, default "v1").
     pub accept_tos_version: String,
+    /// The AUP version the user accepted (P1-095); must equal
+    /// the current version (`PF_AUP_CURRENT_VERSION`, default
+    /// "v1") — the same rule as the ToS version, so a
+    /// registration records both consents at once.
+    pub accept_aup_version: String,
 }
 
 impl RegisterRequest {
@@ -102,8 +108,8 @@ impl Validate for RegisterRequest {
     /// Structural validation only (no settings): email shape on
     /// the *normalized* email (a pasted address with surrounding
     /// spaces is a typo, not an invalid address), password length,
-    /// ToS version present. The settings-dependent checks
-    /// (disposable domain, ToS version match) run in
+    /// ToS + AUP versions present. The settings-dependent checks
+    /// (disposable domain, version matches) run in
     /// [`register_user`] and produce the same 422 shape.
     fn validate(&self) -> Result<(), ValidationErrors> {
         let mut errors = ValidationErrors::default();
@@ -116,6 +122,13 @@ impl Validate for RegisterRequest {
         if self.accept_tos_version.trim().is_empty() {
             errors.push(FieldError::new(
                 "accept_tos_version",
+                "required",
+                "is required",
+            ));
+        }
+        if self.accept_aup_version.trim().is_empty() {
+            errors.push(FieldError::new(
+                "accept_aup_version",
                 "required",
                 "is required",
             ));
@@ -139,6 +152,7 @@ pub struct UserResponse {
     pub status: String,
     pub email_verified_at: Option<DateTime<Utc>>,
     pub tos_version: Option<String>,
+    pub aup_version: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -152,6 +166,7 @@ impl From<User> for UserResponse {
             status: user.status,
             email_verified_at: user.email_verified_at,
             tos_version: user.tos_version,
+            aup_version: user.aup_version,
             created_at: user.created_at,
             updated_at: user.updated_at,
         }
@@ -205,6 +220,7 @@ pub async fn register_user(state: &AppState, req: &RegisterRequest) -> Result<Us
     let settings = &state.settings;
     let email = req.normalized_email();
     let tos_version = req.accept_tos_version.trim().to_string();
+    let aup_version = req.accept_aup_version.trim().to_string();
 
     // Per-email rate limit (P1-020), FIRST — before the policy
     // checks, the hash, and the audit: a denied request does
@@ -249,6 +265,13 @@ pub async fn register_user(state: &AppState, req: &RegisterRequest) -> Result<Us
             "accept_tos_version",
             "tos_version_mismatch",
             "must accept the current ToS version",
+        ));
+    }
+    if aup_version != settings.aup_current_version {
+        errors.push(FieldError::new(
+            "accept_aup_version",
+            "aup_version_mismatch",
+            "must accept the current AUP version",
         ));
     }
     if !errors.is_empty() {
@@ -304,14 +327,21 @@ pub async fn register_user(state: &AppState, req: &RegisterRequest) -> Result<Us
         let email = email.clone();
         let hash = hash.clone();
         let tos_version = tos_version.clone();
+        let aup_version = aup_version.clone();
         let email_hash = email_hash.clone();
         Box::pin(async move {
-            let user = users::create_with_tos(&mut *conn, &email, &hash, Some(&tos_version))
-                .await
-                .map_err(|err| match err {
-                    RepoError::UniqueViolation { .. } => RegisterTxError::Duplicate,
-                    other => RegisterTxError::Db(other),
-                })?;
+            let user = users::create_with_consent(
+                &mut *conn,
+                &email,
+                &hash,
+                Some(&tos_version),
+                Some(&aup_version),
+            )
+            .await
+            .map_err(|err| match err {
+                RepoError::UniqueViolation { .. } => RegisterTxError::Duplicate,
+                other => RegisterTxError::Db(other),
+            })?;
             // A fresh account has no failed logins: clear any
             // counter the address accumulated before it
             // existed (P1-004 — an attacker cannot pre-lock
@@ -383,12 +413,14 @@ mod tests {
             email: "not-an-email".to_string(),
             password: "short".to_string(),
             accept_tos_version: "   ".to_string(),
+            accept_aup_version: "   ".to_string(),
         };
-        let err = req.validate().expect_err("all three fields fail");
-        assert_eq!(err.len(), 3);
+        let err = req.validate().expect_err("all four fields fail");
+        assert_eq!(err.len(), 4);
         assert_eq!(err.0[0].field, "email");
         assert_eq!(err.0[1].field, "password");
         assert_eq!(err.0[2].field, "accept_tos_version");
+        assert_eq!(err.0[3].field, "accept_aup_version");
     }
 
     #[test]
@@ -397,6 +429,7 @@ mod tests {
             email: "  Alice@Example.com ".to_string(),
             password: "correct horse battery staple".to_string(),
             accept_tos_version: "v1".to_string(),
+            accept_aup_version: "v1".to_string(),
         };
         assert!(req.validate().is_ok());
         assert_eq!(req.normalized_email(), "alice@example.com");

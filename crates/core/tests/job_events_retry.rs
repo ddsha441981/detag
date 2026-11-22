@@ -3,12 +3,12 @@
 //! Applies ONLY the 001 + 002 migration pairs plus the P1-005
 //! profile-fields migration plus the P1-021 revoked-before
 //! migration plus the 004 audit-flags-misc migration plus the
-//! P1-038 jobs-key-id migration (copied from the repo's real
-//! `migrations/` into a scratch dir — the same pattern as the
-//! migration live tests) to a scratch DATABASE
-//! (`detag_p077_test`, created and dropped by the test) —
-//! never the dev database. The profile-fields migration is
-//! needed because the `users` repo queries now read
+//! P1-038 jobs-key-id migration plus the P1-095 aup-version
+//! migration (copied from the repo's real `migrations/` into a
+//! scratch dir — the same pattern as the migration live tests)
+//! to a scratch DATABASE (`detag_p077_test`, created and dropped
+//! by the test) — never the dev database. The profile-fields
+//! migration is needed because the `users` repo queries now read
 //! `display_name` + `pending_email` (P1-005): without it,
 //! `users::create` fails with "column display_name does not
 //! exist". The revoked-before migration is needed for the
@@ -19,6 +19,11 @@
 //! jobs-key-id migration's FK references, and the jobs repo
 //! now writes `key_id` on every INSERT — without the pair,
 //! `jobs::create` fails with "column key_id does not exist".
+//! The aup-version migration is needed since P1-095 (the
+//! `users` repo now INSERTs + RETURNs `aup_version`): without
+//! it, `users::create` fails with "column aup_version does not
+//! exist" — the verify-3 failure of P1-095. Any future column
+//! the `users` repo reads must add its migration pair here.
 //! Creates a user + job through the repos, records a retry
 //! event, reads it back, and asserts the payload round-trips;
 //! also asserts the FK: recording for a job id with no jobs
@@ -60,13 +65,16 @@ fn repo_migrations_dir() -> PathBuf {
 
 /// A scratch dir holding ONLY the 001 + 002 pairs + the P1-005
 /// profile-fields pair + the P1-021 revoked-before pair + the
-/// 004 audit-flags-misc pair + the P1-038 jobs-key-id pair,
+/// 004 audit-flags-misc pair + the P1-038 jobs-key-id pair +
+/// the P1-095 aup-version pair,
 /// copied from the repo (002 depends on 001's users table; the
 /// profile-fields migration adds the columns the `users` repo
 /// reads since P1-005; the revoked-before migration adds the
 /// column it reads since P1-021; 004 creates `api_keys`, which
 /// the jobs-key-id migration's FK references, and the jobs repo
-/// writes `key_id` on every INSERT since P1-038). One dir per
+/// writes `key_id` on every INSERT since P1-038; the
+/// aup-version migration adds the column the `users` repo
+/// INSERTs + RETURNs since P1-095). One dir per
 /// test (the tests in this file run in parallel).
 fn migrations_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -83,6 +91,7 @@ fn migrations_dir(tag: &str) -> PathBuf {
         "20261113040605_user_profile_fields",
         "20261113120835_users_revoked_before",
         "20261114180600_jobs_key_id",
+        "20261121182606_users_aup_version",
     ] {
         for ext in ["up.sql", "down.sql"] {
             let name = format!("{stem}.{ext}");
@@ -129,8 +138,8 @@ async fn scratch_pool(db: &str, tag: &str) -> (DbPool, PathBuf) {
 }
 
 async fn drop_scratch_db(pool: &DbPool, db: &str, dir: &PathBuf) {
-    // Revert the last applied migration (now the P1-005
-    // profile-fields one), then drop the db.
+    // Revert the last applied migration (now the P1-095
+    // aup-version one), then drop the db.
     let _ = migrate_revert_last(pool, dir).await;
     pool.close().await;
     let admin = connect(&database_url(), &PoolConfig::default())

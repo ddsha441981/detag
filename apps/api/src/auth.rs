@@ -1028,6 +1028,7 @@ mod tests {
             ),
             // Unmapped routes and wrong methods deny keys.
             (Method::GET, "/v1/me", None),
+            (Method::POST, "/v1/me/consent", None),
             (Method::POST, "/v1/api-keys", None),
             (Method::GET, "/v1/admin/users", None),
             (Method::POST, "/v1/uploads", None),

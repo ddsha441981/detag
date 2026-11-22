@@ -1,5 +1,5 @@
 //! Profile routes (P1-005): GET /v1/me + PATCH /v1/me; DELETE
-//! /v1/me since P1-007.
+//! /v1/me since P1-007; POST /v1/me/consent since P1-095.
 //!
 //! All take [`AuthContext`]: the extractor verifies the Bearer
 //! JWT and rejects unverified callers with 401 before the handler
@@ -16,6 +16,7 @@ use crate::{
     auth::AuthContext,
     problem::ProblemResponse,
     services::{
+        consent::{AcceptConsentRequest, ConsentError},
         deletion::{request_account_deletion, DeletionError},
         profile::{get_profile, patch_profile, PatchProfileRequest, ProfileError, ProfileResponse},
     },
@@ -110,6 +111,64 @@ pub async fn patch_me(
             ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
         }
         Err(ProfileError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
+/// POST /v1/me/consent (P1-095): accept the current ToS + AUP
+/// versions. The banner-clearing endpoint: a bump flips
+/// `consent.up_to_date` false on GET /v1/me, and only this
+/// call — with both versions equal to their current values —
+/// clears it (audited as `user.consent_accepted`). A stale
+/// version is 422; an already-current re-accept is a no-op 200
+/// (the service writes nothing). Success returns the updated
+/// profile, re-read through GET /v1/me's path.
+#[utoipa::path(
+    post,
+    path = "/v1/me/consent",
+    request_body = AcceptConsentRequest,
+    responses(
+        (status = 200, description = "Updated profile with cleared consent banner", body = ProfileResponse),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 422, description = "Validation failed (a version is not the current one)", body = Problem)
+    ),
+    tag = "auth",
+    security(("bearer_auth" = []))
+)]
+pub async fn accept_consent(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    auth: AuthContext,
+    ValidatedJson(req): ValidatedJson<AcceptConsentRequest>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let Some(ref user) = auth.user else {
+        // The extractor guarantees a user for a verified context.
+        return ProblemResponse(AppError::Internal.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
+    match crate::services::consent::accept_consent(&state, user, auth.audit_actor_id(user), &req)
+        .await
+    {
+        Ok(updated) => match get_profile(&state, &updated).await {
+            Ok(profile) => Json(profile).into_response(),
+            Err(_) => ProblemResponse(AppError::Internal.to_problem(
+                Profile::Production,
+                request_id,
+                None,
+            ))
+            .into_response(),
+        },
+        Err(ConsentError::Validation(errors)) => {
+            ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
+        }
+        Err(ConsentError::Internal) => {
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
                 .into_response()
         }

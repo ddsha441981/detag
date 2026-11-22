@@ -46,7 +46,7 @@ Conventions first; endpoint tables are the contract. OpenAPI is generated from c
 ### Auth
 | Method | Path | Auth | Body → Response |
 | --- | --- | --- | --- |
-| POST | `/v1/auth/register` | none | email, password, accept_tos_version → 201 user + verification email sent |
+| POST | `/v1/auth/register` | none | email, password, accept_tos_version, accept_aup_version → 201 user + verification email sent |
 | POST | `/v1/auth/verify-email` | none | token → 204 |
 | POST | `/v1/auth/resend-verification` | none | email → always 204 (no enumeration) |
 | POST | `/v1/auth/confirm-email-change` | none | token → 204 (swap to pending address; P1-006 — not in the original spec, same as resend) |
@@ -445,10 +445,14 @@ password never leave the machine, but the 5-char prefix narrows
 the password to ~2^20 candidates and reveals that a check
 happened. `accept_tos_version` must equal
 the current version (`PF_TOS_CURRENT_VERSION`, default "v1") and
-is recorded on the user row. A disposable-email domain (config
+is recorded on the user row; `accept_aup_version` must equal
+the current version (`PF_AUP_CURRENT_VERSION`, default "v1")
+and is recorded the same way — both are required, a missing
+one is a 422 field error (`required`). A disposable-email domain (config
 `PF_DISPOSABLE_EMAIL_DOMAINS`) is a 422 field error
 (`disposable_email`); a wrong ToS version is a 422 field error
-(`tos_version_mismatch`). Rate limit (P1-020): the
+(`tos_version_mismatch`), a wrong AUP version a 422 field error
+(`aup_version_mismatch`). Rate limit (P1-020): the
 `register_email` bucket (5 burst / 1 per min,
 `PF_RATE_LIMIT_REGISTER_EMAIL_*`, keyed by the sha256 of the
 normalized email), checked FIRST — before the policy checks,
@@ -673,9 +677,10 @@ test (`migration_purge_cascade_triggers.rs`).
 | POST | `/v1/auth/logout-all` | bearer | → 204, revoke every session; clears the refresh cookie |
 | POST | `/v1/auth/forgot-password` | none | email → always 204 (no enumeration) |
 | POST | `/v1/auth/reset-password` | none | token, new_password → 204, revoke all sessions |
-| GET | `/v1/me` | user | profile + plan + quota snapshot |
+| GET | `/v1/me` | user | profile + plan + quota snapshot + consent section (P1-095: accepted tos/aup versions, current versions, `up_to_date` — the re-accept banner) |
 | PATCH | `/v1/me` | user | email change / profile fields (email change re-verifies) |
 | DELETE | `/v1/me` | user | request deletion → 204 (30 d grace, purge deletes) |
+| POST | `/v1/me/consent` | user | re-accept the current ToS + AUP versions → 200 updated profile (P1-095: body `{accept_tos_version, accept_aup_version}`, each must equal its current version — else 422 `tos_version_mismatch` / `aup_version_mismatch`; audited `user.consent_accepted`; an already-current re-accept is a no-op 200 with no write and no audit; a bump of `PF_TOS_CURRENT_VERSION` / `PF_AUP_CURRENT_VERSION` flips `up_to_date` false until this call clears it — the bump gates no other endpoint) |
 | GET | `/v1/me/sessions` | user | list sessions (device, created, last_seen) |
 | DELETE | `/v1/me/sessions/{id}` | user | revoke one |
 | POST | `/v1/me/export` | user | request data export (async, emailed link) |

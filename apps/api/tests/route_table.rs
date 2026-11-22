@@ -5,7 +5,7 @@
 //! path a request takes):
 //!
 //! 1. The table itself has no duplicate (method, path) pairs
-//!    and has the 73 entries the route table lists (auth 20 +
+//!    and has the 74 entries the route table lists (auth 21 +
 //!    uploads 4 + jobs 9 + billing 12 + admin 26 — the 25
 //!    `/v1/admin/*` routes plus the public `POST /v1/abuse`
 //!    intake — + meta 2).
@@ -105,15 +105,15 @@ fn route_table_has_no_duplicates() {
     }
     assert_eq!(
         ROUTE_TABLE.len(),
-        73,
-        "ROUTE_TABLE must list the spec's 73 routes (auth 20 + uploads 4 + jobs 9 + billing 12 + admin 26 + meta 2)"
+        74,
+        "ROUTE_TABLE must list the spec's 74 routes (auth 21 + uploads 4 + jobs 9 + billing 12 + admin 26 + meta 2)"
     );
 }
 
 #[tokio::test]
 async fn every_table_entry_resolves_to_the_stub() {
     let router = test_router();
-    // The probes send 71 /v1 requests in one burst through the
+    // The probes send 72 /v1 requests in one burst through the
     // rate limiter (P0-103). They use a per-run XFF address so
     // they never share the oneshot "unknown" bucket with the
     // other test binaries running in parallel — the aggregate
@@ -253,13 +253,15 @@ async fn every_table_entry_resolves_to_the_stub() {
         // /v1/billing/portal, and P1-068 GET
         // /v1/billing/invoices, and P1-071 POST
         // /v1/admin/billing/subscriptions/{id}/cancel, and
-        // P1-080 GET /v1/usage: real
+        // P1-080 GET /v1/usage, and P1-095 POST
+        // /v1/me/consent: real
         // handlers behind an
         // auth extractor — the probe sends no credential, so
         // the extractor rejects with 401 PF-1001 (not 501)
         // and echoes the probe id (the route exists; each
         // handler's own test covers its success paths).
         if ((*method == "GET" || *method == "PATCH" || *method == "DELETE") && *path == "/v1/me")
+            || (*method == "POST" && *path == "/v1/me/consent")
             || (*method == "POST"
                 && (*path == "/v1/admin/users/{id}/suspend"
                     || *path == "/v1/admin/users/{id}/restore"

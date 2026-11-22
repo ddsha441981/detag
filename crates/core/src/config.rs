@@ -120,6 +120,16 @@ pub struct Settings {
     /// with a 422, and records the accepted version on the user
     /// row. Must be non-empty.
     pub tos_current_version: String,
+    /// Env: PF_AUP_CURRENT_VERSION — the AUP version a
+    /// registration must accept (P1-095). Default "v1"; the
+    /// register handler rejects any other `accept_aup_version`
+    /// with a 422, and records the accepted version on the user
+    /// row beside the ToS one. Must be non-empty. Bumping
+    /// either current version flips every account whose
+    /// accepted version is older to "must re-accept" — the
+    /// consent banner (GET /v1/me `consent.up_to_date`,
+    /// POST /v1/me/consent) is how the client learns it.
+    pub aup_current_version: String,
     /// Env: PF_DISPOSABLE_EMAIL_DOMAINS — comma-separated
     /// disposable-email domains rejected at registration
     /// (P1-001). Empty means no denylist. The starter list lives
@@ -568,6 +578,7 @@ impl Default for Settings {
             password_pwned_check: false,
             password_pwned_url: "https://api.pwnedpasswords.com".to_string(),
             tos_current_version: "v1".to_string(),
+            aup_current_version: "v1".to_string(),
             disposable_email_domains: String::new(),
             public_base_url: "http://localhost:8080".to_string(),
             api_port: 8080,
@@ -670,6 +681,7 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("password_pwned_check", "PF_PASSWORD_PWNED_CHECK"),
     ("password_pwned_url", "PF_PASSWORD_PWNED_URL"),
     ("tos_current_version", "PF_TOS_CURRENT_VERSION"),
+    ("aup_current_version", "PF_AUP_CURRENT_VERSION"),
     ("disposable_email_domains", "PF_DISPOSABLE_EMAIL_DOMAINS"),
     ("public_base_url", "PF_PUBLIC_BASE_URL"),
     ("api_port", "PF_API_PORT"),
@@ -918,6 +930,7 @@ impl Settings {
             password_pwned_check: field!(password_pwned_check, bool),
             password_pwned_url: field!(password_pwned_url, String),
             tos_current_version: field!(tos_current_version, String),
+            aup_current_version: field!(aup_current_version, String),
             disposable_email_domains: field!(disposable_email_domains, String),
             public_base_url: field!(public_base_url, String),
             api_port: field!(api_port, u16),
@@ -1105,6 +1118,9 @@ impl Settings {
         }
         if self.tos_current_version.trim().is_empty() {
             invalid("PF_TOS_CURRENT_VERSION", "must not be empty".to_string());
+        }
+        if self.aup_current_version.trim().is_empty() {
+            invalid("PF_AUP_CURRENT_VERSION", "must not be empty".to_string());
         }
         if self.smtp_port == 0 {
             invalid("PF_SMTP_PORT", "must be 1..=65535".to_string());
@@ -1558,6 +1574,7 @@ mod tests {
         "PF_ARGON2_T_COST",
         "PF_ARGON2_P_COST",
         "PF_TOS_CURRENT_VERSION",
+        "PF_AUP_CURRENT_VERSION",
         "PF_DISPOSABLE_EMAIL_DOMAINS",
         "PF_PUBLIC_BASE_URL",
         "PF_RATE_LIMIT_IP_BURST",
@@ -1664,6 +1681,7 @@ mod tests {
         assert!(!s.password_pwned_check);
         assert_eq!(s.password_pwned_url, "https://api.pwnedpasswords.com");
         assert_eq!(s.tos_current_version, "v1");
+        assert_eq!(s.aup_current_version, "v1");
         // No assertion for disposable_email_domains: the code
         // default is "" (no denylist) while .env.example seeds a
         // starter list — deliberately different, see the field docs.
@@ -1973,6 +1991,7 @@ mod tests {
         assert_eq!(settings.argon2_t_cost, 3);
         assert_eq!(settings.argon2_p_cost, 4);
         assert_eq!(settings.tos_current_version, "v1");
+        assert_eq!(settings.aup_current_version, "v1");
         assert_eq!(settings.disposable_email_domains, "");
         env::set_var("PF_ARGON2_M_COST_KIB", "1024");
         let err = Settings::load_from(None).expect_err("4 MiB floor must fail");
@@ -1995,6 +2014,13 @@ mod tests {
             "error must name the var, got: {err}"
         );
         env::set_var("PF_TOS_CURRENT_VERSION", "v2");
+        env::set_var("PF_AUP_CURRENT_VERSION", "   ");
+        let err = Settings::load_from(None).expect_err("blank AUP version must fail");
+        assert!(
+            err.to_string().contains("PF_AUP_CURRENT_VERSION"),
+            "error must name the var, got: {err}"
+        );
+        env::set_var("PF_AUP_CURRENT_VERSION", "v2");
         env::set_var(
             "PF_DISPOSABLE_EMAIL_DOMAINS",
             "mailinator.com, tempmail.com",
@@ -2002,6 +2028,7 @@ mod tests {
         let settings = Settings::load_from(None).expect("valid overrides must load");
         assert_eq!(settings.argon2_t_cost, 3);
         assert_eq!(settings.tos_current_version, "v2");
+        assert_eq!(settings.aup_current_version, "v2");
         assert_eq!(
             settings.disposable_email_domains,
             "mailinator.com, tempmail.com"

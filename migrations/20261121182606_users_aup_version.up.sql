@@ -1,0 +1,11 @@
+-- P1-095 Consent versioning: the AUP version the user accepted,
+-- beside tos_version (migration 20261112064220). NULL means the
+-- user never accepted an AUP version — a pre-P1-095 row, or a
+-- row created before this column existed. The bump flow
+-- (GET /v1/me `consent.up_to_date`, POST /v1/me/consent)
+-- treats NULL as stale, so every old account is asked to
+-- re-accept exactly once after the bump. No default: the
+-- current version is config (PF_AUP_CURRENT_VERSION), not a
+-- schema constant, and backfilling a version nobody accepted
+-- would be a lie.
+ALTER TABLE users ADD COLUMN aup_version TEXT;

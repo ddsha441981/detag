@@ -12,6 +12,7 @@ pub mod admin_usage;
 pub mod api_keys;
 pub mod catalog_sync;
 pub mod checkout;
+pub mod consent;
 pub mod deletion;
 pub mod dunning;
 pub mod enforcement;

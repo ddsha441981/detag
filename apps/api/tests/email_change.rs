@@ -70,7 +70,7 @@ async fn register_user(app: &TestApp, email: &str) -> Uuid {
         .request(json_request(
             Method::POST,
             "/v1/auth/register",
-            json!({"email": email, "password": PASSWORD, "accept_tos_version": "v1"}),
+            json!({"email": email, "password": PASSWORD, "accept_tos_version": "v1", "accept_aup_version": "v1"}),
         ))
         .await;
     assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());

@@ -58,6 +58,7 @@ async fn register_user(app: &TestApp, email: &str) -> Uuid {
         "email": email,
         "password": PASSWORD,
         "accept_tos_version": "v1",
+        "accept_aup_version": "v1",
     });
     let res = app
         .request(

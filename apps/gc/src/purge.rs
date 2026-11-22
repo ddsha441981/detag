@@ -188,10 +188,15 @@ mod tests {
     /// backdate `deleted_at` by `days` (the repo sets it to
     /// now; the test moves it into the past, like time passing).
     async fn seed_user_with_dependents(ctx: &TestCtx, email: &str, days_ago: i64) -> Uuid {
-        let user =
-            users_repo::create_with_tos(&ctx.pool, email, "argon2id$placeholder", Some("v1"))
-                .await
-                .expect("create user");
+        let user = users_repo::create_with_consent(
+            &ctx.pool,
+            email,
+            "argon2id$placeholder",
+            Some("v1"),
+            Some("v1"),
+        )
+        .await
+        .expect("create user");
         users_repo::request_deletion(&ctx.pool, user.id)
             .await
             .expect("request deletion");
@@ -412,10 +417,16 @@ mod tests {
         let expired = seed_user_with_dependents(&ctx, "expired@example.com", 31).await;
         let in_grace = seed_user_with_dependents(&ctx, "in-grace@example.com", 29).await;
         let fresh = seed_user_with_dependents(&ctx, "fresh@example.com", 0).await;
-        let active = users_repo::create_with_tos(&ctx.pool, "active@example.com", "h", Some("v1"))
-            .await
-            .expect("create active user")
-            .id;
+        let active = users_repo::create_with_consent(
+            &ctx.pool,
+            "active@example.com",
+            "h",
+            Some("v1"),
+            Some("v1"),
+        )
+        .await
+        .expect("create active user")
+        .id;
 
         let report = purge_expired_users(&ctx.pool, Utc::now(), false)
             .await
@@ -503,14 +514,26 @@ mod tests {
     async fn purge_sessions_deletes_only_expired() {
         let ctx = TestCtx::new().await;
         let now = Utc::now();
-        let user = users_repo::create_with_tos(&ctx.pool, "sess-a@example.com", "h", Some("v1"))
-            .await
-            .expect("create user")
-            .id;
-        let other = users_repo::create_with_tos(&ctx.pool, "sess-b@example.com", "h", Some("v1"))
-            .await
-            .expect("create user")
-            .id;
+        let user = users_repo::create_with_consent(
+            &ctx.pool,
+            "sess-a@example.com",
+            "h",
+            Some("v1"),
+            Some("v1"),
+        )
+        .await
+        .expect("create user")
+        .id;
+        let other = users_repo::create_with_consent(
+            &ctx.pool,
+            "sess-b@example.com",
+            "h",
+            Some("v1"),
+            Some("v1"),
+        )
+        .await
+        .expect("create user")
+        .id;
 
         // The live replacement row first (unexpired): the
         // expired replaced row points at it.
@@ -568,10 +591,16 @@ mod tests {
     async fn purge_sessions_dry_run_deletes_nothing() {
         let ctx = TestCtx::new().await;
         let now = Utc::now();
-        let user = users_repo::create_with_tos(&ctx.pool, "sess-dry@example.com", "h", Some("v1"))
-            .await
-            .expect("create user")
-            .id;
+        let user = users_repo::create_with_consent(
+            &ctx.pool,
+            "sess-dry@example.com",
+            "h",
+            Some("v1"),
+            Some("v1"),
+        )
+        .await
+        .expect("create user")
+        .id;
         let _expired = seed_session(&ctx, user, now - Duration::hours(1), false, None).await;
         let _live = seed_session(&ctx, user, now + Duration::days(30), false, None).await;
 

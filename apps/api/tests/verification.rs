@@ -40,6 +40,7 @@ fn post_register(email: &str) -> Request<axum::body::Body> {
         "email": email,
         "password": "correct horse battery staple",
         "accept_tos_version": "v1",
+        "accept_aup_version": "v1",
     });
     Request::builder()
         .method(Method::POST)
@@ -409,6 +410,7 @@ fn require_verified_gate_is_pf1009_403_for_unverified_users() {
         role: "user".to_string(),
         status: "active".to_string(),
         tos_version: Some("v1".to_string()),
+        aup_version: Some("v1".to_string()),
         deleted_at: None,
         revoked_before: None,
         display_name: None,
