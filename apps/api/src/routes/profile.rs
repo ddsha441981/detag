@@ -18,6 +18,7 @@ use crate::{
     services::{
         consent::{AcceptConsentRequest, ConsentError},
         deletion::{request_account_deletion, DeletionError},
+        onboarding::{OnboardingChecklist, OnboardingError},
         profile::{get_profile, patch_profile, PatchProfileRequest, ProfileError, ProfileResponse},
     },
     AppState,
@@ -170,6 +171,40 @@ pub async fn accept_consent(
         }
         Err(ConsentError::Internal) => {
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
+/// GET /v1/me/onboarding (P1-096): the onboarding checklist
+/// for the caller — five steps (verify email, accept ToS,
+/// first upload, first job, optional API key), each with
+/// `completed` + `completed_at`, plus `completed_count` /
+/// `total_count` and `all_done` (the four required steps).
+/// A read model over existing rows: the endpoint writes
+/// nothing (no audit row on a read). AuthContext, so an API
+/// key is 403 (keys are not in the scope table — the P1-095
+/// consent precedent); no credential is 401.
+#[utoipa::path(
+    get,
+    path = "/v1/me/onboarding",
+    responses(
+        (status = 200, description = "Onboarding checklist with per-step completion", body = OnboardingChecklist),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem)
+    ),
+    tag = "auth",
+    security(("bearer_auth" = []))
+)]
+pub async fn get_onboarding(State(state): State<AppState>, auth: AuthContext) -> Response {
+    let Some(user) = auth.user else {
+        // The extractor guarantees a user for a verified context.
+        return ProblemResponse(AppError::Internal.to_problem(Profile::Production, None, None))
+            .into_response();
+    };
+    match crate::services::onboarding::get_onboarding(&state, &user).await {
+        Ok(checklist) => Json(checklist).into_response(),
+        Err(OnboardingError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, None, None))
                 .into_response()
         }
     }

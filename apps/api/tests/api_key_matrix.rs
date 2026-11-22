@@ -105,12 +105,12 @@ struct MatrixRow {
     note: &'static str,
 }
 
-/// The matrix: all 72 `/v1` routes (auth 21, uploads 4,
+/// The matrix: all 73 `/v1` routes (auth 22, uploads 4,
 /// jobs 9, billing 12, admin 26 — the 25 `/v1/admin/*`
 /// routes plus the public `POST /v1/abuse` intake). The meta
 /// routes (`/healthz`, `/readyz`) are unversioned and public,
 /// so they have no row — the completeness test asserts
-/// exactly the 72 `/v1` entries.
+/// exactly the 73 `/v1` entries.
 const MATRIX: &[MatrixRow] = &[
     // auth (21)
     MatrixRow { method: "POST", path: "/v1/auth/register", outcome: KeyOutcome::Ignored, note: "no credential — the handler validates the body" },
@@ -127,6 +127,7 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow { method: "PATCH", path: "/v1/me", outcome: KeyOutcome::Forbidden, note: "takes AuthContext; keys are not in the scope table" },
     MatrixRow { method: "DELETE", path: "/v1/me", outcome: KeyOutcome::Forbidden, note: "takes AuthContext; keys are not in the scope table" },
     MatrixRow { method: "POST", path: "/v1/me/consent", outcome: KeyOutcome::Forbidden, note: "takes AuthContext; keys are not in the scope table" },
+    MatrixRow { method: "GET", path: "/v1/me/onboarding", outcome: KeyOutcome::Forbidden, note: "live handler (P1-096) behind AuthContext; keys are not in the scope table" },
     MatrixRow { method: "GET", path: "/v1/me/sessions", outcome: KeyOutcome::Forbidden, note: "takes AuthContext; keys are not in the scope table" },
     MatrixRow { method: "DELETE", path: "/v1/me/sessions/{id}", outcome: KeyOutcome::Forbidden, note: "takes AuthContext; keys are not in the scope table" },
     MatrixRow { method: "POST", path: "/v1/me/export", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the extractor" },
@@ -373,12 +374,12 @@ fn matrix_covers_every_v1_route() {
         .collect();
     assert_eq!(
         v1_routes.len(),
-        72,
-        "ROUTE_TABLE must hold the 72 /v1 routes (auth 21 + uploads 4 + jobs 9 + billing 12 + admin 26)"
+        73,
+        "ROUTE_TABLE must hold the 73 /v1 routes (auth 22 + uploads 4 + jobs 9 + billing 12 + admin 26)"
     );
     assert_eq!(
         MATRIX.len(),
-        72,
+        73,
         "the matrix must hold one row per /v1 route ({} rows today)",
         MATRIX.len()
     );

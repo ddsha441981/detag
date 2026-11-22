@@ -157,3 +157,22 @@ pub async fn set_status_guarded(
     .await
     .map_err(RepoError::from_sqlx)
 }
+
+/// The earliest upload a user ever created (`None` when they
+/// have none). The onboarding checklist (P1-096) reads this
+/// as the `first_upload` step's completion time: the step is
+/// done exactly when a first row exists, and `MIN(created_at)`
+/// is when it completed. No status filter — an aborted upload
+/// still proves the user did the action once.
+pub async fn first_created_at_for_user(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    user_id: Uuid,
+) -> Result<Option<DateTime<Utc>>, RepoError> {
+    sqlx::query_scalar!(
+        "SELECT MIN(created_at) FROM uploads WHERE user_id = $1",
+        user_id,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
