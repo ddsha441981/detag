@@ -6,6 +6,8 @@
 //! success, PF-1010/PF-1011 on bad/expired tokens), the resend
 //! endpoint (204-always, 3/hour), and the `require_verified`
 //! gate (PF-1009) the Phase 2 job-create handler will call.
+//! P1-097: a successful verify also enqueues the welcome mail
+//! (template `welcome`, exactly one per account).
 //! The raw token is read back from the outbox payload — the
 //! only place it exists outside the email (the DB holds its
 //! hash), exactly as the mail drain will read it.
@@ -14,7 +16,9 @@ mod common;
 
 use axum::http::{Method, Request, StatusCode};
 use common::{TestApp, TestFixtures};
-use detag_api::services::verification::{require_verified, VERIFY_EMAIL_TEMPLATE};
+use detag_api::services::verification::{
+    require_verified, VERIFY_EMAIL_TEMPLATE, WELCOME_TEMPLATE,
+};
 use detag_core::error::Profile;
 use detag_core::{
     checksum::sha256_hex,
@@ -141,6 +145,57 @@ async fn verify_happy_path_sets_verified_at_and_audits() {
     assert!(
         logs.iter().any(|log| log.action == "verify-email.success"),
         "{logs:?}"
+    );
+}
+
+/// The unsent welcome mails queued for a user.
+async fn welcome_rows_for(
+    app: &TestApp,
+    user_id: Uuid,
+) -> Vec<detag_core::repos::email_outbox::OutboxMail> {
+    email_outbox::unsent_for_template(&app.state.pool, WELCOME_TEMPLATE)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|row| row.payload["user_id"] == json!(user_id))
+        .collect()
+}
+
+#[tokio::test]
+async fn verify_enqueues_welcome_mail_once() {
+    // P1-097: the welcome mail is queued in the same
+    // transaction as the verify — nothing at register, exactly
+    // one row after a successful verify, and a second verify
+    // (single-use token, 401) enqueues nothing more.
+    let app = verify_app().await;
+    let email = unique_email();
+    let res = app.request(post_register(&email)).await;
+    assert_eq!(res.status, StatusCode::CREATED, "{}", res.text());
+    let user_id: Uuid = res.json()["id"].as_str().unwrap().parse().unwrap();
+    let token = token_for_user(&app, user_id).await;
+
+    let welcome = welcome_rows_for(&app, user_id).await;
+    assert_eq!(welcome.len(), 0, "no welcome before verify");
+
+    let res = app.request(post_verify(&token)).await;
+    assert_eq!(res.status, StatusCode::NO_CONTENT, "{}", res.text());
+
+    let rows = welcome_rows_for(&app, user_id).await;
+    assert_eq!(rows.len(), 1, "exactly one welcome mail: {rows:?}");
+    assert_eq!(
+        rows[0].to_hash,
+        Some(sha256_hex(email.as_bytes())),
+        "the welcome goes to the address on record"
+    );
+
+    // The second verify fails (single-use) and must not queue
+    // a second welcome.
+    let res = app.request(post_verify(&token)).await;
+    assert_eq!(res.status, StatusCode::UNAUTHORIZED, "{}", res.text());
+    assert_eq!(
+        welcome_rows_for(&app, user_id).await.len(),
+        1,
+        "still exactly one welcome"
     );
 }
 

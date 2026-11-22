@@ -15,7 +15,7 @@ marketing template without an owner decision: it changes the
 deliverability posture (bulk-sender rules, unsubscribe handling,
 a separate sending subdomain) and the abuse surface.
 
-The 13 templates the api actually enqueues (`crates/mailer`,
+The 20 templates the api actually enqueues (`crates/mailer`,
 `TEMPLATES` — subjects + text + HTML, snapshot-tested, P1-029):
 
 | Template | Sent when | Class / hourly cap per recipient |
@@ -33,6 +33,13 @@ The 13 templates the api actually enqueues (`crates/mailer`,
 | `subscription-dunning-day3` | dunning job: 3 days past due (P1-070) | transactional / never capped |
 | `subscription-dunning-day7` | dunning job: 7 days past due (P1-070) | transactional / never capped |
 | `subscription-canceled` | subscription moves to `canceled` | transactional / never capped |
+| `quota-warning-80` | daily usage crosses 80% of the plan quota (P1-085) | transactional / never capped |
+| `quota-warning-100` | daily usage crosses 100% of the plan quota (P1-085) | transactional / never capped |
+| `abuse-report-ack` | abuse report filed, to the reporter's contact (P1-089) | transactional / never capped |
+| `enforcement-warning` | enforcement ladder: warn step (P1-091) | transactional / never capped |
+| `enforcement-suspension` | enforcement ladder: suspend step (P1-091) | transactional / never capped |
+| `enforcement-termination` | enforcement ladder: terminate step (P1-091) | transactional / never capped |
+| `welcome` | email verified at register (P1-097) | transactional / never capped |
 
 Caps are enforced in the drain, the single choke point every
 queued mail passes through (P1-031): the drain counts sent

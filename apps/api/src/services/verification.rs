@@ -16,12 +16,16 @@
 //!   or error bodies; the database holds only its hash.
 //! - [`verify_email`] — consume a token: hash → lookup →
 //!   expiry/used checks → atomic consume → set
-//!   `email_verified_at` → audit. Unknown, used, and expired
-//!   tokens are deliberately indistinguishable in the *used*
-//!   case only: an expired token is `ExpiredToken` (PF-1011),
-//!   an unknown or already-used token is `InvalidToken`
-//!   (PF-1010) — a used token must not tell the caller it was
-//!   once valid.
+//!   `email_verified_at` → audit → enqueue the welcome mail
+//!   (P1-097, template `welcome`, payload `{user_id}` — the
+//!   token is single-use, so a verified account gets exactly
+//!   one welcome; the mail is queued in the same transaction
+//!   as the verify, so a failed verify sends nothing).
+//!   Unknown, used, and expired tokens are deliberately
+//!   indistinguishable in the *used* case only: an expired
+//!   token is `ExpiredToken` (PF-1011), an unknown or
+//!   already-used token is `InvalidToken` (PF-1010) — a used
+//!   token must not tell the caller it was once valid.
 //! - [`resend_verification`] — mint a fresh token + mail for an
 //!   unverified user, at most 3 per hour. The count is the
 //!   outbox rows for this user + template in the last hour —
@@ -121,6 +125,15 @@ pub const EMAIL_CHANGE_VERIFY_TEMPLATE: &str = "email-change-verify";
 /// warning ("your account's email is being changed — if this
 /// wasn't you, ...") from the user row.
 pub const EMAIL_CHANGE_ALERT_TEMPLATE: &str = "email-change-alert";
+
+/// Outbox template for the welcome mail (P1-097): sent to
+/// the address on record when a registration token is
+/// consumed, payload `{user_id}` — the drain renders the
+/// quickstart link + the honest quality-promise line from
+/// the user row. NOT sent on email-change confirm: that user
+/// is already onboarded, and a welcome mail there would be
+/// the wrong mail at the wrong moment.
+pub const WELCOME_TEMPLATE: &str = "welcome";
 
 /// Resend limit: at most this many verification tokens minted
 /// per user per hour (P1-002 spec).
@@ -301,6 +314,23 @@ pub async fn verify_email(
                     before: None,
                     after: Some(serde_json::json!({ "email_verified": true })),
                     reason: None,
+                },
+            )
+            .await
+            .map_err(VerifyTxError::Db)?;
+            // P1-097: the welcome mail, in the same transaction
+            // as the verify — a failed verify sends nothing, and
+            // the single-use token means exactly one welcome per
+            // account. Payload `{user_id}` only: the drain
+            // resolves the address from the user row (and
+            // verifies its sha256 against `to_hash`, NFR-42).
+            email_outbox::enqueue(
+                &mut *conn,
+                &NewOutboxMail {
+                    to_hash: sha256_hex(user.email.as_bytes()),
+                    template: WELCOME_TEMPLATE.to_string(),
+                    payload: serde_json::json!({ "user_id": user.id }),
+                    scheduled_at: None,
                 },
             )
             .await

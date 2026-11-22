@@ -30,10 +30,10 @@
 //!   until the operator deliberately raises the cap.
 //! * Transactional — everything else (`email-change-alert`,
 //!   `lockout-notice`, `new-login-digest`,
-//!   `refresh-reuse-alert`, `account-deletion`): security and
-//!   account alerts are never capped — a lockout notice must
-//!   reach the user precisely when someone is hammering the
-//!   account.
+//!   `refresh-reuse-alert`, `account-deletion`, `welcome`):
+//!   security and account alerts are never capped — a lockout
+//!   notice must reach the user precisely when someone is
+//!   hammering the account.
 //!
 //! The caps are operator config (`PF_MAILER_*_CAP_PER_HOUR`,
 //! defaults 3 / 3 / 0). This is a backstop, not the only limit:
@@ -201,6 +201,7 @@ mod tests {
             "enforcement-warning",
             "enforcement-suspension",
             "enforcement-termination",
+            "welcome",
         ] {
             assert_eq!(template_class(template), MailClass::Transactional);
         }

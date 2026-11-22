@@ -621,7 +621,16 @@ async fn admin_abuse_queue_sla_fields() {
     // breached.
     let old_open = seed_report(&app, None, None, "open", now - Duration::days(4)).await;
     // Filed 1 hour ago, still open: due in 71 h — fresh.
-    let fresh_open = seed_report(&app, None, None, "open", now - Duration::hours(1)).await;
+    // Seeded off the REAL clock, not the frozen one: the
+    // resolve stamps `resolved_at` from the DB clock (real
+    // time), so a frozen seed's due time (frozen + 71 h =
+    // 2026-11-22T11:00:00Z) passed and the "resolved on
+    // time" assertion below became a deterministic failure
+    // — a time bomb, not a flake (attempt 4 died on it).
+    // Seeding off real now keeps ~71 h of headroom forever,
+    // and the row still sits below the pagination test's
+    // year-ahead seeds in the shared harness DB.
+    let fresh_open = seed_report(&app, None, None, "open", Utc::now() - Duration::hours(1)).await;
 
     let item = find_in_queue(&app, &admin_token, old_open)
         .await
