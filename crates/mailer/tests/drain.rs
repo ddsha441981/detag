@@ -941,6 +941,266 @@ async fn drain_sends_weekly_digest_with_usage_and_plan() {
 }
 
 #[tokio::test]
+async fn drain_sends_quota_warning_80_with_usage_and_plan() {
+    // P1-102: the 80% warning resolves the recipient from
+    // the user row (payload `{user_id, ...}`), renders the
+    // true numbers + the plan, and is marked sent — one drain
+    // pass, no duplicate. The payload is the exact shape the
+    // quota-warning service enqueues (P1-085: day, dimension,
+    // unit, used, limit, percent, plan_code). The mail is
+    // transactional, so the drain cap never parks it (the
+    // P1-031 stance).
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let user_id = make_user(&ctx, "jules@example.com").await;
+    let id = enqueue(
+        &ctx,
+        "jules@example.com",
+        "quota-warning-80",
+        json!({
+            "user_id": user_id,
+            "day": "2026-11-20",
+            "dimension": "images",
+            "unit": "images",
+            "used": 8,
+            "limit": 10,
+            "percent": 80,
+            "plan_code": "pro",
+        }),
+    )
+    .await;
+    let now = Utc::now();
+
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &drain_config(), now)
+        .await
+        .expect("drain pass succeeds");
+    assert_eq!(outcome.claimed, 1);
+    assert_eq!(outcome.sent, 1);
+    assert_eq!(outcome.transient_failed, 0);
+    assert_eq!(outcome.permanent_failed, 0);
+
+    let sent = transport.sent();
+    assert_eq!(sent.len(), 1, "exactly one mail sent");
+    assert_eq!(sent[0].to, "jules@example.com");
+    assert_eq!(sent[0].subject, "You've used 80% of your daily Detag quota");
+    assert!(
+        sent[0]
+            .text_body
+            .contains("You've used 80% of your daily quota on your Detag pro plan (8 of 10 images) for 2026-11-20."),
+        "the 80% warning states the true numbers:\n{}",
+        sent[0].text_body
+    );
+    assert!(
+        sent[0].text_body.contains("http://localhost:8080/billing"),
+        "the 80% warning links usage:\n{}",
+        sent[0].text_body
+    );
+
+    assert!(
+        email_outbox::unsent_for_template(&ctx.pool, "quota-warning-80")
+            .await
+            .expect("read back")
+            .iter()
+            .all(|r| r.id != id),
+        "the sent row must not be unsent anymore"
+    );
+
+    ctx.close().await;
+}
+
+#[tokio::test]
+async fn drain_sends_quota_warning_100_with_usage_and_plan() {
+    // P1-102: the 100% warning — same send leg as the 80%
+    // one, with the full quota stated (10 of 10 images). The
+    // payload is the exact shape the quota-warning service
+    // enqueues at the full threshold (P1-085).
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let user_id = make_user(&ctx, "kara@example.com").await;
+    let id = enqueue(
+        &ctx,
+        "kara@example.com",
+        "quota-warning-100",
+        json!({
+            "user_id": user_id,
+            "day": "2026-11-20",
+            "dimension": "images",
+            "unit": "images",
+            "used": 10,
+            "limit": 10,
+            "percent": 100,
+            "plan_code": "pro",
+        }),
+    )
+    .await;
+    let now = Utc::now();
+
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &drain_config(), now)
+        .await
+        .expect("drain pass succeeds");
+    assert_eq!(outcome.claimed, 1);
+    assert_eq!(outcome.sent, 1);
+    assert_eq!(outcome.transient_failed, 0);
+    assert_eq!(outcome.permanent_failed, 0);
+
+    let sent = transport.sent();
+    assert_eq!(sent.len(), 1, "exactly one mail sent");
+    assert_eq!(sent[0].to, "kara@example.com");
+    assert_eq!(sent[0].subject, "Your daily Detag quota is full");
+    assert!(
+        sent[0]
+            .text_body
+            .contains("You've used all of your daily quota on your Detag pro plan (10 of 10 images) for 2026-11-20."),
+        "the 100% warning states the full quota:\n{}",
+        sent[0].text_body
+    );
+    assert!(
+        sent[0].text_body.contains("http://localhost:8080/plans"),
+        "the 100% warning links upgrade:\n{}",
+        sent[0].text_body
+    );
+
+    assert!(
+        email_outbox::unsent_for_template(&ctx.pool, "quota-warning-100")
+            .await
+            .expect("read back")
+            .iter()
+            .all(|r| r.id != id),
+        "the sent row must not be unsent anymore"
+    );
+
+    ctx.close().await;
+}
+
+#[tokio::test]
+async fn drain_sends_subscription_welcome_with_plan() {
+    // P1-102: the activation mail (the spec's
+    // "subscription-activated") resolves the recipient from
+    // the user row, names the plan that went live, and is
+    // marked sent — one drain pass, no duplicate. The payload
+    // is the exact shape the state machine enqueues on
+    // `trialing → active` (P1-064: `{user_id, plan_code}`).
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let user_id = make_user(&ctx, "liam@example.com").await;
+    let id = enqueue(
+        &ctx,
+        "liam@example.com",
+        "subscription-welcome",
+        json!({
+            "user_id": user_id,
+            "plan_code": "pro",
+        }),
+    )
+    .await;
+    let now = Utc::now();
+
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &drain_config(), now)
+        .await
+        .expect("drain pass succeeds");
+    assert_eq!(outcome.claimed, 1);
+    assert_eq!(outcome.sent, 1);
+    assert_eq!(outcome.transient_failed, 0);
+    assert_eq!(outcome.permanent_failed, 0);
+
+    let sent = transport.sent();
+    assert_eq!(sent.len(), 1, "exactly one mail sent");
+    assert_eq!(sent[0].to, "liam@example.com");
+    assert_eq!(sent[0].subject, "Your Detag pro plan is active");
+    assert!(
+        sent[0]
+            .text_body
+            .contains("Your Detag pro plan is now active."),
+        "the welcome mail names the live plan:\n{}",
+        sent[0].text_body
+    );
+    assert!(
+        sent[0].text_body.contains("http://localhost:8080/billing"),
+        "the welcome mail links billing:\n{}",
+        sent[0].text_body
+    );
+
+    assert!(
+        email_outbox::unsent_for_template(&ctx.pool, "subscription-welcome")
+            .await
+            .expect("read back")
+            .iter()
+            .all(|r| r.id != id),
+        "the sent row must not be unsent anymore"
+    );
+
+    ctx.close().await;
+}
+
+#[tokio::test]
+async fn drain_sends_subscription_dunning_with_plan() {
+    // P1-102: the payment-failed mail (the spec's
+    // "payment-failed", the day-0 past_due mail) resolves the
+    // recipient from the user row, names the failed plan
+    // payment + the past-due state, and is marked sent — one
+    // drain pass, no duplicate. The payload is the exact
+    // shape the state machine enqueues on the move to
+    // `past_due` (P1-064: `{user_id, plan_code}`).
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let user_id = make_user(&ctx, "mia@example.com").await;
+    let id = enqueue(
+        &ctx,
+        "mia@example.com",
+        "subscription-dunning",
+        json!({
+            "user_id": user_id,
+            "plan_code": "pro",
+        }),
+    )
+    .await;
+    let now = Utc::now();
+
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &drain_config(), now)
+        .await
+        .expect("drain pass succeeds");
+    assert_eq!(outcome.claimed, 1);
+    assert_eq!(outcome.sent, 1);
+    assert_eq!(outcome.transient_failed, 0);
+    assert_eq!(outcome.permanent_failed, 0);
+
+    let sent = transport.sent();
+    assert_eq!(sent.len(), 1, "exactly one mail sent");
+    assert_eq!(sent[0].to, "mia@example.com");
+    assert_eq!(
+        sent[0].subject,
+        "Your Detag payment failed — update your payment method"
+    );
+    assert!(
+        sent[0]
+            .text_body
+            .contains("Your Detag pro plan payment failed, so your subscription is past due."),
+        "the dunning mail names the failed payment:\n{}",
+        sent[0].text_body
+    );
+    assert!(
+        sent[0].text_body.contains("http://localhost:8080/billing"),
+        "the dunning mail links billing:\n{}",
+        sent[0].text_body
+    );
+
+    assert!(
+        email_outbox::unsent_for_template(&ctx.pool, "subscription-dunning")
+            .await
+            .expect("read back")
+            .iter()
+            .all(|r| r.id != id),
+        "the sent row must not be unsent anymore"
+    );
+
+    ctx.close().await;
+}
+
+#[tokio::test]
 async fn drain_parks_abuse_ack_with_bad_data() {
     // P1-089: an ack naming a report that does not exist, an
     // ack whose `to_hash` names a different address, and an
