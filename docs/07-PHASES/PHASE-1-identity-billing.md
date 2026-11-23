@@ -818,11 +818,11 @@
   - **AC:**
     - [x] triggers verified
 
-- [ ] **P1-103** — Unsubscribe/preferences
+- [x] **P1-103** — Unsubscribe/preferences
   - **Type:** feat · **Area:** mailer · **Est:** S · **Deps:** P1-102 · **Prio:** P1
   - **Spec:** Settings jsonb prefs; transactional exempt; List-Unsubscribe header for future marketing.
   - **AC:**
-    - [ ] prefs honored
+    - [x] prefs honored
 
 - [ ] **P1-104** — Email regression suite
   - **Type:** test · **Area:** mailer · **Est:** S · **Deps:** P1-103 · **Prio:** P1
