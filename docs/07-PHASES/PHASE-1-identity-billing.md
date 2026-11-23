@@ -812,11 +812,11 @@
   - **AC:**
     - [x] flag respected
 
-- [ ] **P1-102** — Quota/billing email set
+- [x] **P1-102** — Quota/billing email set
   - **Type:** feat · **Area:** mailer · **Est:** S · **Deps:** P1-101 · **Prio:** P1
   - **Spec:** quota-80, quota-100, payment-failed, subscription-activated templates wired to events.
   - **AC:**
-    - [ ] triggers verified
+    - [x] triggers verified
 
 - [ ] **P1-103** — Unsubscribe/preferences
   - **Type:** feat · **Area:** mailer · **Est:** S · **Deps:** P1-102 · **Prio:** P1
