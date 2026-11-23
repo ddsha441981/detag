@@ -830,11 +830,11 @@
   - **AC:**
     - [x] suite green
 
-- [ ] **P1-105** — Email matrix docs
+- [x] **P1-105** — Email matrix docs
   - **Type:** docs · **Area:** mailer · **Est:** S · **Deps:** P1-104 · **Prio:** P1
   - **Spec:** Table: trigger, template, cap, audience; ops notes.
   - **AC:**
-    - [ ] matrix committed
+    - [x] matrix committed
 
 ---
 
