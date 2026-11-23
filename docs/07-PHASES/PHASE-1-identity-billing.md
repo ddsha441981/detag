@@ -824,11 +824,11 @@
   - **AC:**
     - [x] prefs honored
 
-- [ ] **P1-104** — Email regression suite
+- [x] **P1-104** — Email regression suite
   - **Type:** test · **Area:** mailer · **Est:** S · **Deps:** P1-103 · **Prio:** P1
   - **Spec:** All templates snapshot-tested; link tokens single-use; no PII in subject lines.
   - **AC:**
-    - [ ] suite green
+    - [x] suite green
 
 - [ ] **P1-105** — Email matrix docs
   - **Type:** docs · **Area:** mailer · **Est:** S · **Deps:** P1-104 · **Prio:** P1
