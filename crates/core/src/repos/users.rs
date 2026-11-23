@@ -111,6 +111,33 @@ pub async fn update_consent(
     })
 }
 
+/// Replace the whole `settings` jsonb (P1-103): the caller
+/// merged the patch first — this function stores, it does not
+/// validate. Returns `NotFound` when the user does not exist.
+pub async fn update_settings(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+    settings: &serde_json::Value,
+) -> Result<User, RepoError> {
+    sqlx::query_as!(
+        User,
+        "UPDATE users SET
+             settings = $2,
+             updated_at = now()
+         WHERE id = $1
+         RETURNING id, email, password_hash, email_verified_at, role, status,
+             tos_version, aup_version, deleted_at, revoked_before, display_name, pending_email, settings, created_at, updated_at",
+        id,
+        settings,
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|err| match err {
+        sqlx::Error::RowNotFound => RepoError::NotFound,
+        other => RepoError::from_sqlx(other),
+    })
+}
+
 /// Fetch by id. `None` when the id does not exist.
 pub async fn by_id(
     pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,

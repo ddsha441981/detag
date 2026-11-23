@@ -1282,3 +1282,186 @@ async fn drain_parks_abuse_ack_with_bad_data() {
 
     ctx.close().await;
 }
+
+/// P1-103: transactional mail is exempt from prefs — a user
+/// opted out of everything still receives it, and the sent
+/// mail carries no List-Unsubscribe header.
+#[tokio::test]
+async fn drain_sends_transactional_mail_to_a_fully_opted_out_user() {
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let user_id = make_user(&ctx, "opted-out@example.com").await;
+    users::update_settings(
+        &ctx.pool,
+        user_id,
+        &json!({"weekly_digest": false, "marketing": false}),
+    )
+    .await
+    .expect("opt the user out of everything");
+    let id = enqueue(
+        &ctx,
+        "opted-out@example.com",
+        "welcome",
+        json!({ "user_id": user_id }),
+    )
+    .await;
+    let now = Utc::now();
+
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &drain_config(), now)
+        .await
+        .expect("drain pass succeeds");
+    assert_eq!(outcome.claimed, 1);
+    assert_eq!(outcome.sent, 1, "transactional mail is never prefs-gated");
+    assert_eq!(outcome.permanent_failed, 0);
+
+    let sent = transport.sent();
+    assert_eq!(sent.len(), 1, "exactly one mail sent");
+    assert_eq!(sent[0].to, "opted-out@example.com");
+    assert_eq!(
+        sent[0].list_unsubscribe, None,
+        "transactional mail carries no List-Unsubscribe header"
+    );
+
+    // The sent row is gone from the unsent read-back.
+    assert!(
+        email_outbox::unsent_for_template(&ctx.pool, "welcome")
+            .await
+            .expect("read back")
+            .iter()
+            .all(|r| r.id != id),
+        "the sent row must not be unsent anymore"
+    );
+
+    ctx.close().await;
+}
+
+/// A drain config with the marketing cap raised, so the
+/// prefs gate — not the 0/hr cap — decides a marketing row's
+/// fate. Production keeps the cap at 0; the test raises it
+/// to reach the gate.
+fn drain_config_with_marketing_cap(cap: u32) -> DrainConfig {
+    let mut config = drain_config();
+    config.rate_limits.marketing_cap_per_hour = cap;
+    config
+}
+
+/// P1-103: a marketing row for an opted-out user is parked
+/// before render — prefs are honored at the last mile.
+#[tokio::test]
+async fn drain_parks_marketing_mail_for_an_opted_out_user() {
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let user_id = make_user(&ctx, "no-marketing@example.com").await;
+    users::update_settings(&ctx.pool, user_id, &json!({"marketing": false}))
+        .await
+        .expect("opt the user out of marketing");
+    let id = enqueue(
+        &ctx,
+        "no-marketing@example.com",
+        "marketing-newsletter",
+        json!({ "user_id": user_id }),
+    )
+    .await;
+    let now = Utc::now();
+
+    let outcome = drain_once(
+        &ctx.pool,
+        &transport,
+        &engine,
+        &drain_config_with_marketing_cap(10),
+        now,
+    )
+    .await
+    .expect("drain pass succeeds");
+    assert_eq!(outcome.claimed, 1);
+    assert_eq!(outcome.sent, 0, "an opted-out user gets no marketing mail");
+    assert_eq!(outcome.permanent_failed, 1);
+    assert_eq!(outcome.rate_limited, 0, "parked by prefs, not by the cap");
+    assert_eq!(transport.sent_count(), 0, "nothing was sent");
+
+    let stored = email_outbox::unsent_for_template(&ctx.pool, "marketing-newsletter")
+        .await
+        .expect("read back")
+        .into_iter()
+        .find(|r| r.id == id)
+        .expect("parked row must stay in the table");
+    assert_eq!(stored.attempts, 3, "parked at max attempts");
+    assert!(
+        stored
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("opted out of marketing mail"),
+        "the park reason names the opt-out: {:?}",
+        stored.last_error
+    );
+
+    let outcome = drain_once(
+        &ctx.pool,
+        &transport,
+        &engine,
+        &drain_config_with_marketing_cap(10),
+        now,
+    )
+    .await
+    .expect("second pass succeeds");
+    assert_eq!(outcome.claimed, 0, "parked rows are never claimed again");
+
+    ctx.close().await;
+}
+
+/// P1-103: the same marketing row for an opted-IN user passes
+/// the prefs gate and dies at render instead — no
+/// `marketing-newsletter` template files exist yet, so the
+/// park reason is the unknown template, not the opt-out.
+/// This proves the gate is the prefs, not the template: the
+/// opted-out test parks before render, this one after it.
+#[tokio::test]
+async fn drain_marketing_mail_for_an_opted_in_user_reaches_render() {
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let user_id = make_user(&ctx, "marketing-ok@example.com").await;
+    let id = enqueue(
+        &ctx,
+        "marketing-ok@example.com",
+        "marketing-newsletter",
+        json!({ "user_id": user_id }),
+    )
+    .await;
+    let now = Utc::now();
+
+    let outcome = drain_once(
+        &ctx.pool,
+        &transport,
+        &engine,
+        &drain_config_with_marketing_cap(10),
+        now,
+    )
+    .await
+    .expect("drain pass succeeds");
+    assert_eq!(outcome.claimed, 1);
+    assert_eq!(outcome.sent, 0, "no template exists yet, so nothing sends");
+    assert_eq!(outcome.permanent_failed, 1);
+    assert_eq!(transport.sent_count(), 0);
+
+    let stored = email_outbox::unsent_for_template(&ctx.pool, "marketing-newsletter")
+        .await
+        .expect("read back")
+        .into_iter()
+        .find(|r| r.id == id)
+        .expect("parked row must stay in the table");
+    assert!(
+        stored
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("unknown email template 'marketing-newsletter'"),
+        "the opted-in row dies at render, not at the prefs gate: {:?}",
+        stored.last_error
+    );
+
+    ctx.close().await;
+}

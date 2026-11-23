@@ -47,13 +47,12 @@
 //! `users.settings` jsonb, key `weekly_digest`: `false`
 //! means opted out, anything else (absent, `true`, a
 //! non-bool) means opted in — the default is ON, the flag
-//! is the OFF switch (ASSUMPTION-062). This is the first
-//! consumer of the raw `settings` column; P1-103 owns the
-//! general prefs system and may namespace or migrate the
-//! key. There is no self-serve toggle endpoint today (no
-//! PATCH /v1/me settings field exists), so the opt-out is
-//! honored by the sender and settable via the row until
-//! P1-103 lands the prefs endpoint.
+//! is the OFF switch (ASSUMPTION-062). The key stays at the
+//! top level of `settings` (P1-103, ASSUMPTION-064 —
+//! namespacing it would orphan the opt-out this module's
+//! live tests pin); the read/write of the key is the prefs
+//! service's [`crate::services::email_prefs`], and the
+//! self-serve toggle is GET/PUT `/v1/me/email-preferences`.
 //!
 //! # The tips
 //!
@@ -118,8 +117,10 @@ pub enum DigestOutcome {
 /// `weekly_digest` key in `users.settings` is exactly
 /// `false`. Absent, `true`, or a non-bool value means opted
 /// in — the default is ON, the flag is the OFF switch.
+/// Delegates to the prefs service (P1-103), the single
+/// source of truth for the key.
 pub fn weekly_digest_opted_out(settings: &Value) -> bool {
-    settings.get("weekly_digest") == Some(&Value::Bool(false))
+    crate::services::email_prefs::weekly_digest_opted_out(settings)
 }
 
 /// Tips for the digest, from the week's numbers alone.

@@ -682,6 +682,8 @@ test (`migration_purge_cascade_triggers.rs`).
 | DELETE | `/v1/me` | user | request deletion → 204 (30 d grace, purge deletes) |
 | POST | `/v1/me/consent` | user | re-accept the current ToS + AUP versions → 200 updated profile (P1-095: body `{accept_tos_version, accept_aup_version}`, each must equal its current version — else 422 `tos_version_mismatch` / `aup_version_mismatch`; audited `user.consent_accepted`; an already-current re-accept is a no-op 200 with no write and no audit; a bump of `PF_TOS_CURRENT_VERSION` / `PF_AUP_CURRENT_VERSION` flips `up_to_date` false until this call clears it — the bump gates no other endpoint) |
 | GET | `/v1/me/onboarding` | user | onboarding checklist (P1-096: five steps — verify email, accept ToS, first upload, first job, optional API key — each with `completed` + `completed_at`; `all_done` means the four required steps are complete; a read model over the user row + first upload/job/key rows + the latest `user.consent_accepted` audit row; a read writes nothing; API keys 403) |
+| GET | `/v1/me/email-preferences` | user | email prefs (P1-103: `weekly_digest` + `marketing`, each defaulting to `true`; a read writes nothing; API keys 403) |
+| PUT | `/v1/me/email-preferences` | user | set email prefs (P1-103: body `{weekly_digest?: bool, marketing?: bool}`, at least one required — empty body 422, unknown field 422, non-bool 422; a no-op PUT is a 200 with no write and no audit; a real change is one transaction — settings update + one `user.email_prefs_updated` audit row; API keys 403) |
 | GET | `/v1/me/sessions` | user | list sessions (device, created, last_seen) |
 | DELETE | `/v1/me/sessions/{id}` | user | revoke one |
 | POST | `/v1/me/export` | user | request data export (async, emailed link) |
