@@ -105,14 +105,14 @@ struct MatrixRow {
     note: &'static str,
 }
 
-/// The matrix: all 73 `/v1` routes (auth 22, uploads 4,
+/// The matrix: all 75 `/v1` routes (auth 24, uploads 4,
 /// jobs 9, billing 12, admin 26 — the 25 `/v1/admin/*`
 /// routes plus the public `POST /v1/abuse` intake). The meta
 /// routes (`/healthz`, `/readyz`) are unversioned and public,
 /// so they have no row — the completeness test asserts
-/// exactly the 73 `/v1` entries.
+/// exactly the 75 `/v1` entries.
 const MATRIX: &[MatrixRow] = &[
-    // auth (21)
+    // auth (24)
     MatrixRow { method: "POST", path: "/v1/auth/register", outcome: KeyOutcome::Ignored, note: "no credential — the handler validates the body" },
     MatrixRow { method: "POST", path: "/v1/auth/verify-email", outcome: KeyOutcome::Ignored, note: "no credential — the handler validates the body" },
     MatrixRow { method: "POST", path: "/v1/auth/resend-verification", outcome: KeyOutcome::Ignored, note: "no credential — the handler validates the body" },
@@ -128,6 +128,8 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow { method: "DELETE", path: "/v1/me", outcome: KeyOutcome::Forbidden, note: "takes AuthContext; keys are not in the scope table" },
     MatrixRow { method: "POST", path: "/v1/me/consent", outcome: KeyOutcome::Forbidden, note: "takes AuthContext; keys are not in the scope table" },
     MatrixRow { method: "GET", path: "/v1/me/onboarding", outcome: KeyOutcome::Forbidden, note: "live handler (P1-096) behind AuthContext; keys are not in the scope table" },
+    MatrixRow { method: "GET", path: "/v1/me/email-preferences", outcome: KeyOutcome::Forbidden, note: "live handler (P1-103) behind AuthContext; keys are not in the scope table" },
+    MatrixRow { method: "PUT", path: "/v1/me/email-preferences", outcome: KeyOutcome::Forbidden, note: "live handler (P1-103) behind AuthContext; keys are not in the scope table" },
     MatrixRow { method: "GET", path: "/v1/me/sessions", outcome: KeyOutcome::Forbidden, note: "takes AuthContext; keys are not in the scope table" },
     MatrixRow { method: "DELETE", path: "/v1/me/sessions/{id}", outcome: KeyOutcome::Forbidden, note: "takes AuthContext; keys are not in the scope table" },
     MatrixRow { method: "POST", path: "/v1/me/export", outcome: KeyOutcome::Unprotected, note: "gap — plain stub, no credential checked; the handler ticket adds the extractor" },
@@ -163,7 +165,7 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow { method: "POST", path: "/v1/webhook-endpoints", outcome: KeyOutcome::Allowed("webhooks:manage"), note: "stub_authed; the user's own webhook endpoints are key-managed" },
     MatrixRow { method: "DELETE", path: "/v1/webhook-endpoints/{id}", outcome: KeyOutcome::Allowed("webhooks:manage"), note: "stub_authed; the user's own webhook endpoints are key-managed" },
     MatrixRow { method: "GET", path: "/v1/webhook-endpoints/{id}/deliveries", outcome: KeyOutcome::Allowed("webhooks:manage"), note: "stub_authed; the user's own webhook endpoints are key-managed" },
-    // admin (25) — no admin ever for keys
+    // admin (26) — no admin ever for keys
     MatrixRow { method: "GET", path: "/v1/admin/metrics/dashboard", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
     MatrixRow { method: "GET", path: "/v1/admin/users", outcome: KeyOutcome::Forbidden, note: "live handler behind AdminReadContext; the extractor rejects keys first" },
     MatrixRow { method: "POST", path: "/v1/admin/users/{id}/suspend", outcome: KeyOutcome::Forbidden, note: "live handler behind AdminContext; the guard rejects a key outright" },
@@ -374,12 +376,12 @@ fn matrix_covers_every_v1_route() {
         .collect();
     assert_eq!(
         v1_routes.len(),
-        73,
-        "ROUTE_TABLE must hold the 73 /v1 routes (auth 22 + uploads 4 + jobs 9 + billing 12 + admin 26)"
+        75,
+        "ROUTE_TABLE must hold the 75 /v1 routes (auth 24 + uploads 4 + jobs 9 + billing 12 + admin 26)"
     );
     assert_eq!(
         MATRIX.len(),
-        73,
+        75,
         "the matrix must hold one row per /v1 route ({} rows today)",
         MATRIX.len()
     );

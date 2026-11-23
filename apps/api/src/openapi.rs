@@ -80,7 +80,8 @@ use crate::routes::billing::{
 };
 use crate::routes::meta::{__path_healthz, __path_readyz};
 use crate::routes::profile::{
-    __path_accept_consent, __path_delete_me, __path_get_me, __path_get_onboarding, __path_patch_me,
+    __path_accept_consent, __path_delete_me, __path_get_email_preferences, __path_get_me,
+    __path_get_onboarding, __path_patch_me, __path_put_email_preferences,
 };
 use crate::routes::sessions::{__path_delete_session, __path_list_sessions};
 use crate::services::abuse_intake::{AbuseIntakeRequest, AbuseReportResponse};
@@ -99,6 +100,7 @@ use crate::services::admin_usage::{AdminUsageResponse, UsageTotals};
 use crate::services::api_keys::{CreateApiKeyRequest, CreateApiKeyResponse};
 use crate::services::checkout::{CheckoutRequestBody, CheckoutResponse, ScheduledChangeResponse};
 use crate::services::consent::{AcceptConsentRequest, ConsentStatus};
+use crate::services::email_prefs::{EmailPrefs, UpdateEmailPreferencesRequest};
 use crate::services::enforcement::{EnforcementResponse, EnforcementStep};
 use crate::services::login::{LoginRequest, LoginResponse};
 use crate::services::onboarding::{OnboardingChecklist, OnboardingStep};
@@ -122,7 +124,7 @@ use crate::AppState;
         version = "1.0.0",
         description = "Detag — watermark removal for images and videos you own. All errors are RFC 7807 problem+json with a stable PF-code (see the Problem schema)."
     ),
-    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, refresh, logout, logout_all, forgot_password, reset_password, get_me, patch_me, delete_me, accept_consent, get_onboarding, list_sessions, delete_session, create_api_key, rotate_api_key, revoke_api_key, suspend, restore, warn_user_handler, terminate_user_handler, search_users_handler, list_jobs_handler, impersonate, list_plans_handler, update_plans_handler, catalog_sync_handler, cancel_subscription, admin_usage_handler, admin_usage_export_handler, admin_audit_handler, admin_abuse_queue_handler, resolve_abuse_report_handler, admin_attestations_handler, abuse_intake, create_checkout, create_portal, list_invoices, get_usage, receive_stripe_webhook, receive_razorpay_webhook),
+    paths(healthz, readyz, register, verify_email, resend_verification, confirm_email_change, login, refresh, logout, logout_all, forgot_password, reset_password, get_me, patch_me, delete_me, accept_consent, get_onboarding, get_email_preferences, put_email_preferences, list_sessions, delete_session, create_api_key, rotate_api_key, revoke_api_key, suspend, restore, warn_user_handler, terminate_user_handler, search_users_handler, list_jobs_handler, impersonate, list_plans_handler, update_plans_handler, catalog_sync_handler, cancel_subscription, admin_usage_handler, admin_usage_export_handler, admin_audit_handler, admin_abuse_queue_handler, resolve_abuse_report_handler, admin_attestations_handler, abuse_intake, create_checkout, create_portal, list_invoices, get_usage, receive_stripe_webhook, receive_razorpay_webhook),
     components(schemas(
         Problem,
         Readiness,
@@ -142,6 +144,8 @@ use crate::AppState;
         ConsentStatus,
         OnboardingChecklist,
         OnboardingStep,
+        EmailPrefs,
+        UpdateEmailPreferencesRequest,
         SessionItem,
         CreateApiKeyRequest,
         CreateApiKeyResponse,

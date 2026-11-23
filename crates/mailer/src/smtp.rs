@@ -16,7 +16,10 @@
 
 use crate::error::MailError;
 use detag_core::config::Settings;
-use lettre::message::{Mailbox, Message, MultiPart};
+use lettre::message::{
+    header::{HeaderName, HeaderValue},
+    Mailbox, Message, MultiPart,
+};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
 use std::sync::Mutex;
@@ -37,6 +40,12 @@ pub struct OutgoingMail {
     /// Rendered HTML body (P1-029) — sent as the HTML part of a
     /// multipart/alternative message next to the text part.
     pub html_body: String,
+    /// The `List-Unsubscribe` header value (P1-103), an
+    /// angle-bracketed URL — set by the drain for
+    /// Marketing-class mail only, `None` for every other
+    /// class. Transactional mail never carries an unsubscribe
+    /// header: there is nothing to opt out of.
+    pub list_unsubscribe: Option<String>,
 }
 
 /// SMTP configuration (from `Settings`, see PF_SMTP_*).
@@ -137,10 +146,23 @@ impl MailTransport for LettreTransport {
             .to
             .parse::<Mailbox>()
             .map_err(|_| MailError::InvalidAddress(mail.to.clone()))?;
-        let message = Message::builder()
+        let mut builder = Message::builder()
             .from(self.from.clone())
             .to(to)
-            .subject(&mail.subject)
+            .subject(&mail.subject);
+        // P1-103: marketing mail carries the List-Unsubscribe
+        // header (RFC 8058 lists the URL form; there is no
+        // one-click `List-Unsubscribe-Post` until P1-104's
+        // single-use link tokens exist, so no such header is
+        // emitted). The value is already angle-bracketed by
+        // the drain; lettre's `HeaderValue::new` encodes it.
+        if let Some(unsubscribe) = &mail.list_unsubscribe {
+            builder = builder.raw_header(HeaderValue::new(
+                HeaderName::new_from_ascii_str("List-Unsubscribe"),
+                unsubscribe.clone(),
+            ));
+        }
+        let message = builder
             .multipart(MultiPart::alternative_plain_html(
                 mail.text_body.clone(),
                 mail.html_body.clone(),
@@ -329,6 +351,7 @@ mod tests {
                 subject: "Verify your Detag email".to_string(),
                 text_body: "open the link".to_string(),
                 html_body: "<p>open the link</p>".to_string(),
+                list_unsubscribe: None,
             })
             .await
             .expect("send to the fake relay succeeds");
@@ -362,6 +385,80 @@ mod tests {
             data.contains("<p>open the link</p>"),
             "DATA must carry the html part:\n{data}"
         );
+        // P1-103: a transactional mail (list_unsubscribe None)
+        // carries no List-Unsubscribe header on the wire.
+        assert!(
+            !data.contains("List-Unsubscribe"),
+            "transactional mail must not carry an unsubscribe header:\n{data}"
+        );
+    }
+
+    #[tokio::test]
+    async fn lettre_transport_emits_list_unsubscribe_when_set() {
+        // P1-103: the header rides on the wire for marketing
+        // mail (the drain sets it) and is absent otherwise
+        // (the previous test's DATA has no such header — the
+        // `None` path is pinned there by construction, and
+        // the drain test pins the `None` for transactional
+        // mail). No `List-Unsubscribe-Post`: one-click needs
+        // P1-104's single-use tokens, so it is not claimed.
+        let capture: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let server_capture = Arc::clone(&capture);
+        let server = tokio::spawn(async move {
+            run_fake_smtp(server_capture).await;
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let port = loop {
+            let marker = capture.lock().expect("capture lock").clone();
+            if let Some(marker) = marker {
+                break marker
+                    .strip_prefix("PORT:")
+                    .expect("port marker")
+                    .parse::<u16>()
+                    .expect("port parses");
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "fake smtp did not start in 5 s"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        };
+        let transport = LettreTransport::new(&SmtpConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            user: String::new(),
+            pass: String::new(),
+            from: "noreply@detag.local".to_string(),
+            tls: false,
+        })
+        .expect("plaintext transport builds");
+        transport
+            .send(&OutgoingMail {
+                to: "user@example.com".to_string(),
+                from: "noreply@detag.local".to_string(),
+                subject: "Monthly news".to_string(),
+                text_body: "news".to_string(),
+                html_body: "<p>news</p>".to_string(),
+                list_unsubscribe: Some(
+                    "<http://localhost:8080/settings/email-preferences>".to_string(),
+                ),
+            })
+            .await
+            .expect("send to the fake relay succeeds");
+        server.await.expect("fake smtp task finishes");
+        let data = capture
+            .lock()
+            .expect("capture lock")
+            .clone()
+            .expect("the DATA payload was captured");
+        assert!(
+            data.contains("List-Unsubscribe: <http://localhost:8080/settings/email-preferences>"),
+            "DATA must carry the List-Unsubscribe header:\n{data}"
+        );
+        assert!(
+            !data.contains("List-Unsubscribe-Post"),
+            "no one-click header without single-use tokens:\n{data}"
+        );
     }
 
     #[tokio::test]
@@ -382,6 +479,7 @@ mod tests {
                 subject: "x".to_string(),
                 text_body: "y".to_string(),
                 html_body: "<p>y</p>".to_string(),
+                list_unsubscribe: None,
             })
             .await
             .expect_err("a bad recipient must fail before any SMTP");
@@ -413,6 +511,7 @@ mod tests {
                 subject: "x".to_string(),
                 text_body: "y".to_string(),
                 html_body: "<p>y</p>".to_string(),
+                list_unsubscribe: None,
             })
             .await
             .expect_err("a dead relay must fail the send");
@@ -447,6 +546,7 @@ mod tests {
             subject: "s".to_string(),
             text_body: "b".to_string(),
             html_body: "<p>b</p>".to_string(),
+            list_unsubscribe: None,
         };
         assert!(transport.send(&mail).await.is_err(), "1st send fails");
         assert!(transport.send(&mail).await.is_err(), "2nd send fails");

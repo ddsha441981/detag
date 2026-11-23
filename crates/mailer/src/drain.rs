@@ -29,6 +29,12 @@
 //! claim already spent an attempt, so a row can duplicate at
 //! most `max_attempts` times — the alternative (marking sent
 //! before the relay answers) would lose mail silently.
+//!
+//! Prefs (P1-103): marketing mail is gated at the last mile
+//! (see [`marketing_opted_out`]) and carries the
+//! `List-Unsubscribe` header (see [`list_unsubscribe_for`]);
+//! every other class is exempt — the drain never consults
+//! prefs for transactional, verify, or reset mail.
 
 use crate::error::MailError;
 use crate::rate_limit::{
@@ -245,7 +251,54 @@ async fn resolve_abuse_reporter(pool: &DbPool, row: &OutboxMail) -> ResolveOutco
     }
 }
 
-/// Run one drain pass: claim the due rows and send each one.
+/// The List-Unsubscribe header value for a row (P1-103):
+/// marketing mail only, pointing at the console prefs page
+/// (`{base_url}/settings/email-preferences` — a Phase 4
+/// forward reference, the P1-097 quickstart-link precedent:
+/// the page does not exist until the console lands, so the
+/// header is the mechanism for future marketing, not a live
+/// link today). Every other class gets `None` — transactional
+/// mail never carries an unsubscribe header. The value is
+/// angle-bracketed (RFC 8058 URL form); no one-click
+/// `List-Unsubscribe-Post` is emitted until P1-104's
+/// single-use link tokens exist.
+pub fn list_unsubscribe_for(template: &str, base_url: &str) -> Option<String> {
+    if template_class(template) == MailClass::Marketing {
+        Some(format!("<{base_url}/settings/email-preferences>"))
+    } else {
+        None
+    }
+}
+
+/// Whether the user named by the row's payload opted out of
+/// marketing mail (P1-103): the `marketing` key in
+/// `users.settings` is exactly `false`. The key string is
+/// duplicated here, not imported from the api service —
+/// detag-mailer cannot depend on detag-api — so the prefs
+/// service (`email_prefs::marketing_opted_out`) is the
+/// canonical definition and both tests pin the same
+/// semantics (exactly `false` opts out; absent, `true`, or a
+/// non-bool opts in). A row whose payload names no user, or
+/// a user that no longer exists, is not an opt-out: the
+/// recipient resolution already parked those rows before
+/// this runs, so `false` here only ever means "not opted
+/// out". A database error is transient — a hiccup must not
+/// lose the mail, so the row is rescheduled and retried.
+async fn marketing_opted_out(pool: &DbPool, row: &OutboxMail) -> Result<bool, MailError> {
+    let Some(user_id) = row
+        .payload
+        .get("user_id")
+        .and_then(|v| v.as_str())
+        .and_then(|raw| Uuid::parse_str(raw).ok())
+    else {
+        return Ok(false);
+    };
+    let user = users::by_id(pool, user_id).await.map_err(MailError::Db)?;
+    Ok(match user {
+        Some(user) => user.settings.get("marketing") == Some(&serde_json::Value::Bool(false)),
+        None => false,
+    })
+}
 /// A database error on the claim itself propagates — the
 /// worker loop logs it and retries next pass; per-row failures
 /// are recorded on the row and counted, never propagated.
@@ -336,6 +389,22 @@ async fn send_one<T: MailTransport>(
             }
         }
     }
+    // P1-103: marketing prefs are honored at the last mile —
+    // a Marketing-class row for a user who opted out is parked
+    // before render, so a future sender that forgets the check
+    // cannot mail through it. Transactional (and verify/reset)
+    // mail never reaches this branch: prefs cannot silence it.
+    if class == MailClass::Marketing {
+        match marketing_opted_out(pool, row).await {
+            Ok(true) => {
+                return park(pool, row, config, "user opted out of marketing mail").await;
+            }
+            Ok(false) => {}
+            Err(err) => {
+                return record_transient(pool, row, config, now, &err.to_string()).await;
+            }
+        }
+    }
     // The render context is the payload plus the drain's own
     // variables. A non-object payload cannot render — park it:
     // the payload is fixed, retrying cannot help.
@@ -362,6 +431,7 @@ async fn send_one<T: MailTransport>(
         subject: rendered.subject,
         text_body: rendered.text_body,
         html_body: rendered.html_body,
+        list_unsubscribe: list_unsubscribe_for(&row.template, &config.base_url),
     };
     match transport.send(&mail).await {
         Ok(()) => {
@@ -546,5 +616,22 @@ mod tests {
             60,
             "attempt 0 is base (defensive)"
         );
+    }
+
+    #[test]
+    fn list_unsubscribe_header_is_marketing_only() {
+        // P1-103: only marketing mail carries the header, and
+        // it points at the console prefs page.
+        assert_eq!(
+            list_unsubscribe_for("marketing-newsletter", "http://localhost:8080"),
+            Some("<http://localhost:8080/settings/email-preferences>".to_string())
+        );
+        for template in ["welcome", "weekly-digest", "verify-email", "password-reset"] {
+            assert_eq!(
+                list_unsubscribe_for(template, "http://localhost:8080"),
+                None,
+                "{template} is not marketing — no header"
+            );
+        }
     }
 }

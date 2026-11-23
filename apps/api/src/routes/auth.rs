@@ -707,6 +707,11 @@ pub fn router() -> Router<AppState> {
                 )
                 .route("/consent", post(super::profile::accept_consent))
                 .route("/onboarding", get(super::profile::get_onboarding))
+                .route(
+                    "/email-preferences",
+                    get(super::profile::get_email_preferences)
+                        .put(super::profile::put_email_preferences),
+                )
                 .route("/sessions", get(super::sessions::list_sessions))
                 .route("/sessions/{id}", delete(super::sessions::delete_session))
                 .route("/export", post(stub)),

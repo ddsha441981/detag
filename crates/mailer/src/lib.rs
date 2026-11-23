@@ -20,7 +20,7 @@ pub mod rate_limit;
 pub mod smtp;
 pub mod templates;
 
-pub use drain::{backoff_delay_secs, drain_once, DrainConfig, DrainOutcome};
+pub use drain::{backoff_delay_secs, drain_once, list_unsubscribe_for, DrainConfig, DrainOutcome};
 pub use error::MailError;
 pub use rate_limit::{
     is_over_cap, template_class, templates_for_class, MailClass, RateLimitConfig,

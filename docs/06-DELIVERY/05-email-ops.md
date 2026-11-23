@@ -57,6 +57,41 @@ claims — no "invisible", "undetectable", "SynthID" anywhere
 in templates or snapshots. A new template must pass the same
 honesty grep before it ships.
 
+## Email preferences (P1-103)
+
+Two toggles in `users.settings` jsonb — `weekly_digest`
+and `marketing`, top-level booleans, each defaulting to ON
+(opted in; exactly `false` opts out, absent / `true` / a
+non-bool opts in — ADR-0063 / ASSUMPTION-064). The user
+sets them at `GET` + `PUT /v1/me/email-preferences` (a
+no-op PUT writes nothing and audits nothing; a real change
+audits once as `user.email_prefs_updated`).
+
+- Transactional mail is exempt: the drain never consults
+  prefs for transactional, verify, or reset mail, so an
+  opt-out can never silence a password reset or a quota
+  warning.
+- Marketing mail is gated at the last mile: the drain parks
+  a Marketing-class row for an opted-out user before render
+  (reason "user opted out of marketing mail"). Marketing
+  rows are already parked by the 0/hr cap today, so the gate
+  is a second layer, not the only one.
+- Marketing mail carries `List-Unsubscribe:
+  <{base_url}/settings/email-preferences>` (the Phase 4
+  console prefs page — a forward reference, the link 404s
+  until the console lands). No one-click
+  `List-Unsubscribe-Post` until P1-104's single-use link
+  tokens exist. Transactional mail never carries the header.
+
+Ops note: a user who says "I opted out but still got the
+digest" has either not opted out (`weekly_digest` is absent
+or `true` in the row — the digest's own flag is the OFF
+switch, and the sender checks the pref at enqueue) or is
+looking at a mail queued before the opt-out landed (the
+drain parks only Marketing-class rows — the digest is
+Transactional, so an already-queued digest still sends;
+check the row's `created_at` against the audit row's time).
+
 ## Sender config
 
 | Var | Dev default (`.env.example`) | Prod |

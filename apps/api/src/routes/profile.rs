@@ -1,5 +1,6 @@
 //! Profile routes (P1-005): GET /v1/me + PATCH /v1/me; DELETE
-//! /v1/me since P1-007; POST /v1/me/consent since P1-095.
+//! /v1/me since P1-007; POST /v1/me/consent since P1-095;
+//! GET + PUT /v1/me/email-preferences since P1-103.
 //!
 //! All take [`AuthContext`]: the extractor verifies the Bearer
 //! JWT and rejects unverified callers with 401 before the handler
@@ -18,6 +19,9 @@ use crate::{
     services::{
         consent::{AcceptConsentRequest, ConsentError},
         deletion::{request_account_deletion, DeletionError},
+        email_prefs::{
+            update_email_preferences, EmailPrefs, EmailPrefsError, UpdateEmailPreferencesRequest,
+        },
         onboarding::{OnboardingChecklist, OnboardingError},
         profile::{get_profile, patch_profile, PatchProfileRequest, ProfileError, ProfileResponse},
     },
@@ -205,6 +209,80 @@ pub async fn get_onboarding(State(state): State<AppState>, auth: AuthContext) ->
         Ok(checklist) => Json(checklist).into_response(),
         Err(OnboardingError::Internal) => {
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, None, None))
+                .into_response()
+        }
+    }
+}
+
+/// GET /v1/me/email-preferences (P1-103): the caller's email
+/// prefs — `weekly_digest` + `marketing`, each defaulting to
+/// `true` (opted in). A pure read of the user row: no write,
+/// no audit. AuthContext, so an API key is 403 (keys are not
+/// in the scope table — the P1-095 consent precedent); no
+/// credential is 401.
+#[utoipa::path(
+    get,
+    path = "/v1/me/email-preferences",
+    responses(
+        (status = 200, description = "Current email preferences", body = EmailPrefs),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem)
+    ),
+    tag = "auth",
+    security(("bearer_auth" = []))
+)]
+pub async fn get_email_preferences(auth: AuthContext) -> Response {
+    let Some(user) = auth.user else {
+        // The extractor guarantees a user for a verified context.
+        return ProblemResponse(AppError::Internal.to_problem(Profile::Production, None, None))
+            .into_response();
+    };
+    Json(EmailPrefs::from_settings(&user.settings)).into_response()
+}
+
+/// PUT /v1/me/email-preferences (P1-103): set the caller's
+/// email prefs — `{weekly_digest?: bool, marketing?: bool}`.
+/// At least one key must be present (empty body is 422);
+/// unknown keys are 422; a no-op PUT (same values) is a 200
+/// with no write and no audit; a real change is one
+/// transaction (settings update + `user.email_prefs_updated`
+/// audit row) and returns the updated prefs. AuthContext, so
+/// an API key is 403 (the P1-095 consent precedent); no
+/// credential is 401.
+#[utoipa::path(
+    put,
+    path = "/v1/me/email-preferences",
+    request_body = UpdateEmailPreferencesRequest,
+    responses(
+        (status = 200, description = "Updated email preferences", body = EmailPrefs),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 422, description = "Validation failed (empty body)", body = Problem)
+    ),
+    tag = "auth",
+    security(("bearer_auth" = []))
+)]
+pub async fn put_email_preferences(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    auth: AuthContext,
+    ValidatedJson(req): ValidatedJson<UpdateEmailPreferencesRequest>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let Some(ref user) = auth.user else {
+        // The extractor guarantees a user for a verified context.
+        return ProblemResponse(AppError::Internal.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
+    match update_email_preferences(&state, user, auth.audit_actor_id(user), &req).await {
+        Ok(updated) => Json(EmailPrefs::from_settings(&updated.settings)).into_response(),
+        Err(EmailPrefsError::Validation(errors)) => {
+            ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
+        }
+        Err(EmailPrefsError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
                 .into_response()
         }
     }

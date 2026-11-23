@@ -16,6 +16,7 @@ pub mod checkout;
 pub mod consent;
 pub mod deletion;
 pub mod dunning;
+pub mod email_prefs;
 pub mod enforcement;
 pub mod entitlements;
 pub mod invoices;
