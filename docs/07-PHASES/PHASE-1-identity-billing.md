@@ -806,11 +806,11 @@
 
 ## E1.12 — Email polish (area: mailer)
 
-- [ ] **P1-101** — Weekly digest email
+- [x] **P1-101** — Weekly digest email
   - **Type:** feat · **Area:** mailer · **Est:** S · **Deps:** — · **Prio:** P1
   - **Spec:** Digest template (usage, plan, tips) behind flag OFF default; opt-out in user settings.
   - **AC:**
-    - [ ] flag respected
+    - [x] flag respected
 
 - [ ] **P1-102** — Quota/billing email set
   - **Type:** feat · **Area:** mailer · **Est:** S · **Deps:** P1-101 · **Prio:** P1
