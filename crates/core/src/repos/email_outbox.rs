@@ -338,3 +338,44 @@ pub async fn try_enqueue_quota_warning(
     .map_err(RepoError::from_sqlx)?;
     Ok(row.map(|r| r.id))
 }
+
+/// Enqueue a weekly digest once per user + week (P1-101).
+/// The cap is the partial unique index
+/// `email_outbox_weekly_digest_once_idx` on (`template`,
+/// `payload->>'user_id'`, `payload->>'week_start'`) for
+/// template `weekly-digest` (migration
+/// 20261123023000), so `ON CONFLICT DO NOTHING` makes a
+/// second enqueue for the same user/week a no-op instead of
+/// a second mail — two weekly-job runs racing the same week
+/// land exactly one row, with no advisory lock and no
+/// separate read (the P1-085 quota-warning shape).
+///
+/// Returns `Some(id)` when the row was enqueued, `None` when
+/// the cap already held a row for this user/week/template
+/// (sent or still queued — a sent row still counts: the cap
+/// is one mail per week, not one unsent row per week).
+///
+/// The payload MUST carry `user_id` (uuid string) +
+/// `week_start` (YYYY-MM-DD) — the index reads exactly
+/// those two keys, so a payload missing either would
+/// silently escape the cap.
+pub async fn try_enqueue_weekly_digest(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    mail: &NewOutboxMail,
+) -> Result<Option<Uuid>, RepoError> {
+    let scheduled_at = mail.scheduled_at.unwrap_or_else(Utc::now);
+    let row = sqlx::query!(
+        r#"INSERT INTO email_outbox (to_hash, template, payload, scheduled_at)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT DO NOTHING
+           RETURNING id"#,
+        mail.to_hash,
+        mail.template,
+        mail.payload,
+        scheduled_at,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(row.map(|r| r.id))
+}

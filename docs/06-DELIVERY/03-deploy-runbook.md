@@ -283,6 +283,7 @@ in a real inbox.
 | `PF_UPLOAD_PART_URL_TTL_SECS` | storage | 600 | presigned PUT part URL lifetime; must stay under the 15-min access-token TTL (P0-055) |
 | `PF_RATELIMIT_*` | api | per-plan defaults | tuned Phase 5 |
 | `PF_FEATURE_PROVENANCE_STRIP` | api | off | legal gate required |
+| `PF_FEATURE_WEEKLY_DIGEST` | mailer | off | weekly digest email (P1-101): the usage/plan/tips mail, once per user per week; off by default — the digest is not sent until the operator enables it, even for users who have not opted out |
 | `PF_LOG_LEVEL`, `PF_OTEL_ENDPOINT` | all | info, empty | OTLP/HTTP; `/v1/traces` appended when the endpoint has no path |
 | `PF_TEST_LIVE_MINIO` | tests | (empty = skip) | live-MinIO leg of the storage integration suite (P0-061); `1` runs it against testcontainers MinIO in CI |
 | `PF_TEST_CONTAINERS` | tests | (empty = skip) | testcontainers leg of the api integration suite (harness.rs); `1` runs it against real postgres/redis containers in CI |

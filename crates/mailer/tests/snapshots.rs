@@ -35,6 +35,14 @@ fn context() -> serde_json::Value {
         "limit": 10,
         "percent": 80,
         "reason": "repeated stock-agency template matches",
+        // P1-101: the weekly digest renders the week's
+        // totals + the plan + the tips list.
+        "week_start": "2026-11-16",
+        "images_used": 56,
+        "images_limit": 70,
+        "video_seconds_used": 0,
+        "video_seconds_limit": 0,
+        "tips": ["You used most of your weekly image allowance — your daily quota resets at midnight UTC.", "Your plan includes no video seconds — upgrade to Pro or Business to process video."],
     })
 }
 

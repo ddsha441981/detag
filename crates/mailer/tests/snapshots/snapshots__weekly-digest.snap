@@ -1,0 +1,51 @@
+---
+source: crates/mailer/tests/snapshots.rs
+expression: "format!(\"subject: {}\\n\\n--- text ---\\n{}\\n--- html ---\\n{}\", rendered.subject,\nrendered.text_body, rendered.html_body)"
+---
+subject: Your week on Detag
+
+--- text ---
+Hi,
+
+Here's your week on Detag (week starting 2026-11-16).
+
+Images processed: 56 of 70 for the week.
+Video processed: 0 of 0 seconds for the week.
+Plan: pro
+
+Tips for next week:
+• You used most of your weekly image allowance — your daily quota resets at midnight UTC.
+• Your plan includes no video seconds — upgrade to Pro or Business to process video.
+
+See your usage at http://localhost:8080/billing, or upgrade any time at http://localhost:8080/plans.
+
+— The Detag team
+
+--- html ---
+<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:#f6f6f6;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f6f6f6;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;margin:24px 0;padding:32px;font-family:Arial,Helvetica,sans-serif;color:#222222;">
+            <tr>
+              <td>
+                <p>Hi,</p>
+                <p>Here's your week on Detag (week starting 2026-11-16).</p>
+                <p>Images processed: 56 of 70 for the week.<br>Video processed: 0 of 0 seconds for the week.<br>Plan: pro</p>
+                <p>Tips for next week:</p>
+                <ul>
+                  <li>You used most of your weekly image allowance — your daily quota resets at midnight UTC.</li>
+                  <li>Your plan includes no video seconds — upgrade to Pro or Business to process video.</li>
+                </ul>
+                <p>See your usage at <a href="http://localhost:8080/billing">http://localhost:8080/billing</a>, or upgrade any time at <a href="http://localhost:8080/plans">http://localhost:8080/plans</a>.</p>
+                <p>— The Detag team</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

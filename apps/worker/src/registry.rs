@@ -68,6 +68,14 @@ pub enum JobKind {
     /// enqueues it is P1-082's; the handler here is a stub until
     /// the worker gains a pool + clock + settings to run it with.
     Dunning,
+    /// Weekly digest email (P1-101): the usage/plan/tips mail,
+    /// once per user + week (`services/weekly_digest.rs` in
+    /// the api crate is the real engine, flag-gated with the
+    /// opt-out honored). No weekly schedule exists yet — the
+    /// handler here is a stub until the worker gains a pool +
+    /// settings to run it with, and the enqueue line lands
+    /// with that schedule (the nightly doc's rule).
+    WeeklyDigest,
     /// A kind this build does not know — quarantined, never run.
     /// Carries the raw string for the log line.
     Unknown(String),
@@ -84,6 +92,7 @@ impl JobKind {
             JobKind::Reconciliation => "reconciliation",
             JobKind::CatalogSync => "catalog_sync",
             JobKind::Dunning => "dunning",
+            JobKind::WeeklyDigest => "weekly_digest",
             JobKind::Unknown(raw) => raw,
         }
     }
@@ -99,6 +108,7 @@ impl JobKind {
             "reconciliation" => JobKind::Reconciliation,
             "catalog_sync" => JobKind::CatalogSync,
             "dunning" => JobKind::Dunning,
+            "weekly_digest" => JobKind::WeeklyDigest,
             other => JobKind::Unknown(other.to_string()),
         }
     }
@@ -170,6 +180,10 @@ impl JobRegistry {
             }
             JobKind::Dunning => {
                 handle_dunning(envelope, ctx).await?;
+                Ok(DispatchOutcome::Handled { kind })
+            }
+            JobKind::WeeklyDigest => {
+                handle_weekly_digest(envelope, ctx).await?;
                 Ok(DispatchOutcome::Handled { kind })
             }
             JobKind::Unknown(raw) => {
@@ -330,6 +344,21 @@ async fn handle_dunning(envelope: &JobEnvelope, ctx: &WorkerContext) -> Result<(
     Ok(())
 }
 
+/// P1-101 stub: the digest engine (`detag-api::services
+/// ::weekly_digest::send_weekly_digest`) is real, but the
+/// worker has no pool + settings in its context to run it
+/// with — and no weekly schedule exists to enqueue it. Until
+/// then, an enqueued `weekly_digest` job logs and acks
+/// instead of claiming a digest ran.
+async fn handle_weekly_digest(envelope: &JobEnvelope, ctx: &WorkerContext) -> Result<(), Error> {
+    tracing::info!(
+        job_id = %envelope.job_id,
+        queue = ctx.queue,
+        "weekly_digest handled (stub — real handler lands with the digest engine in the worker context)"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,6 +400,7 @@ mod tests {
             ("reconciliation", JobKind::Reconciliation),
             ("catalog_sync", JobKind::CatalogSync),
             ("dunning", JobKind::Dunning),
+            ("weekly_digest", JobKind::WeeklyDigest),
         ] {
             assert_eq!(JobKind::parse(raw), kind, "parse {raw}");
             assert_eq!(kind.as_str(), raw, "as_str {raw:?}");
@@ -402,6 +432,7 @@ mod tests {
             "reconciliation",
             "catalog_sync",
             "dunning",
+            "weekly_digest",
         ] {
             let outcome = JobRegistry::new()
                 .dispatch(&envelope(kind), &ctx)

@@ -45,6 +45,7 @@
 | `PF_ENVIRONMENT` | `dev` | all |
 | `PF_FEATURE_PROVENANCE_STRIP` | `false` | api |
 | `PF_FEATURE_RAZORPAY` | `false` | billing |
+| `PF_FEATURE_WEEKLY_DIGEST` | `false` | mailer |
 | `PF_JWT_SECRET` | `dev-fixed` | api |
 | `PF_LOG_LEVEL` | `info` | all |
 | `PF_MAILER_BACKOFF_BASE_SECS` | `60` | mailer |
