@@ -16,7 +16,11 @@ deliverability posture (bulk-sender rules, unsubscribe handling,
 a separate sending subdomain) and the abuse surface.
 
 The 21 templates the api actually enqueues (`crates/mailer`,
-`TEMPLATES` — subjects + text + HTML, snapshot-tested, P1-029):
+`TEMPLATES` — subjects + text + HTML, snapshot-tested, P1-029).
+The same 21, with trigger, cap, and audience, live in the
+email matrix (`docs/06-DELIVERY/16-email-matrix.md`, P1-105)
+— this table is the "sent when" view; the matrix is the
+on-call view.
 
 | Template | Sent when | Class / hourly cap per recipient |
 | --- | --- | --- |
