@@ -152,10 +152,13 @@ impl MailTransport for LettreTransport {
             .subject(&mail.subject);
         // P1-103: marketing mail carries the List-Unsubscribe
         // header (RFC 8058 lists the URL form; there is no
-        // one-click `List-Unsubscribe-Post` until P1-104's
-        // single-use link tokens exist, so no such header is
-        // emitted). The value is already angle-bracketed by
-        // the drain; lettre's `HeaderValue::new` encodes it.
+        // one-click `List-Unsubscribe-Post`: one-click needs a
+        // single-use unsubscribe token + a consume endpoint, a
+        // follow-up feat — P1-104 proves the existing link
+        // tokens single-use but builds no unsubscribe token —
+        // so no such header is emitted). The value is already
+        // angle-bracketed by the drain; lettre's
+        // `HeaderValue::new` encodes it.
         if let Some(unsubscribe) = &mail.list_unsubscribe {
             builder = builder.raw_header(HeaderValue::new(
                 HeaderName::new_from_ascii_str("List-Unsubscribe"),
@@ -401,7 +404,8 @@ mod tests {
         // `None` path is pinned there by construction, and
         // the drain test pins the `None` for transactional
         // mail). No `List-Unsubscribe-Post`: one-click needs
-        // P1-104's single-use tokens, so it is not claimed.
+        // a single-use unsubscribe token + a consume endpoint
+        // (a follow-up feat, not P1-104), so it is not claimed.
         let capture: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let server_capture = Arc::clone(&capture);
         let server = tokio::spawn(async move {

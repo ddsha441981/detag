@@ -80,8 +80,12 @@ audits once as `user.email_prefs_updated`).
   <{base_url}/settings/email-preferences>` (the Phase 4
   console prefs page — a forward reference, the link 404s
   until the console lands). No one-click
-  `List-Unsubscribe-Post` until P1-104's single-use link
-  tokens exist. Transactional mail never carries the header.
+  `List-Unsubscribe-Post`: P1-104 proves the existing
+  verify/reset/change link tokens single-use (sequentially
+  and under a double-consume race) but builds no unsubscribe
+  token — one-click still waits on a follow-up feat (a
+  single-use unsubscribe token + a consume endpoint).
+  Transactional mail never carries the header.
 
 Ops note: a user who says "I opted out but still got the
 digest" has either not opted out (`weekly_digest` is absent

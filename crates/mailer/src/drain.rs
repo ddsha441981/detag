@@ -260,8 +260,12 @@ async fn resolve_abuse_reporter(pool: &DbPool, row: &OutboxMail) -> ResolveOutco
 /// link today). Every other class gets `None` — transactional
 /// mail never carries an unsubscribe header. The value is
 /// angle-bracketed (RFC 8058 URL form); no one-click
-/// `List-Unsubscribe-Post` is emitted until P1-104's
-/// single-use link tokens exist.
+/// `List-Unsubscribe-Post` is emitted: one-click needs a
+/// single-use unsubscribe token + a consume endpoint, which
+/// P1-104 deliberately does not build (test-only ticket — it
+/// proves the existing verify/reset/change tokens single-use
+/// instead); the header stays URL-only until that follow-up
+/// feat lands.
 pub fn list_unsubscribe_for(template: &str, base_url: &str) -> Option<String> {
     if template_class(template) == MailClass::Marketing {
         Some(format!("<{base_url}/settings/email-preferences>"))
