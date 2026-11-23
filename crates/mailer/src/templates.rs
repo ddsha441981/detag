@@ -477,6 +477,214 @@ mod tests {
     }
 
     #[test]
+    fn quota_warning_80_renders_numbers_plan_and_links() {
+        // P1-102, AC "triggers verified" at the template layer:
+        // the 80% warning states the true numbers (8 of 10
+        // images, 80%, the day, the plan) and links usage +
+        // upgrade — and, like every template, carries no
+        // invisible-watermark claim (05-compliance-aup.md §6).
+        // The shared ctx() already carries the exact payload
+        // the quota-warning service enqueues (P1-085).
+        let engine = TemplateEngine::new().expect("templates compile");
+        let rendered = engine
+            .render("quota-warning-80", &ctx())
+            .expect("quota-warning-80 renders");
+        assert_eq!(
+            rendered.subject,
+            "You've used 80% of your daily Detag quota"
+        );
+        for needle in [
+            "You've used 80% of your daily quota on your Detag pro plan (8 of 10 images) for 2026-11-20.",
+            "http://localhost:8080/billing",
+            "http://localhost:8080/plans",
+        ] {
+            assert!(
+                rendered.text_body.contains(needle),
+                "quota-warning-80 text must carry {needle:?}:\n{}",
+                rendered.text_body
+            );
+            assert!(
+                rendered.html_body.contains(needle),
+                "quota-warning-80 html must carry {needle:?}:\n{}",
+                rendered.html_body
+            );
+        }
+        for forbidden in ["invisible", "undetectable", "SynthID", "defeats"] {
+            assert!(
+                !rendered
+                    .text_body
+                    .to_lowercase()
+                    .contains(&forbidden.to_lowercase()),
+                "quota-warning-80 text must not claim {forbidden}:\n{}",
+                rendered.text_body
+            );
+            assert!(
+                !rendered
+                    .html_body
+                    .to_lowercase()
+                    .contains(&forbidden.to_lowercase()),
+                "quota-warning-80 html must not claim {forbidden}:\n{}",
+                rendered.html_body
+            );
+        }
+    }
+
+    #[test]
+    fn quota_warning_100_renders_full_quota_and_links() {
+        // P1-102: the 100% warning states the full quota (10
+        // of 10 images, 100%) — a dedicated context, because
+        // the shared ctx() is an 80% week (8 of 10). Same
+        // links + honesty rule as the 80% test.
+        let engine = TemplateEngine::new().expect("templates compile");
+        let full = json!({
+            "base_url": "http://localhost:8080",
+            "app_name": "Detag",
+            "plan_code": "pro",
+            "day": "2026-11-20",
+            "unit": "images",
+            "used": 10,
+            "limit": 10,
+            "percent": 100,
+        });
+        let rendered = engine
+            .render("quota-warning-100", &full)
+            .expect("quota-warning-100 renders");
+        assert_eq!(rendered.subject, "Your daily Detag quota is full");
+        for needle in [
+            "You've used all of your daily quota on your Detag pro plan (10 of 10 images) for 2026-11-20.",
+            "http://localhost:8080/billing",
+            "http://localhost:8080/plans",
+        ] {
+            assert!(
+                rendered.text_body.contains(needle),
+                "quota-warning-100 text must carry {needle:?}:\n{}",
+                rendered.text_body
+            );
+            assert!(
+                rendered.html_body.contains(needle),
+                "quota-warning-100 html must carry {needle:?}:\n{}",
+                rendered.html_body
+            );
+        }
+        for forbidden in ["invisible", "undetectable", "SynthID", "defeats"] {
+            assert!(
+                !rendered
+                    .text_body
+                    .to_lowercase()
+                    .contains(&forbidden.to_lowercase()),
+                "quota-warning-100 text must not claim {forbidden}:\n{}",
+                rendered.text_body
+            );
+            assert!(
+                !rendered
+                    .html_body
+                    .to_lowercase()
+                    .contains(&forbidden.to_lowercase()),
+                "quota-warning-100 html must not claim {forbidden}:\n{}",
+                rendered.html_body
+            );
+        }
+    }
+
+    #[test]
+    fn subscription_welcome_names_the_plan_and_links_billing() {
+        // P1-102: the activation mail (the spec's
+        // "subscription-activated") names the plan that went
+        // live and links billing — no invisible-watermark
+        // claim. The payload is `{user_id, plan_code}`, the
+        // exact shape the state machine enqueues (P1-064).
+        let engine = TemplateEngine::new().expect("templates compile");
+        let rendered = engine
+            .render("subscription-welcome", &ctx())
+            .expect("subscription-welcome renders");
+        assert_eq!(rendered.subject, "Your Detag pro plan is active");
+        for needle in [
+            "Your Detag pro plan is now active.",
+            "http://localhost:8080/billing",
+        ] {
+            assert!(
+                rendered.text_body.contains(needle),
+                "subscription-welcome text must carry {needle:?}:\n{}",
+                rendered.text_body
+            );
+            assert!(
+                rendered.html_body.contains(needle),
+                "subscription-welcome html must carry {needle:?}:\n{}",
+                rendered.html_body
+            );
+        }
+        for forbidden in ["invisible", "undetectable", "SynthID", "defeats"] {
+            assert!(
+                !rendered
+                    .text_body
+                    .to_lowercase()
+                    .contains(&forbidden.to_lowercase()),
+                "subscription-welcome text must not claim {forbidden}:\n{}",
+                rendered.text_body
+            );
+            assert!(
+                !rendered
+                    .html_body
+                    .to_lowercase()
+                    .contains(&forbidden.to_lowercase()),
+                "subscription-welcome html must not claim {forbidden}:\n{}",
+                rendered.html_body
+            );
+        }
+    }
+
+    #[test]
+    fn subscription_dunning_names_the_failed_payment_and_links_billing() {
+        // P1-102: the payment-failed mail (the spec's
+        // "payment-failed", the day-0 past_due mail) names the
+        // failed plan payment, the past-due state, and the
+        // billing link where the method is updated — no
+        // invisible-watermark claim. Same `{user_id,
+        // plan_code}` payload shape as the welcome mail.
+        let engine = TemplateEngine::new().expect("templates compile");
+        let rendered = engine
+            .render("subscription-dunning", &ctx())
+            .expect("subscription-dunning renders");
+        assert_eq!(
+            rendered.subject,
+            "Your Detag payment failed — update your payment method"
+        );
+        for needle in [
+            "Your Detag pro plan payment failed, so your subscription is past due.",
+            "http://localhost:8080/billing",
+        ] {
+            assert!(
+                rendered.text_body.contains(needle),
+                "subscription-dunning text must carry {needle:?}:\n{}",
+                rendered.text_body
+            );
+            assert!(
+                rendered.html_body.contains(needle),
+                "subscription-dunning html must carry {needle:?}:\n{}",
+                rendered.html_body
+            );
+        }
+        for forbidden in ["invisible", "undetectable", "SynthID", "defeats"] {
+            assert!(
+                !rendered
+                    .text_body
+                    .to_lowercase()
+                    .contains(&forbidden.to_lowercase()),
+                "subscription-dunning text must not claim {forbidden}:\n{}",
+                rendered.text_body
+            );
+            assert!(
+                !rendered
+                    .html_body
+                    .to_lowercase()
+                    .contains(&forbidden.to_lowercase()),
+                "subscription-dunning html must not claim {forbidden}:\n{}",
+                rendered.html_body
+            );
+        }
+    }
+
+    #[test]
     fn unknown_template_is_an_error_not_an_empty_mail() {
         let engine = TemplateEngine::new().expect("templates compile");
         let err = engine
