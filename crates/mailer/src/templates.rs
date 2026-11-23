@@ -47,9 +47,9 @@ use crate::error::MailError;
 /// ("reset-password" is `password-reset`, "new-login" is
 /// `new-login-digest`, "lockout" is `lockout-notice`); the
 /// spec's "password-changed" and "verification-thanks" have no
-/// template because no api service enqueues them — the twenty
-/// names here are the contract, and the snapshots cover all of
-/// them. P1-064 adds the three subscription lifecycle mails
+/// template because no api service enqueues them — the
+/// twenty-one names here are the contract, and the snapshots
+/// cover all of them. P1-064 adds the three subscription lifecycle mails
 /// (`subscription-welcome` / `subscription-dunning` /
 /// `subscription-canceled`), enqueued by the subscription
 /// state machine's service. P1-070 adds the two dunning
@@ -73,6 +73,10 @@ use crate::error::MailError;
 /// token is consumed — one mail per verified account, with
 /// the quickstart link and the compliance-approved
 /// quality-promise line (no invisible-watermark claims).
+/// P1-101 adds the weekly digest (`weekly-digest`),
+/// enqueued by the weekly-digest service once per user +
+/// week (flag-gated, opt-out honored) — the week's usage
+/// totals, the plan, and tips derived from the numbers.
 pub const TEMPLATES: &[&str] = &[
     "verify-email",
     "email-change-verify",
@@ -94,6 +98,7 @@ pub const TEMPLATES: &[&str] = &[
     "enforcement-suspension",
     "enforcement-termination",
     "welcome",
+    "weekly-digest",
 ];
 
 /// A rendered mail: subject + plain-text body + HTML body.
@@ -169,6 +174,7 @@ impl TemplateEngine {
         add!("enforcement-suspension");
         add!("enforcement-termination");
         add!("welcome");
+        add!("weekly-digest");
         Ok(Self { tera })
     }
 
@@ -247,6 +253,14 @@ mod tests {
             // (the snapshot context already had it; this
             // one did not — caught by verify attempt 2).
             "reason": "repeated stock-agency template matches",
+            // P1-101: the weekly digest renders the week's
+            // totals + the plan + the tips list.
+            "week_start": "2026-11-16",
+            "images_used": 56,
+            "images_limit": 70,
+            "video_seconds_used": 0,
+            "video_seconds_limit": 0,
+            "tips": ["You used most of your weekly image allowance — your daily quota resets at midnight UTC.", "Your plan includes no video seconds — upgrade to Pro or Business to process video."],
         })
     }
 
@@ -402,6 +416,61 @@ mod tests {
                     .to_lowercase()
                     .contains(&forbidden.to_lowercase()),
                 "welcome html must not claim {forbidden}:\n{}",
+                rendered.html_body
+            );
+        }
+    }
+
+    #[test]
+    fn weekly_digest_renders_usage_plan_and_tips() {
+        // P1-101, AC "flag respected" at the template layer:
+        // the digest names the week's totals, the plan, and
+        // every tip — and, like every template, carries no
+        // invisible-watermark claim (05-compliance-aup.md §6).
+        let engine = TemplateEngine::new().expect("templates compile");
+        let rendered = engine
+            .render("weekly-digest", &ctx())
+            .expect("weekly-digest renders");
+        assert_eq!(rendered.subject, "Your week on Detag");
+        for needle in [
+            "week starting 2026-11-16",
+            "Images processed: 56 of 70",
+            "Video processed: 0 of 0 seconds",
+            "Plan: pro",
+            "You used most of your weekly image allowance",
+            "Your plan includes no video seconds",
+        ] {
+            assert!(
+                rendered.text_body.contains(needle),
+                "digest text must carry {needle:?}:\n{}",
+                rendered.text_body
+            );
+            assert!(
+                rendered.html_body.contains(needle),
+                "digest html must carry {needle:?}:\n{}",
+                rendered.html_body
+            );
+        }
+        assert!(
+            rendered.text_body.contains("http://localhost:8080/billing"),
+            "digest must link usage:\n{}",
+            rendered.text_body
+        );
+        for forbidden in ["invisible", "undetectable", "SynthID", "defeats"] {
+            assert!(
+                !rendered
+                    .text_body
+                    .to_lowercase()
+                    .contains(&forbidden.to_lowercase()),
+                "digest text must not claim {forbidden}:\n{}",
+                rendered.text_body
+            );
+            assert!(
+                !rendered
+                    .html_body
+                    .to_lowercase()
+                    .contains(&forbidden.to_lowercase()),
+                "digest html must not claim {forbidden}:\n{}",
                 rendered.html_body
             );
         }

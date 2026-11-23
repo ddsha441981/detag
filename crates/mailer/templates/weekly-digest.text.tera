@@ -1,0 +1,14 @@
+Hi,
+
+Here's your week on {{ app_name }} (week starting {{ week_start }}).
+
+Images processed: {{ images_used }} of {{ images_limit }} for the week.
+Video processed: {{ video_seconds_used }} of {{ video_seconds_limit }} seconds for the week.
+Plan: {{ plan_code }}
+
+Tips for next week:
+{% for tip in tips %}• {{ tip }}
+{% endfor %}
+See your usage at {{ base_url }}/billing, or upgrade any time at {{ base_url }}/plans.
+
+— The {{ app_name }} team

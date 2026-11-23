@@ -170,6 +170,11 @@ pub struct Settings {
     pub razorpay_webhook_secret: String,
     /// Env: PF_FEATURE_RAZORPAY
     pub feature_razorpay: bool,
+    /// Env: PF_FEATURE_WEEKLY_DIGEST — the weekly digest
+    /// email (P1-101). Default off: the digest is not sent
+    /// until the operator enables it, even for users who
+    /// have not opted out.
+    pub feature_weekly_digest: bool,
     /// Env: PF_BILLING_DUNNING_ENABLED — the dunning policy
     /// job's kill-switch (P1-070, ADR-0035). Default true: a
     /// past_due subscription gets its day-3/7 reminders and
@@ -591,6 +596,7 @@ impl Default for Settings {
             razorpay_secret: "placeholder".to_string(),
             razorpay_webhook_secret: "whsec_placeholder".to_string(),
             feature_razorpay: false,
+            feature_weekly_digest: false,
             dunning_enabled: true,
             dunning_day3_days: 3,
             dunning_day7_days: 7,
@@ -694,6 +700,7 @@ const FIELD_VARS: &[(&str, &str)] = &[
     ("razorpay_secret", "PF_RAZORPAY_SECRET"),
     ("razorpay_webhook_secret", "PF_RAZORPAY_WEBHOOK_SECRET"),
     ("feature_razorpay", "PF_FEATURE_RAZORPAY"),
+    ("feature_weekly_digest", "PF_FEATURE_WEEKLY_DIGEST"),
     ("dunning_enabled", "PF_BILLING_DUNNING_ENABLED"),
     ("dunning_day3_days", "PF_BILLING_DUNNING_DAY3_DAYS"),
     ("dunning_day7_days", "PF_BILLING_DUNNING_DAY7_DAYS"),
@@ -943,6 +950,7 @@ impl Settings {
             razorpay_secret: field!(razorpay_secret, String),
             razorpay_webhook_secret: field!(razorpay_webhook_secret, String),
             feature_razorpay: field!(feature_razorpay, bool),
+            feature_weekly_digest: field!(feature_weekly_digest, bool),
             dunning_enabled: field!(dunning_enabled, bool),
             dunning_day3_days: field!(dunning_day3_days, u32),
             dunning_day7_days: field!(dunning_day7_days, u32),
@@ -1437,10 +1445,11 @@ impl Settings {
 /// Feature flags (P0-021).
 ///
 /// The `PF_FEATURE_*` env flags as one typed struct, default off. The
-/// kit defines two flags (`PF_FEATURE_RAZORPAY`, gated billing adapter
-/// per FR-P-05; `PF_FEATURE_PROVENANCE_STRIP`, legal-gated strip); `gpu`
-/// is derived from `PF_ENGINE_GPU > 0` — there is no GPU flag var in the
-/// kit or runbook, the engine count itself is the switch.
+/// kit defines three flags (`PF_FEATURE_RAZORPAY`, gated billing adapter
+/// per FR-P-05; `PF_FEATURE_PROVENANCE_STRIP`, legal-gated strip;
+/// `PF_FEATURE_WEEKLY_DIGEST`, the weekly digest email per P1-101);
+/// `gpu` is derived from `PF_ENGINE_GPU > 0` — there is no GPU flag
+/// var in the kit or runbook, the engine count itself is the switch.
 /// Consumers (engine, billing, provenance) read this struct, never raw
 /// env vars, so a flag rename is one place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1450,6 +1459,8 @@ pub struct FeatureFlags {
     /// Env: PF_FEATURE_PROVENANCE_STRIP — provenance strip (legal gate
     /// required). Default off.
     pub provenance_strip: bool,
+    /// Env: PF_FEATURE_WEEKLY_DIGEST — weekly digest email. Default off.
+    pub weekly_digest: bool,
     /// Derived: PF_ENGINE_GPU > 0. Default off (PF_ENGINE_GPU=0).
     pub gpu: bool,
 }
@@ -1460,6 +1471,7 @@ impl FeatureFlags {
         FeatureFlags {
             razorpay: false,
             provenance_strip: false,
+            weekly_digest: false,
             gpu: false,
         }
     }
@@ -1469,6 +1481,7 @@ impl FeatureFlags {
         FeatureFlags {
             razorpay: settings.feature_razorpay,
             provenance_strip: settings.feature_provenance_strip,
+            weekly_digest: settings.feature_weekly_digest,
             gpu: settings.engine_gpu > 0,
         }
     }
@@ -1487,7 +1500,11 @@ fn feature_prefix() -> &'static str {
 /// The `PF_FEATURE_*` flags the loader understands. Anything else
 /// matching `PF_FEATURE_*` in the environment is unknown (a typo, or a
 /// retired flag) and is reported by `unknown_feature_flags`.
-pub const KNOWN_FEATURE_FLAGS: &[&str] = &["PF_FEATURE_PROVENANCE_STRIP", "PF_FEATURE_RAZORPAY"];
+pub const KNOWN_FEATURE_FLAGS: &[&str] = &[
+    "PF_FEATURE_PROVENANCE_STRIP",
+    "PF_FEATURE_RAZORPAY",
+    "PF_FEATURE_WEEKLY_DIGEST",
+];
 
 /// `PF_FEATURE_*` vars present in the environment that no code
 /// understands, sorted. An operator typo shows up here instead of
@@ -1596,6 +1613,7 @@ mod tests {
         "PF_RAZORPAY_KEY",
         "PF_RAZORPAY_SECRET",
         "PF_FEATURE_RAZORPAY",
+        "PF_FEATURE_WEEKLY_DIGEST",
         "PF_BILLING_DUNNING_ENABLED",
         "PF_BILLING_DUNNING_DAY3_DAYS",
         "PF_BILLING_DUNNING_DAY7_DAYS",
@@ -1696,6 +1714,7 @@ mod tests {
         assert_eq!(s.razorpay_secret, "placeholder");
         assert_eq!(s.razorpay_webhook_secret, "whsec_placeholder");
         assert!(!s.feature_razorpay);
+        assert!(!s.feature_weekly_digest);
         // The dev placeholders count as unconfigured (P1-062
         // Stripe precedent, P1-073 Razorpay): the adapters must
         // never be built from a sentinel.
@@ -2353,6 +2372,7 @@ mod tests {
         assert_eq!(settings.feature_flags(), FeatureFlags::defaults());
         assert!(!settings.feature_flags().razorpay);
         assert!(!settings.feature_flags().provenance_strip);
+        assert!(!settings.feature_flags().weekly_digest);
         assert!(!settings.feature_flags().gpu);
     }
 
@@ -2362,11 +2382,13 @@ mod tests {
         let _env = clean_env();
         env::set_var("PF_FEATURE_RAZORPAY", "true");
         env::set_var("PF_FEATURE_PROVENANCE_STRIP", "true");
+        env::set_var("PF_FEATURE_WEEKLY_DIGEST", "true");
         env::set_var("PF_ENGINE_GPU", "2");
         let settings = Settings::load_from(None).expect("env load must work");
         let flags = settings.feature_flags();
         assert!(flags.razorpay);
         assert!(flags.provenance_strip);
+        assert!(flags.weekly_digest);
         assert!(flags.gpu);
     }
 

@@ -870,6 +870,77 @@ async fn drain_sends_welcome_mail_with_quickstart_link() {
 }
 
 #[tokio::test]
+async fn drain_sends_weekly_digest_with_usage_and_plan() {
+    // P1-101: the digest resolves the recipient from the user
+    // row (payload `{user_id}`), renders the week's totals +
+    // the plan + the tips, and is marked sent — one drain
+    // pass, no duplicate. The digest is transactional, so the
+    // drain cap never parks it (the P1-031 stance).
+    let ctx = TestCtx::new().await;
+    let engine = TemplateEngine::new().expect("templates compile");
+    let transport = MemoryTransport::new();
+    let user_id = make_user(&ctx, "ivan@example.com").await;
+    let id = enqueue(
+        &ctx,
+        "ivan@example.com",
+        "weekly-digest",
+        json!({
+            "user_id": user_id,
+            "week_start": "2026-11-16",
+            "images_used": 12,
+            "images_limit": 70,
+            "video_seconds_used": 0,
+            "video_seconds_limit": 0,
+            "plan_code": "free",
+            "tips": ["Your plan includes no video seconds — upgrade to Pro or Business to process video."],
+        }),
+    )
+    .await;
+    let now = Utc::now();
+
+    let outcome = drain_once(&ctx.pool, &transport, &engine, &drain_config(), now)
+        .await
+        .expect("drain pass succeeds");
+    assert_eq!(outcome.claimed, 1);
+    assert_eq!(outcome.sent, 1);
+    assert_eq!(outcome.transient_failed, 0);
+    assert_eq!(outcome.permanent_failed, 0);
+
+    let sent = transport.sent();
+    assert_eq!(sent.len(), 1, "exactly one mail sent");
+    assert_eq!(sent[0].to, "ivan@example.com");
+    assert_eq!(sent[0].subject, "Your week on Detag");
+    assert!(
+        sent[0].text_body.contains("Images processed: 12 of 70"),
+        "the digest carries the week's totals:\n{}",
+        sent[0].text_body
+    );
+    assert!(
+        sent[0].text_body.contains("Plan: free"),
+        "the digest names the plan:\n{}",
+        sent[0].text_body
+    );
+    assert!(
+        sent[0]
+            .text_body
+            .contains("Your plan includes no video seconds"),
+        "the digest carries the tips:\n{}",
+        sent[0].text_body
+    );
+
+    assert!(
+        email_outbox::unsent_for_template(&ctx.pool, "weekly-digest")
+            .await
+            .expect("read back")
+            .iter()
+            .all(|r| r.id != id),
+        "the sent row must not be unsent anymore"
+    );
+
+    ctx.close().await;
+}
+
+#[tokio::test]
 async fn drain_parks_abuse_ack_with_bad_data() {
     // P1-089: an ack naming a report that does not exist, an
     // ack whose `to_hash` names a different address, and an

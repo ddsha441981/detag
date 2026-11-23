@@ -15,7 +15,7 @@ marketing template without an owner decision: it changes the
 deliverability posture (bulk-sender rules, unsubscribe handling,
 a separate sending subdomain) and the abuse surface.
 
-The 20 templates the api actually enqueues (`crates/mailer`,
+The 21 templates the api actually enqueues (`crates/mailer`,
 `TEMPLATES` — subjects + text + HTML, snapshot-tested, P1-029):
 
 | Template | Sent when | Class / hourly cap per recipient |
@@ -40,6 +40,7 @@ The 20 templates the api actually enqueues (`crates/mailer`,
 | `enforcement-suspension` | enforcement ladder: suspend step (P1-091) | transactional / never capped |
 | `enforcement-termination` | enforcement ladder: terminate step (P1-091) | transactional / never capped |
 | `welcome` | email verified at register (P1-097) | transactional / never capped |
+| `weekly-digest` | weekly digest job: usage + plan + tips, once per user/week (P1-101) | transactional / never capped |
 
 Caps are enforced in the drain, the single choke point every
 queued mail passes through (P1-031): the drain counts sent

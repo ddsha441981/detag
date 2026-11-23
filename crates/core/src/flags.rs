@@ -95,6 +95,7 @@ impl FlagResolver for StaticFlagResolver {
         match key {
             "razorpay" => self.flags.razorpay,
             "provenance_strip" => self.flags.provenance_strip,
+            "weekly_digest" => self.flags.weekly_digest,
             "gpu" => self.flags.gpu,
             _ => false,
         }
@@ -327,11 +328,13 @@ mod tests {
         let flags = FeatureFlags {
             razorpay: true,
             provenance_strip: false,
+            weekly_digest: true,
             gpu: true,
         };
         let resolver = StaticFlagResolver::new(flags);
         assert!(resolver.is_enabled("razorpay").await);
         assert!(!resolver.is_enabled("provenance_strip").await);
+        assert!(resolver.is_enabled("weekly_digest").await);
         assert!(resolver.is_enabled("gpu").await);
         assert!(!resolver.is_enabled("no-such-flag").await);
     }

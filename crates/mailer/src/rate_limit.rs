@@ -202,6 +202,12 @@ mod tests {
             "enforcement-suspension",
             "enforcement-termination",
             "welcome",
+            // P1-101: the weekly digest reports the user's
+            // own usage + plan — account mail, not bulk
+            // marketing — so it is transactional (never
+            // capped); the flag + the opt-out are its
+            // controls, not the drain cap.
+            "weekly-digest",
         ] {
             assert_eq!(template_class(template), MailClass::Transactional);
         }

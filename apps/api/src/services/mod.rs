@@ -41,3 +41,4 @@ pub mod usage_attribution;
 pub mod verification;
 pub mod webhook;
 pub mod webhook_handlers;
+pub mod weekly_digest;
