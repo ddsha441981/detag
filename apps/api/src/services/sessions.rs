@@ -42,7 +42,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 /// One session in the listing.
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 pub struct SessionItem {
     /// The session id (the DELETE target).
     pub id: Uuid,
@@ -66,8 +66,10 @@ impl SessionItem {
     /// Build the listing item from a session row. The device
     /// JSONB is `{ua, ip_hash}` — both read defensively (an
     /// old or malformed row yields `"Unknown device"` / `None`,
-    /// never a panic).
-    fn from_row(row: sessions::Session) -> Self {
+    /// never a panic). `pub(crate)` so the support user view
+    /// (P1-106) renders the same safe shape an admin sees —
+    /// one definition of what a session exposes, not two.
+    pub(crate) fn from_row(row: sessions::Session) -> Self {
         let ua = row
             .device
             .get("ua")

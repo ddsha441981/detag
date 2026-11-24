@@ -62,6 +62,7 @@ views — and neither are denials, 404s, or 501 stubs.
 | --- | --- | --- | --- | --- | --- |
 | GET | `/v1/admin/metrics/dashboard` | `admin.dashboard.read` | admin, support | stub | — |
 | GET | `/v1/admin/users` | `admin.users.read` | admin, support | live | — |
+| GET | `/v1/admin/users/{id}` | `admin.users.read` | admin, support | live | — |
 | POST | `/v1/admin/users/{id}/suspend` | `admin.users.write` | admin | live | `user.suspended` |
 | POST | `/v1/admin/users/{id}/restore` | `admin.users.write` | admin | live | `user.restored` |
 | POST | `/v1/admin/users/{id}/warn` | `admin.users.write` | admin | live | `user.warned` |
@@ -129,6 +130,15 @@ Notes on the live routes:
   (email / display-name / id prefix), cursor pagination,
   returns plan + status + today's usage per user. Support
   sees the same rows — no key material is ever in them.
+- **User view** (P1-106): `GET /v1/admin/users/{id}`
+  returns the composite for one user — profile, plan,
+  usage summary (today + all-time totals), the 10 newest
+  jobs, and the live sessions (P1-019 shape: device label +
+  ip hash). No secrets anywhere in the shape (ADR-0065):
+  no password hash, no refresh hash, no provider ids, no
+  job params. A user with no subscription is Free, no jobs
+  or no live sessions is `[]`; only an unknown id is 404.
+  No audit row (a read creates nothing).
 - **Jobs list** (P1-038): `GET /v1/admin/jobs` newest
   first, cursor pagination, `?user_id=` / `?key_id=`
   filters. Each row shows the creating key's display prefix

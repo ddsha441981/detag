@@ -24,10 +24,10 @@
 //!
 //! # Routes vs stubs
 //!
-//! The matrix covers all 25 admin routes in the route table,
-//! live or stub. The 14 live routes are enforced by the guards
+//! The matrix covers all 26 admin routes in the route table,
+//! live or stub. The 18 live routes are enforced by the guards
 //! today and walked live by the test registry
-//! (`apps/api/tests/authz_matrix.rs`). The 9 stub routes
+//! (`apps/api/tests/authz_matrix.rs`). The 8 stub routes
 //! take the guard too since P1-043 (`admin_stub` /
 //! `admin_read_stub` — guard first, 501 after), so their rows
 //! are enforced promises: the registry's completeness test
@@ -58,7 +58,8 @@ use detag_core::error::AppError;
 pub enum Capability {
     /// `GET /v1/admin/metrics/dashboard`.
     AdminDashboardRead,
-    /// `GET /v1/admin/users`.
+    /// `GET /v1/admin/users` + `GET /v1/admin/users/{id}`
+    /// (P1-106).
     AdminUsersRead,
     /// `POST /v1/admin/users/{id}/suspend`,
     /// `/restore`, `/warn`, `/terminate`, `/quota-grant`.
@@ -182,6 +183,7 @@ impl Capability {
         match (method.as_str(), path) {
             ("GET", "/v1/admin/metrics/dashboard") => Some(AdminDashboardRead),
             ("GET", "/v1/admin/users") => Some(AdminUsersRead),
+            ("GET", "/v1/admin/users/{id}") => Some(AdminUsersRead),
             ("POST", "/v1/admin/users/{id}/suspend")
             | ("POST", "/v1/admin/users/{id}/restore")
             | ("POST", "/v1/admin/users/{id}/warn")
@@ -387,12 +389,13 @@ mod tests {
 
     #[test]
     fn for_route_names_every_admin_route_and_nothing_else() {
-        // The route table: 25 admin routes, each with exactly
+        // The route table: 26 admin routes, each with exactly
         // one capability; non-admin routes map to None.
         use axum::http::Method;
         let admin_routes: &[(&str, &str)] = &[
             ("GET", "/v1/admin/metrics/dashboard"),
             ("GET", "/v1/admin/users"),
+            ("GET", "/v1/admin/users/{id}"),
             ("POST", "/v1/admin/users/{id}/suspend"),
             ("POST", "/v1/admin/users/{id}/restore"),
             ("POST", "/v1/admin/users/{id}/warn"),
@@ -419,8 +422,8 @@ mod tests {
         ];
         assert_eq!(
             admin_routes.len(),
-            25,
-            "25 admin (method, path) pairs in the route table"
+            26,
+            "26 admin (method, path) pairs in the route table"
         );
         for (method, path) in admin_routes {
             let m = Method::from_bytes(method.as_bytes()).unwrap();
@@ -434,7 +437,6 @@ mod tests {
             (Method::GET, "/v1/me"),
             (Method::POST, "/v1/jobs"),
             (Method::POST, "/v1/abuse"),
-            (Method::GET, "/v1/admin/users/{id}"),
             (Method::DELETE, "/v1/admin/users"),
             (Method::GET, "/v1/admin"),
         ] {
@@ -494,7 +496,7 @@ mod tests {
             }
         }
         assert_eq!(writes, 13, "13 admin write routes");
-        assert_eq!(reads, 12, "12 admin read routes");
+        assert_eq!(reads, 13, "13 admin read routes");
     }
 
     #[test]

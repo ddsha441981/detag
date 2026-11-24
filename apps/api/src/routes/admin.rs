@@ -27,7 +27,8 @@
 //! P1-089 (in this file — the public intake, no guard),
 //! and `POST /v1/admin/users/{id}/warn` +
 //! `/v1/admin/users/{id}/terminate`, real since P1-091
-//! (in this file).
+//! (in this file), and `GET /v1/admin/users/{id}`, real
+//! since P1-106 (in this file).
 //! Every route — live or stub — sits behind the matrix guard
 //! (P1-043): the stubs take `admin_stub` / `admin_read_stub`
 //! below, so an unauthenticated or wrong-role caller is
@@ -72,6 +73,7 @@ use crate::{
             list_plans, update_plans, PlanEditorError, PlanView, PlansResponse, UpdatePlansRequest,
         },
         admin_usage::{export_usage_csv, get_admin_usage, AdminUsageError, AdminUsageResponse},
+        admin_user_view::{get_admin_user_view, AdminUserViewError, AdminUserViewResponse},
         catalog_sync::{run_catalog_sync, CatalogSyncError},
         enforcement::{terminate_user, warn_user, EnforcementError, EnforcementResponse},
         register::UserResponse,
@@ -155,6 +157,56 @@ pub async fn search_users_handler(
                 .into_response()
         }
         Err(AdminError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
+/// GET /v1/admin/users/{id} (P1-106): the support user
+/// view — profile, plan, usage, recent jobs, session meta
+/// for one user. Admin + support (the read-only role) may
+/// call it; a verified plain user gets 403 `PF-1002` from
+/// the extractor, no credential gets 401 `PF-1001`, an API
+/// key gets 403. A user who does not exist is 404 `PF-2010`;
+/// a user who exists but has no subscription is Free, no
+/// jobs or no live sessions is empty arrays, not a 404. No
+/// secrets anywhere in the shape (ADR-0065): no password
+/// hash, no refresh hash, no provider ids. No audit row (a
+/// read creates nothing).
+#[utoipa::path(
+    get,
+    path = "/v1/admin/users/{id}",
+    params(
+        ("id" = Uuid, Path, description = "Whose view to read")
+    ),
+    responses(
+        (status = 200, description = "The user's support view: profile, plan, usage, recent jobs, and live sessions", body = AdminUserViewResponse),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified plain user, or an API key)", body = Problem),
+        (status = 404, description = "No such user", body = Problem),
+        (status = 500, description = "The user view read failed", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn admin_user_view_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    _admin: AdminReadContext,
+    Path(user_id): Path<Uuid>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    match get_admin_user_view(&state, user_id).await {
+        Ok(view) => Json(view).into_response(),
+        Err(AdminUserViewError::NotFound) => {
+            ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(err) => {
+            if let AdminUserViewError::Db(db_err) = &err {
+                tracing::error!(error = %db_err, "admin user view: read failed");
+            }
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
                 .into_response()
         }
@@ -1383,6 +1435,7 @@ pub fn router(state: AppState) -> Router<AppState> {
             Router::new()
                 .route("/metrics/dashboard", get(admin_read_stub))
                 .route("/users", get(search_users_handler))
+                .route("/users/{id}", get(admin_user_view_handler))
                 .route("/users/{id}/suspend", post(suspend))
                 .route("/users/{id}/restore", post(restore))
                 .route("/users/{id}/warn", post(warn_user_handler))

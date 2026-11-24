@@ -14,15 +14,16 @@
 //! /v1/admin/audit`; P1-090: `GET /v1/admin/abuse-reports`
 //! and `POST /v1/admin/abuse-reports/{id}/resolve`;
 //! P1-091: `POST /v1/admin/users/{id}/warn` +
-//! `/terminate`; P1-098: `GET /v1/admin/attestations`), so
-//! the walk now covers 17 live routes and 8 stubs. The
+//! `/terminate`; P1-098: `GET /v1/admin/attestations`),
+//! P1-106: `GET /v1/admin/users/{id}`), so
+//! the walk now covers 18 live routes and 8 stubs. The
 //! three tests:
 //!
-//! - `admin_guard_on_every_route` — the walk: all 25 admin
+//! - `admin_guard_on_every_route` — the walk: all 26 admin
 //!   routes × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key). Anonymous is 401
 //!   `PF-1001`, a wrong role or a key is 403 `PF-1002`, an
-//!   admitted role is 200 on the 17 live routes and 501
+//!   admitted role is 200 on the 18 live routes and 501
 //!   `PF-5004` on the 8 stubs — except the catalog sync,
 //!   whose admitted admin gets 503 `PF-5005` (billing is
 //!   unconfigured in the test environment: no Stripe key).
@@ -295,7 +296,7 @@ struct GuardRow {
     read: bool,
 }
 
-/// All 23 `/v1/admin/*` routes. The read flag comes from the
+/// All 26 `/v1/admin/*` routes. The read flag comes from the
 /// matrix: a capability whose code ends in `.read`.
 const GUARD_ROWS: &[GuardRow] = &[
     GuardRow {
@@ -307,6 +308,12 @@ const GUARD_ROWS: &[GuardRow] = &[
     GuardRow {
         method: "GET",
         path: "/v1/admin/users",
+        live: true,
+        read: true,
+    },
+    GuardRow {
+        method: "GET",
+        path: "/v1/admin/users/{id}",
         live: true,
         read: true,
     },
@@ -452,7 +459,7 @@ const GUARD_ROWS: &[GuardRow] = &[
 
 #[tokio::test]
 async fn admin_guard_on_every_route() {
-    // The walk: all 25 admin routes × 5 caller kinds. The
+    // The walk: all 26 admin routes × 5 caller kinds. The
     // read/write flag must agree with the matrix — a row
     // whose flag disagrees with its capability fails here,
     // so the walk cannot drift from the P1-042 table.
@@ -468,7 +475,7 @@ async fn admin_guard_on_every_route() {
             row.path
         );
     }
-    assert_eq!(GUARD_ROWS.len(), 25, "one row per admin route");
+    assert_eq!(GUARD_ROWS.len(), 26, "one row per admin route");
 
     let app = guard_app().await;
     let (user_token, support_token, admin_token, admin_key, _admin_id) = callers(&app).await;
@@ -533,10 +540,15 @@ async fn admin_guard_on_every_route() {
                 Some(cancel_target),
                 Some(json!({ "reason": "guard probe" })),
             ),
-            // The usage rows need a real user id for the
-            // admitted caller to reach 200 (an unknown id
-            // is 404, not 200).
-            "/v1/admin/usage/{id}" | "/v1/admin/usage/{id}/export" => (Some(usage_target), None),
+            // The usage rows + the user view need a real user
+            // id for the admitted caller to reach 200 (an
+            // unknown id is 404, not 200). (The 170th: the
+            // P1-106 row was missing here — the walk probed a
+            // placeholder id and the admitted callers got
+            // 404 instead of 200.)
+            "/v1/admin/usage/{id}" | "/v1/admin/usage/{id}/export" | "/v1/admin/users/{id}" => {
+                (Some(usage_target), None)
+            }
             // The resolve row needs a real open report id +
             // a dismiss body for the admitted caller to
             // reach 200 (an unknown id is 404, an empty body

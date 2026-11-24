@@ -7,12 +7,14 @@
 //! from the support role's point of view, and proves the two
 //! things a status-only walk cannot:
 //!
-//! - `support_reads_live_views` — support reads the three
+//! - `support_reads_live_views` — support reads the four
 //!   live views and sees real rows: the users search returns
-//!   the seeded users (email, role, status), the jobs list
-//!   returns the seeded job (kind, status, no key material
-//!   — a web-created job shows no prefix), and the plans
-//!   list returns the three seeded plans (P1-056).
+//!   the seeded users (email, role, status), the user view
+//!   returns the owner's composite (profile, Free plan, the
+//!   seeded job, the login session — no secrets), the jobs
+//!   list returns the seeded job (kind, status, no key
+//!   material — a web-created job shows no prefix), and the
+//!   plans list returns the three seeded plans (P1-056).
 //! - `support_writes_forbidden_and_change_nothing` — every
 //!   write route answers 403 `PF-1002` to support, and the
 //!   denial changes nothing: a suspend attempt leaves the
@@ -363,7 +365,7 @@ fn support_matrix_is_read_only() {
         .filter(|(_, path)| path.starts_with("/v1/admin"))
         .map(|(method, path)| (*method, *path))
         .collect();
-    assert_eq!(admin_routes.len(), 25, "25 admin routes");
+    assert_eq!(admin_routes.len(), 26, "26 admin routes");
     let mut seen = HashSet::new();
     for (method, path) in &admin_routes {
         let m = Method::from_bytes(method.as_bytes()).unwrap();
@@ -377,13 +379,13 @@ fn support_matrix_is_read_only() {
 
 #[tokio::test]
 async fn support_reads_live_views() {
-    // Support reads the three live views and sees real rows
+    // Support reads the four live views and sees real rows
     // — not just a 200: the users search returns the seeded
-    // users with their role and status, the jobs list
-    // returns the seeded job with its kind and status and
-    // no key material (a web-created job shows no prefix),
-    // and the plans list returns the three seeded plans
-    // (P1-056).
+    // users with their role and status, the user view returns
+    // the owner's composite, the jobs list returns the seeded
+    // job with its kind and status and no key material (a
+    // web-created job shows no prefix), and the plans list
+    // returns the three seeded plans (P1-056).
     let app = support_app().await;
     let (_support_id, support_token) = make_role(&app, &unique_email("support"), "support").await;
     let prefix = Uuid::now_v7().to_string();
@@ -448,6 +450,25 @@ async fn support_reads_live_views() {
         .collect();
     assert_eq!(codes, vec!["free", "pro", "business"]);
     assert_eq!(plans[1]["amount"], 49900);
+
+    // The user view (P1-106): the owner's composite — the
+    // profile (email, role, status), the Free plan (no
+    // subscription), the seeded job, and the login session —
+    // with no secret anywhere in the body.
+    let res = get_as(&app, &format!("/v1/admin/users/{owner_id}"), &support_token).await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert!(
+        !res.text().contains("password_hash") && !res.text().contains("refresh_hash"),
+        "the user view must never carry secrets: {}",
+        res.text()
+    );
+    let view = res.json();
+    assert_eq!(view["profile"]["email"], email_a);
+    assert_eq!(view["profile"]["role"], "user");
+    assert_eq!(view["plan"]["code"], "free");
+    assert_eq!(view["recent_jobs"].as_array().unwrap().len(), 1);
+    assert_eq!(view["recent_jobs"][0]["id"], job_id.to_string());
+    assert_eq!(view["sessions"].as_array().unwrap().len(), 1);
 }
 
 #[tokio::test]
