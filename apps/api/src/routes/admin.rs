@@ -28,7 +28,9 @@
 //! and `POST /v1/admin/users/{id}/warn` +
 //! `/v1/admin/users/{id}/terminate`, real since P1-091
 //! (in this file), and `GET /v1/admin/users/{id}`, real
-//! since P1-106 (in this file).
+//! since P1-106 (in this file), and `POST
+//! /v1/admin/users/{id}/quota-grant`, real since P1-107
+//! (in this file).
 //! Every route — live or stub — sits behind the matrix guard
 //! (P1-043): the stubs take `admin_stub` / `admin_read_stub`
 //! below, so an unauthenticated or wrong-role caller is
@@ -76,6 +78,7 @@ use crate::{
         admin_user_view::{get_admin_user_view, AdminUserViewError, AdminUserViewResponse},
         catalog_sync::{run_catalog_sync, CatalogSyncError},
         enforcement::{terminate_user, warn_user, EnforcementError, EnforcementResponse},
+        quota_grant::{grant_quota, QuotaGrantError, QuotaGrantRequest, QuotaGrantResponse},
         register::UserResponse,
         support_cancel::{
             support_cancel as support_cancel_service, SupportCancelError, SupportCancelResponse,
@@ -419,6 +422,76 @@ pub async fn warn_user_handler(
         )
         .into_response(),
         Err(EnforcementError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
+/// POST /v1/admin/users/{id}/quota-grant (P1-107): a manual,
+/// expiring quota bump — extra daily images and/or
+/// video-seconds for `ttl_hours` (1–168), with a reason. The
+/// grant and its `admin.users.quota_granted` audit row commit
+/// in one transaction, and the response carries
+/// `AuditHandled` so the P1-046 middleware stands down and
+/// the row exists exactly once. The bump is honored by the
+/// quota snapshot (the pre-check, the profile, and the quota
+/// warnings all read the same limits), and it stops counting
+/// the moment `expires_at` passes. Returns the created grant
+/// with 200 — an admin action on a user answers 200 (the
+/// suspend/warn precedent; the authz live walk pins 200 for
+/// every live admin write except the catalog sync), not 201,
+/// even though a row is created. Admin-only — support is
+/// read-only.
+#[utoipa::path(
+    post,
+    path = "/v1/admin/users/{id}/quota-grant",
+    request_body = QuotaGrantRequest,
+    responses(
+        (status = 200, description = "Granted", body = QuotaGrantResponse),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified non-admin, or an API key)", body = Problem),
+        (status = 404, description = "No such user", body = Problem),
+        (status = 422, description = "No amount, a non-positive amount, ttl_hours outside 1..=168, or a bad reason", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn quota_grant_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    admin: AdminContext,
+    Path(user_id): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<QuotaGrantRequest>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let Some(admin_user) = admin.auth.user else {
+        // The extractor guarantees a user for a verified context.
+        return ProblemResponse(AppError::Internal.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
+    match grant_quota(&state, &admin_user, user_id, &req).await {
+        Ok(grant) => {
+            // The service wrote the audit row in the same
+            // transaction as the grant (P1-107) — mark the
+            // response so the P1-046 middleware stands down
+            // and the row exists exactly once.
+            let mut response = Json(QuotaGrantResponse::from(grant)).into_response();
+            response.extensions_mut().insert(AuditHandled);
+            response
+        }
+        Err(QuotaGrantError::Validation(errors)) => {
+            ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
+        }
+        Err(QuotaGrantError::NotFound) => {
+            ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(QuotaGrantError::Internal) => {
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
                 .into_response()
         }
@@ -1440,7 +1513,7 @@ pub fn router(state: AppState) -> Router<AppState> {
                 .route("/users/{id}/restore", post(restore))
                 .route("/users/{id}/warn", post(warn_user_handler))
                 .route("/users/{id}/terminate", post(terminate_user_handler))
-                .route("/users/{id}/quota-grant", post(admin_stub))
+                .route("/users/{id}/quota-grant", post(quota_grant_handler))
                 .route("/users/{id}/impersonate", post(impersonate))
                 .route("/jobs", get(list_jobs_handler))
                 .route("/jobs/{id}/reprocess", post(admin_stub))

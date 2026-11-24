@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COALESCE(SUM(images), 0)::bigint AS \"images_total!\",\n                  COALESCE(SUM(video_seconds), 0)::bigint AS \"video_total!\"\n           FROM quota_grants\n           WHERE user_id = $1 AND expires_at > $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "images_total!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "video_total!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "1fd29b15cbcce3a2aba8a840561c1485be798245ca35dd094f6e2352f9a53805"
+}

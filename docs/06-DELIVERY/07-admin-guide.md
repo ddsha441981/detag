@@ -67,7 +67,7 @@ views — and neither are denials, 404s, or 501 stubs.
 | POST | `/v1/admin/users/{id}/restore` | `admin.users.write` | admin | live | `user.restored` |
 | POST | `/v1/admin/users/{id}/warn` | `admin.users.write` | admin | live | `user.warned` |
 | POST | `/v1/admin/users/{id}/terminate` | `admin.users.write` | admin | live | `user.terminated` |
-| POST | `/v1/admin/users/{id}/quota-grant` | `admin.users.write` | admin | stub | `admin.users.quota_granted` |
+| POST | `/v1/admin/users/{id}/quota-grant` | `admin.users.write` | admin | live | `admin.users.quota_granted` |
 | POST | `/v1/admin/users/{id}/impersonate` | `admin.users.impersonate` | admin | live | `user.impersonated` |
 | GET | `/v1/admin/jobs` | `admin.jobs.read` | admin, support | live | — |
 | POST | `/v1/admin/jobs/{id}/reprocess` | `admin.jobs.write` | admin | stub | `admin.jobs.reprocessed` |

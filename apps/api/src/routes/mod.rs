@@ -58,7 +58,7 @@ use crate::AppState;
 
 /// The (method, path) table from the API spec. Counts per
 /// module: auth 24, uploads 4, jobs 9, billing 12, admin 27,
-/// meta 2 — 77 total.
+/// meta 2 — 78 total.
 pub const ROUTE_TABLE: &[(&str, &str)] = &[
     // auth (24)
     ("POST", "/v1/auth/register"),

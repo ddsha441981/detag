@@ -44,7 +44,7 @@ use super::entitlements::{
     effective_plan, quota_snapshot_for_plan, EntitlementError, QuotaSnapshot,
 };
 use crate::AppState;
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use detag_core::db::DbPool;
 use detag_core::error::AppError;
 use detag_core::plans::{PlanCache, PlanCatalog, PlanStore};
@@ -122,7 +122,9 @@ impl From<EntitlementError> for QuotaError {
 /// effective plan, read the snapshot for `day`, and decide.
 /// `day` is the UTC day from the app's injected clock
 /// (`state.clock`) — never `Utc::now()` here, so a frozen
-/// clock moves the quota day too (P1-057, ADR-0027).
+/// clock moves the quota day too (P1-057, ADR-0027). `now`
+/// is the same clock's instant, and the snapshot's grant
+/// expiry uses it (P1-107).
 ///
 /// - Image upload: one image is needed; `remaining < 1` is
 ///   `PF-3001`.
@@ -142,13 +144,14 @@ pub async fn precheck<S: PlanStore, C: PlanCache>(
     user_id: Uuid,
     upload_id: Uuid,
     day: NaiveDate,
+    now: DateTime<Utc>,
 ) -> Result<QuotaOutcome, QuotaError> {
     let upload = uploads::by_id(pool, upload_id)
         .await?
         .filter(|upload| upload.user_id == user_id)
         .ok_or(QuotaError::UploadNotFound)?;
     let resolved = effective_plan(catalog, pool, user_id).await?;
-    let snapshot = quota_snapshot_for_plan(pool, user_id, &resolved.plan, day).await?;
+    let snapshot = quota_snapshot_for_plan(pool, user_id, &resolved.plan, day, now).await?;
     if upload.kind == "image" && snapshot.daily_images.remaining < 1 {
         return Ok(QuotaOutcome::Denied(
             AppError::QuotaImagesExceeded,
@@ -180,7 +183,8 @@ pub async fn precheck<S: PlanStore, C: PlanCache>(
 }
 
 /// The pre-check over the app state (the handler's call).
-/// The quota day is the app clock's UTC day.
+/// The quota day is the app clock's UTC day, and the grant
+/// expiry reads the same clock's instant.
 pub async fn precheck_for_create(
     state: &AppState,
     user_id: Uuid,
@@ -192,6 +196,7 @@ pub async fn precheck_for_create(
         user_id,
         upload_id,
         state.clock.now().date_naive(),
+        state.clock.now(),
     )
     .await
 }
@@ -213,6 +218,7 @@ pub async fn snapshot_for_user(
         user_id,
         &resolved.plan,
         state.clock.now().date_naive(),
+        state.clock.now(),
     )
     .await?;
     Ok(snapshot)

@@ -14,14 +14,14 @@
 //!   `Capability::for_route`, and the role table behind it
 //!   admits exactly admin + support on read rows and admin
 //!   only on write/impersonate rows.
-//! - `admin_matrix_live` — the live walk: the 18 live routes
+//! - `admin_matrix_live` — the live walk: the 19 live routes
 //!   × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key), asserting the status
 //!   the matrix predicts — 401 `PF-1001` with no credential,
 //!   403 `PF-1002` for a wrong role or a key ("no admin
 //!   ever"), 200 for an admitted role.
 //!
-//! The 8 stub rows are enforced promises since P1-043
+//! The 7 stub rows are enforced promises since P1-043
 //! (`admin_stub` / `admin_read_stub` — guard first, 501
 //! after): the live walk in `admin_guard.rs` asserts the
 //! guard (401 / 403 / 501) on every stub, and the handler
@@ -67,7 +67,7 @@ struct MatrixRow {
 /// `POST /v1/abuse` intake lives in the admin module but is
 /// not an admin route — it has no row (and no capability).
 const MATRIX: &[MatrixRow] = &[
-    // Live (17)
+    // Live (19)
     MatrixRow {
         method: "GET",
         path: "/v1/admin/users",
@@ -140,7 +140,7 @@ const MATRIX: &[MatrixRow] = &[
         capability: Capability::AdminUsageRead,
         live: true,
     },
-    // Stubs (9) — guard lands with the handler ticket (P1-043)
+    // Stubs (7) — guard lands with the handler ticket (P1-043)
     MatrixRow {
         method: "GET",
         path: "/v1/admin/metrics/dashboard",
@@ -151,7 +151,7 @@ const MATRIX: &[MatrixRow] = &[
         method: "POST",
         path: "/v1/admin/users/{id}/quota-grant",
         capability: Capability::AdminUsersWrite,
-        live: false,
+        live: true,
     },
     MatrixRow {
         method: "POST",
@@ -505,7 +505,7 @@ fn problem_code(res: &common::TestResponse) -> String {
 
 #[tokio::test]
 async fn admin_matrix_live() {
-    // The live walk: the 18 live rows × 5 caller kinds.
+    // The live walk: the 19 live rows × 5 caller kinds.
     // Order per row is anonymous → user → support → admin
     // → key, so the mutating admin call (suspend,
     // impersonate) runs last and cannot affect the earlier
@@ -570,6 +570,18 @@ async fn admin_matrix_live() {
             "/v1/admin/users/{id}/terminate" => (
                 Some(terminate_target),
                 Some(json!({ "reason": "authz matrix probe" })),
+            ),
+            // The quota-grant row needs a real user id + a
+            // valid grant body for the admitted caller to
+            // reach 200 (an unknown id is 404, an empty body
+            // is 422).
+            "/v1/admin/users/{id}/quota-grant" => (
+                Some(usage_target),
+                Some(json!({
+                    "images": 5,
+                    "ttl_hours": 24,
+                    "reason": "authz matrix probe"
+                })),
             ),
             "/v1/admin/users/{id}/impersonate" => (
                 Some(impersonate_target),
