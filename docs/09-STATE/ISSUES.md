@@ -768,6 +768,13 @@
 - Assumption: the storage integration suite's live leg (`live_minio_testcontainers`, `crates/storage/tests/storage_integration.rs`) cannot run on this VM — docker is gone (DOCKER-001) — so it is env-gated (`PF_TEST_LIVE_MINIO=1`) and SKIPs here. What runs here is the offline leg (`offline_memory_fake`, same cases against `MemoryStorage`), which is the P0-061 AC ("suite green offline"). The live leg is compile-checked here (`cargo check --tests`, testcontainers 0.28 API verified against the vendored crate source: `GenericImage` + `ImageExt` + `AsyncRunner` + `WaitFor::message_on_stdout("API: http://")`), and its first real run is in CI where docker exists. One genuine backend difference is designed into the suite, not papered over: real S3 verifies part ETags against uploaded bytes, so cases get ETags through a `PartSource` — fabricated for the fake, real SDK `upload_part` calls (5 MiB first part) for MinIO.
 - Status: open
 
+### CI-FAIL-029 [perf] CI verify job slow (~105 min) — no cargo cache; every run recompiles from scratch
+- Date: 2026-11-24 · Ticket: (owner-requested CI speed-up) · Severity: S3 (CI green but slow; no failure)
+- Symptom: CI #103 verify job took 105 min (jobs API); the other four jobs finish in <=15 min, so the verify job sets the whole run at ~1h45m. Local `just verify` is ~70 min on this VM for the same reason: a fresh checkout compiles everything.
+- Cause (proven by reading `.github/workflows/ci.yml`): the verify job has NO cache step — no `Swatinem/rust-cache`, no `actions/cache`, no sccache. Every CI run starts on a fresh runner, so cargo's fingerprinting has no `target/` to reuse and all dependencies recompile. The coverage step additionally rebuilds with llvm-cov instrumentation, which cannot reuse the normal build.
+- Fix: `Swatinem/rust-cache@v2` in the verify job, right after the toolchain step (the action keys on the current rustc version). `save-if: ${{ github.ref == 'refs/heads/main' }}` so only main saves a cache — PR runs restore but don't write their own, keeping one cache key. Size: the action takes no byte-size input; the cap is GitHub's own 10 GB/repo with LRU eviction of older caches — a full cache evicts the oldest entry and the next run recompiles fresh and re-saves.
+- Status: fixed (df95456) — first run after this is still slow (cold cache: build + save); speedup shows from the second run onward. Watch item: cache restore eats runner disk (CI-FAIL-021/023 pressure); the free-disk step runs first, restore second.
+
 ## Closed issues (keep for history; prune to last 50)
 
 ### SCHEMA-DOC-001 [bug] `just test-lint-commits` red — schema-docs drift test hardcoded 20 tables, repo has 22 — FIXED
