@@ -785,6 +785,14 @@
 - Fix: `Swatinem/rust-cache@v2` in the verify job, right after the toolchain step (the action keys on the current rustc version). `save-if: ${{ github.ref == 'refs/heads/main' }}` so only main saves a cache — PR runs restore but don't write their own, keeping one cache key. Size: the action takes no byte-size input; the cap is GitHub's own 10 GB/repo with LRU eviction of older caches — a full cache evicts the oldest entry and the next run recompiles fresh and re-saves.
 - Status: fixed (df95456) — first run after this is still slow (cold cache: build + save); speedup shows from the second run onward. Watch item: cache restore eats runner disk (CI-FAIL-021/023 pressure); the free-disk step runs first, restore second.
 
+### CI-FAIL-030 [bug] Commits #106/#107 fail at 'Unit-test the linter' — schema-docs test count stale (25 != 24)
+- Date: 2026-11-24 · Ticket: P1-107 (cause) · Severity: S1 (CI red on main)
+- Symptom: Commits #106 (874f1b1) and #107 (71c240a) both failed at step 'Unit-test the linter'. The #107 log zip (user-supplied) shows exactly one failure in 150 tests: `test_migrations_and_doc_agree` FAIL — `AssertionError: 25 != 24` at `scripts/test_check_schema_docs.py:98`.
+- Cause (proven from the #107 log + the 71c240a tree): P1-107 added the `quota_grants` table (migration 20261124080000, the 25th table) and the data-model doc already lists it, so doc and migrations agree at 25 — only the hardcoded literal 24 in the test was stale. Same trap as CI-FAIL-022/025, third occurrence: every migration that adds a table breaks this literal.
+- Fix: bump the literal 24 → 25 with the P1-107 note. Validated in a detached worktree at 71c240a: the test fails 25 != 24 on old code and passes with the fix. Follow-up worth considering (not done here): drop the hardcoded count entirely — the diff assertions already prove doc↔migrations agreement — so the next table-adding migration cannot break this again.
+- Status: fixed (9fc6c9e)
+- Note: CI #107's verify job ALSO failed, at the 'Coverage (llvm-cov)' step (Test step passed). Root cause unknown — the verify job log is needed; not the same failure as this one.
+
 ## Closed issues (keep for history; prune to last 50)
 
 ### SCHEMA-DOC-001 [bug] `just test-lint-commits` red — schema-docs drift test hardcoded 20 tables, repo has 22 — FIXED
