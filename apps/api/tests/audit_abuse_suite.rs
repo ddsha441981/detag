@@ -13,15 +13,15 @@
 //!
 //! The four tests:
 //!
-//! - `admin_write_matrix_audits_every_live_action` — the 10
+//! - `admin_write_matrix_audits_every_live_action` — the 11
 //!   live admin writes (suspend / restore / warn /
 //!   terminate / impersonate / quota-grant / plans /
-//!   billing-cancel / abuse-resolve dismiss / abuse-resolve
-//!   start_review)
+//!   billing-cancel / billing-refund / abuse-resolve dismiss
+//!   / abuse-resolve start_review)
 //!   each write exactly one audit row with the right action,
-//!   actor and target. The registry is the 13-row
+//!   actor and target. The registry is the 14-row
 //!   `audit_action_for` table (P1-046); this test walks
-//!   the 10 live rows, the stub test walks the other 3.
+//!   the 11 live rows, the stub test walks the other 3.
 //! - `admin_stub_and_unconfigured_writes_audit_nothing` —
 //!   the 3 stub writes (jobs reprocess / jobs cancel /
 //!   flags) answer 501 and write no row for
@@ -558,6 +558,60 @@ async fn admin_write_matrix_audits_every_live_action() {
     let row = &rows[rows.len() - 1];
     assert_eq!(row.actor_user_id, Some(admin_id), "actor is the admin");
     assert_eq!(row.target_type, "subscription");
+
+    // Billing refund (P1-108): the same subscription — now
+    // canceled — refunds too (any status may be refunded),
+    // exactly one new `billing.refund.requested` row for the
+    // subscription, reason verbatim, after carries the
+    // dashboard link.
+    let before = audit_for_target_action(
+        &app,
+        "subscription",
+        &sub_id.to_string(),
+        "billing.refund.requested",
+    )
+    .await
+    .len();
+    let res = admin_call(
+        &app,
+        Method::POST,
+        &format!("/v1/admin/billing/subscriptions/{sub_id}/refund"),
+        &admin_token,
+        Some(reason.clone()),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let rows = audit_for_target_action(
+        &app,
+        "subscription",
+        &sub_id.to_string(),
+        "billing.refund.requested",
+    )
+    .await;
+    assert_eq!(
+        rows.len(),
+        before + 1,
+        "billing refund writes exactly one row"
+    );
+    let row = &rows[rows.len() - 1];
+    assert_eq!(row.actor_user_id, Some(admin_id), "actor is the admin");
+    assert_eq!(row.target_type, "subscription");
+    assert_eq!(
+        row.target_id.as_deref(),
+        Some(sub_id.to_string()).as_deref()
+    );
+    assert_eq!(row.reason.as_deref(), Some("P1-092 suite probe"));
+    assert_eq!(
+        row.after.as_ref().unwrap()["subscription_id"],
+        sub_id.to_string()
+    );
+    assert!(
+        row.after.as_ref().unwrap()["dashboard_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://dashboard.stripe.com/subscriptions"),
+        "after carries the dashboard link"
+    );
 
     // Abuse resolve, dismiss: exactly one new
     // `admin.abuse_reports.resolved` row, `after.action`

@@ -79,6 +79,7 @@ views — and neither are denials, 404s, or 501 stubs.
 | PUT | `/v1/admin/plans` | `admin.plans.write` | admin | live | `admin.plans.updated` |
 | POST | `/v1/admin/billing/catalog-sync` | `admin.billing.write` | admin | live | `admin.billing.catalog_synced` |
 | POST | `/v1/admin/billing/subscriptions/{id}/cancel` | `admin.billing.write` | admin | live | `billing.subscription.status_changed` |
+| POST | `/v1/admin/billing/subscriptions/{id}/refund` | `admin.billing.write` | admin | live | `billing.refund.requested` |
 | GET | `/v1/admin/audit` | `admin.audit.read` | admin, support | live | — |
 | GET | `/v1/admin/abuse-reports` | `admin.abuse.read` | admin, support | live | — |
 | POST | `/v1/admin/abuse-reports/{id}/resolve` | `admin.abuse.write` | admin | live | `admin.abuse_reports.resolved` (+ `abuse.report_reviewing` / `user.suspended`) |
@@ -160,6 +161,7 @@ Notes on the live routes:
   change procedure (where defaults live, Stripe dashboard steps,
   rollout) is `docs/06-DELIVERY/10-pricing-config.md`.
 - **Support cancel** (P1-071): `POST /v1/admin/billing/subscriptions/{id}/cancel` cancels a subscription immediately, for the support workflow — admin only (support stays read-only, so support files the request and an admin executes it). Body is the audited note (`{"reason": "..."}`, 1–500 chars); the row moves to `canceled` now (not at period end, like a P1-069 downgrade-to-Free), a pending scheduled change is mooted, the `subscription-canceled` mail goes out, and the call audits as `billing.subscription.status_changed` with the admin as actor. Already-canceled is a 200 no-op. The response carries the ToS policy snippet and the Stripe-dashboard refund guidance — refunds are dashboard-only, and the Stripe subscription must ALSO be canceled in the dashboard, or billing continues (ASSUMPTION-034). The refund & cancel policy is `docs/06-DELIVERY/10-pricing-config.md`.
+- **Refund tool stub** (P1-108): `POST /v1/admin/billing/subscriptions/{id}/refund` is the guided checklist for a dashboard refund — admin only (support stays read-only, so support files the request and an admin executes it). Body is the audited note (`{"reason": "..."}`, 1–500 chars); the response carries the Stripe-dashboard deep-link + note (reused from P1-071), a four-step checklist (all `done: false` — the API cannot know what a human did in the dashboard), and the required fields (`amount` and `invoice_or_payment_id` are `null` — only support knows them, and the tool makes no provider read). One `billing.refund.requested` audit row per call; no state change, no provider call, no mail, no money moved (ASSUMPTION-034). Any status may be refunded, including already-canceled.
 - The public abuse intake (`POST /v1/abuse`) is **not** an
   admin route: it takes no credential and never reaches the
   matrix or the audit middleware.

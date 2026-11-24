@@ -24,8 +24,8 @@
 //!
 //! # Routes vs stubs
 //!
-//! The matrix covers all 26 admin routes in the route table,
-//! live or stub. The 19 live routes are enforced by the guards
+//! The matrix covers all 27 admin routes in the route table,
+//! live or stub. The 20 live routes are enforced by the guards
 //! today and walked live by the test registry
 //! (`apps/api/tests/authz_matrix.rs`). The 7 stub routes
 //! take the guard too since P1-043 (`admin_stub` /
@@ -201,6 +201,7 @@ impl Capability {
             ("PUT", "/v1/admin/plans") => Some(AdminPlansWrite),
             ("POST", "/v1/admin/billing/catalog-sync") => Some(AdminBillingWrite),
             ("POST", "/v1/admin/billing/subscriptions/{id}/cancel") => Some(AdminBillingWrite),
+            ("POST", "/v1/admin/billing/subscriptions/{id}/refund") => Some(AdminBillingWrite),
             ("GET", "/v1/admin/usage/{id}") => Some(AdminUsageRead),
             ("GET", "/v1/admin/usage/{id}/export") => Some(AdminUsageRead),
             ("GET", "/v1/admin/audit") => Some(AdminAuditRead),
@@ -247,6 +248,9 @@ impl Capability {
             ("POST", "/v1/admin/billing/subscriptions/{id}/cancel") => {
                 Some("billing.subscription.status_changed")
             }
+            ("POST", "/v1/admin/billing/subscriptions/{id}/refund") => {
+                Some("billing.refund.requested")
+            }
             ("POST", "/v1/admin/abuse-reports/{id}/resolve") => {
                 Some("admin.abuse_reports.resolved")
             }
@@ -274,6 +278,7 @@ impl Capability {
             ("PUT", "/v1/admin/plans") => Some("plans"),
             ("POST", "/v1/admin/billing/catalog-sync") => Some("plans"),
             ("POST", "/v1/admin/billing/subscriptions/{id}/cancel") => Some("subscription"),
+            ("POST", "/v1/admin/billing/subscriptions/{id}/refund") => Some("subscription"),
             ("POST", "/v1/admin/abuse-reports/{id}/resolve") => Some("abuse_report"),
             _ => None,
         }
@@ -389,7 +394,7 @@ mod tests {
 
     #[test]
     fn for_route_names_every_admin_route_and_nothing_else() {
-        // The route table: 26 admin routes, each with exactly
+        // The route table: 27 admin routes, each with exactly
         // one capability; non-admin routes map to None.
         use axum::http::Method;
         let admin_routes: &[(&str, &str)] = &[
@@ -412,6 +417,7 @@ mod tests {
             ("PUT", "/v1/admin/plans"),
             ("POST", "/v1/admin/billing/catalog-sync"),
             ("POST", "/v1/admin/billing/subscriptions/{id}/cancel"),
+            ("POST", "/v1/admin/billing/subscriptions/{id}/refund"),
             ("GET", "/v1/admin/usage/{id}"),
             ("GET", "/v1/admin/usage/{id}/export"),
             ("GET", "/v1/admin/audit"),
@@ -422,8 +428,8 @@ mod tests {
         ];
         assert_eq!(
             admin_routes.len(),
-            26,
-            "26 admin (method, path) pairs in the route table"
+            27,
+            "27 admin (method, path) pairs in the route table"
         );
         for (method, path) in admin_routes {
             let m = Method::from_bytes(method.as_bytes()).unwrap();
@@ -495,7 +501,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(writes, 13, "13 admin write routes");
+        assert_eq!(writes, 14, "14 admin write routes");
         assert_eq!(reads, 13, "13 admin read routes");
     }
 
@@ -519,7 +525,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(actions.len(), 13, "one action per write route");
+        assert_eq!(actions.len(), 14, "one action per write route");
     }
 
     #[test]

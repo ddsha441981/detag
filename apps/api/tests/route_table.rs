@@ -5,8 +5,8 @@
 //! path a request takes):
 //!
 //! 1. The table itself has no duplicate (method, path) pairs
-//!    and has the 75 entries the route table lists (auth 22 +
-//!    uploads 4 + jobs 9 + billing 12 + admin 26 — the 25
+//!    and has the 79 entries the route table lists (auth 24 +
+//!    uploads 4 + jobs 9 + billing 12 + admin 28 — the 27
 //!    `/v1/admin/*` routes plus the public `POST /v1/abuse`
 //!    intake — + meta 2).
 //! 2. Every table entry resolves to the 501 stub (never 404):
@@ -42,6 +42,8 @@
 //!    `POST /v1/billing/checkout` answers 401 PF-1001 the same
 //!    way (JWT only), as does P1-067 `POST /v1/billing/portal`.
 //!    P1-071 `POST /v1/admin/billing/subscriptions/{id}/cancel`
+//!    answers 401 PF-1001 the same way (admin only).
+//!    P1-108 `POST /v1/admin/billing/subscriptions/{id}/refund`
 //!    answers 401 PF-1001 the same way (admin only).
 //!    P1-080 `GET /v1/usage` answers 401 PF-1001 the same
 //!    way (JWT or a `jobs:read` key — no credential at all
@@ -105,15 +107,15 @@ fn route_table_has_no_duplicates() {
     }
     assert_eq!(
         ROUTE_TABLE.len(),
-        78,
-        "ROUTE_TABLE must list the spec's 78 routes (auth 24 + uploads 4 + jobs 9 + billing 12 + admin 27 + meta 2)"
+        79,
+        "ROUTE_TABLE must list the spec's 79 routes (auth 24 + uploads 4 + jobs 9 + billing 12 + admin 28 + meta 2)"
     );
 }
 
 #[tokio::test]
 async fn every_table_entry_resolves_to_the_stub() {
     let router = test_router();
-    // The probes send 76 /v1 requests in one burst through the
+    // The probes send 77 /v1 requests in one burst through the
     // rate limiter (P0-103). They use a per-run XFF address so
     // they never share the oneshot "unknown" bucket with the
     // other test binaries running in parallel — the aggregate
