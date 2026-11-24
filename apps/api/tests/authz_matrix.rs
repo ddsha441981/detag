@@ -14,7 +14,7 @@
 //!   `Capability::for_route`, and the role table behind it
 //!   admits exactly admin + support on read rows and admin
 //!   only on write/impersonate rows.
-//! - `admin_matrix_live` — the live walk: the 19 live routes
+//! - `admin_matrix_live` — the live walk: the 20 live routes
 //!   × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key), asserting the status
 //!   the matrix predicts — 401 `PF-1001` with no credential,
@@ -63,11 +63,11 @@ struct MatrixRow {
     live: bool,
 }
 
-/// The matrix: all 26 `/v1/admin/*` routes. The public
+/// The matrix: all 27 `/v1/admin/*` routes. The public
 /// `POST /v1/abuse` intake lives in the admin module but is
 /// not an admin route — it has no row (and no capability).
 const MATRIX: &[MatrixRow] = &[
-    // Live (19)
+    // Live (20)
     MatrixRow {
         method: "GET",
         path: "/v1/admin/users",
@@ -125,6 +125,12 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow {
         method: "POST",
         path: "/v1/admin/billing/subscriptions/{id}/cancel",
+        capability: Capability::AdminBillingWrite,
+        live: true,
+    },
+    MatrixRow {
+        method: "POST",
+        path: "/v1/admin/billing/subscriptions/{id}/refund",
         capability: Capability::AdminBillingWrite,
         live: true,
     },
@@ -241,12 +247,12 @@ fn matrix_covers_every_admin_route() {
         .collect();
     assert_eq!(
         admin_routes.len(),
-        26,
-        "ROUTE_TABLE must hold the 26 /v1/admin/* routes (the public POST /v1/abuse intake is not one)"
+        27,
+        "ROUTE_TABLE must hold the 27 /v1/admin/* routes (the public POST /v1/abuse intake is not one)"
     );
     assert_eq!(
         MATRIX.len(),
-        26,
+        27,
         "the matrix must hold one row per admin route ({} rows today)",
         MATRIX.len()
     );
@@ -505,7 +511,7 @@ fn problem_code(res: &common::TestResponse) -> String {
 
 #[tokio::test]
 async fn admin_matrix_live() {
-    // The live walk: the 19 live rows × 5 caller kinds.
+    // The live walk: the 20 live rows × 5 caller kinds.
     // Order per row is anonymous → user → support → admin
     // → key, so the mutating admin call (suspend,
     // impersonate) runs last and cannot affect the earlier
@@ -590,6 +596,15 @@ async fn admin_matrix_live() {
             // The cancel row needs a real subscription id +
             // a reason for the admitted caller to reach 200.
             "/v1/admin/billing/subscriptions/{id}/cancel" => (
+                Some(cancel_target),
+                Some(json!({ "reason": "authz matrix probe" })),
+            ),
+            // The refund row needs the same: a real
+            // subscription id + a reason. It reuses the
+            // cancel target — the cancel probe already moved
+            // it to `canceled`, and any status may be
+            // refunded, so the admitted caller still gets 200.
+            "/v1/admin/billing/subscriptions/{id}/refund" => (
                 Some(cancel_target),
                 Some(json!({ "reason": "authz matrix probe" })),
             ),

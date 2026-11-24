@@ -12,19 +12,19 @@
 //! for every caller kind that must not climb. The four tests:
 //!
 //! - `user_to_admin_endpoints_all_403_and_audit_nothing` —
-//!   a plain user tries all 26 admin routes: 403 everywhere,
-//!   no audit row for any of the 13 write actions with the
+//!   a plain user tries all 27 admin routes: 403 everywhere,
+//!   no audit row for any of the 14 write actions with the
 //!   user as actor, and the live-write targets are untouched
 //!   (a denied suspend leaves the target `active`, a denied
 //!   restore leaves a suspended target `suspended`, a denied
 //!   impersonate mints no token row).
 //! - `support_to_writes_all_403_and_audit_nothing` — support
-//!   is read-only: 403 on all 13 writes, no audit row for any
+//!   is read-only: 403 on all 14 writes, no audit row for any
 //!   of them, same state proofs as the user test. (Support
 //!   reads are the P1-044 contract — 200 on the live reads,
 //!   501 on the stub reads — and are not re-proven here.)
 //! - `api_key_to_admin_all_403_and_audit_nothing` — an admin
-//!   user's own full-scope key tries all 26 admin routes:
+//!   user's own full-scope key tries all 27 admin routes:
 //!   403 everywhere ("no admin ever", P1-040), no audit row
 //!   for any write action with the key's owner as actor.
 //! - `tampered_role_claim_is_rejected` — a plain user's token
@@ -213,7 +213,7 @@ struct WriteRow {
     action: &'static str,
 }
 
-/// All 13 admin writes, with the audit action from
+/// All 14 admin writes, with the audit action from
 /// `Capability::audit_action_for` (`apps/api/src/authz.rs`)
 /// — the same table the admin guide renders.
 const WRITE_ROWS: &[WriteRow] = &[
@@ -279,12 +279,17 @@ const WRITE_ROWS: &[WriteRow] = &[
     },
     WriteRow {
         method: "POST",
+        path: "/v1/admin/billing/subscriptions/{id}/refund",
+        action: "billing.refund.requested",
+    },
+    WriteRow {
+        method: "POST",
         path: "/v1/admin/abuse-reports/{id}/resolve",
         action: "admin.abuse_reports.resolved",
     },
 ];
 
-/// All 26 admin routes (method + path), from the matrix.
+/// All 27 admin routes (method + path), from the matrix.
 const ALL_ROUTES: &[(&str, &str)] = &[
     ("GET", "/v1/admin/metrics/dashboard"),
     ("GET", "/v1/admin/users"),
@@ -305,6 +310,7 @@ const ALL_ROUTES: &[(&str, &str)] = &[
     ("PUT", "/v1/admin/plans"),
     ("POST", "/v1/admin/billing/catalog-sync"),
     ("POST", "/v1/admin/billing/subscriptions/{id}/cancel"),
+    ("POST", "/v1/admin/billing/subscriptions/{id}/refund"),
     ("GET", "/v1/admin/usage/{id}"),
     ("GET", "/v1/admin/usage/{id}/export"),
     ("GET", "/v1/admin/audit"),
@@ -439,7 +445,7 @@ async fn user_to_admin_endpoints_all_403_and_audit_nothing() {
 
 #[tokio::test]
 async fn support_to_writes_all_403_and_audit_nothing() {
-    // Support is read-only: 403 on all 11 writes, no audit
+    // Support is read-only: 403 on all 14 writes, no audit
     // row for any of them, same state proofs as the user
     // test. (Support reads are the P1-044 contract and are
     // not re-proven here.)
@@ -486,7 +492,7 @@ async fn support_to_writes_all_403_and_audit_nothing() {
 
 #[tokio::test]
 async fn api_key_to_admin_all_403_and_audit_nothing() {
-    // An admin user's own full-scope key tries all 26 admin
+    // An admin user's own full-scope key tries all 27 admin
     // routes: 403 everywhere ("no admin ever", P1-040), no
     // audit row for any write with the key's owner as actor.
     let app = escalation_app().await;

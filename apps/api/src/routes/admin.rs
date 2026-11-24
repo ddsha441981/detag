@@ -30,7 +30,9 @@
 //! (in this file), and `GET /v1/admin/users/{id}`, real
 //! since P1-106 (in this file), and `POST
 //! /v1/admin/users/{id}/quota-grant`, real since P1-107
-//! (in this file).
+//! (in this file), and `POST
+//! /v1/admin/billing/subscriptions/{id}/refund`, real since
+//! P1-108 (in this file).
 //! Every route — live or stub — sits behind the matrix guard
 //! (P1-043): the stubs take `admin_stub` / `admin_read_stub`
 //! below, so an unauthenticated or wrong-role caller is
@@ -79,6 +81,7 @@ use crate::{
         catalog_sync::{run_catalog_sync, CatalogSyncError},
         enforcement::{terminate_user, warn_user, EnforcementError, EnforcementResponse},
         quota_grant::{grant_quota, QuotaGrantError, QuotaGrantRequest, QuotaGrantResponse},
+        refund_tool::{request_refund, RefundChecklistResponse, RefundToolError},
         register::UserResponse,
         support_cancel::{
             support_cancel as support_cancel_service, SupportCancelError, SupportCancelResponse,
@@ -950,6 +953,81 @@ pub async fn cancel_subscription(
     }
 }
 
+/// POST /v1/admin/billing/subscriptions/{id}/refund
+/// (P1-108): the guided checklist for refunding a
+/// subscription in the Stripe dashboard, for the support
+/// workflow. Admin only; support gets 403 `PF-1002` from
+/// the extractor (support stays read-only per FR-A-07),
+/// no credential gets 401 `PF-1001`, an API key gets 403.
+/// The body is the audited note (`ReasonRequest`, 1–500
+/// chars — the P1-008 suspend precedent); it lands on the
+/// audit row verbatim. The response carries the Stripe
+/// dashboard deep-link + note (reused `RefundGuidance`
+/// from P1-071), a four-step checklist (all `done: false`
+/// — the API cannot know what a human did in the
+/// dashboard), and the required fields (`amount` and
+/// `invoice_or_payment_id` are `null` — only support
+/// knows them, and the tool makes no provider read).
+/// One `billing.refund.requested` audit row per call; no
+/// state change, no provider call, no mail, no money moved
+/// (ASSUMPTION-034). Any status may be refunded, including
+/// already-canceled. The service wrote the audit row, so
+/// the handler marks `AuditHandled` and the P1-046
+/// middleware stands down — the row exists exactly once.
+#[utoipa::path(
+    post,
+    path = "/v1/admin/billing/subscriptions/{id}/refund",
+    request_body = ReasonRequest,
+    responses(
+        (status = 200, description = "The guided checklist: the dashboard deep-link, the four steps, and the required fields", body = RefundChecklistResponse),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified non-admin, incl. support, or an API key)", body = Problem),
+        (status = 404, description = "No such subscription (PF-2010)", body = Problem),
+        (status = 422, description = "Reason missing, blank, too long, or with control characters", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn refund_tool_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    admin: AdminContext,
+    Path(subscription_id): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<ReasonRequest>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let Some(admin_user) = admin.auth.user else {
+        // The extractor guarantees a user for a verified context.
+        return ProblemResponse(AppError::Internal.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
+    match request_refund(&state, &admin_user, subscription_id, &req.reason).await {
+        Ok(outcome) => {
+            // The service wrote the audit row — mark the
+            // response so the P1-046 middleware stands down
+            // and the row exists exactly once.
+            let mut response = Json(outcome).into_response();
+            response.extensions_mut().insert(AuditHandled);
+            response
+        }
+        Err(RefundToolError::Validation(errors)) => {
+            ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
+        }
+        Err(RefundToolError::NotFound) => {
+            ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(RefundToolError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
 /// GET /v1/admin/usage/{id} (P1-081): the admin usage
 /// view — the P1-080 shape for an arbitrary user (today +
 /// the 30-day window ending today from the durable
@@ -1525,6 +1603,10 @@ pub fn router(state: AppState) -> Router<AppState> {
                 .route(
                     "/billing/subscriptions/{id}/cancel",
                     post(cancel_subscription),
+                )
+                .route(
+                    "/billing/subscriptions/{id}/refund",
+                    post(refund_tool_handler),
                 )
                 .route("/usage/{id}", get(admin_usage_handler))
                 .route("/usage/{id}/export", get(admin_usage_export_handler))
