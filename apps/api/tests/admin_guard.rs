@@ -17,15 +17,16 @@
 //! `/terminate`; P1-098: `GET /v1/admin/attestations`),
 //! P1-106: `GET /v1/admin/users/{id}`), and P1-107:
 //! `POST /v1/admin/users/{id}/quota-grant`, and P1-108:
-//! `POST /v1/admin/billing/subscriptions/{id}/refund`, so
-//! the walk now covers 20 live routes and 7 stubs. The
+//! `POST /v1/admin/billing/subscriptions/{id}/refund`, and
+//! P1-109: `GET /v1/admin/users/lookup`, so
+//! the walk now covers 21 live routes and 7 stubs. The
 //! three tests:
 //!
-//! - `admin_guard_on_every_route` — the walk: all 27 admin
+//! - `admin_guard_on_every_route` — the walk: all 28 admin
 //!   routes × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key). Anonymous is 401
 //!   `PF-1001`, a wrong role or a key is 403 `PF-1002`, an
-//!   admitted role is 200 on the 20 live routes and 501
+//!   admitted role is 200 on the 21 live routes and 501
 //!   `PF-5004` on the 7 stubs — except the catalog sync,
 //!   whose admitted admin gets 503 `PF-5005` (billing is
 //!   unconfigured in the test environment: no Stripe key).
@@ -227,6 +228,17 @@ async fn probe(
         Some(id) => path.replace("{id}", &id.to_string()),
         None => path.replace("{id}", PATH_ID),
     };
+    // The lookup row takes its key as a query param, not a
+    // path id: the admitted callers need `?id=<real user>`
+    // to reach 200 (no key is 422, not 200).
+    let uri = if path == "/v1/admin/users/lookup" {
+        let id = target
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| PATH_ID.to_string());
+        format!("{uri}?id={id}")
+    } else {
+        uri
+    };
     let mut req = Request::builder()
         .method(Method::from_bytes(method.as_bytes()).unwrap())
         .uri(uri)
@@ -298,7 +310,7 @@ struct GuardRow {
     read: bool,
 }
 
-/// All 27 `/v1/admin/*` routes. The read flag comes from the
+/// All 28 `/v1/admin/*` routes. The read flag comes from the
 /// matrix: a capability whose code ends in `.read`.
 const GUARD_ROWS: &[GuardRow] = &[
     GuardRow {
@@ -316,6 +328,12 @@ const GUARD_ROWS: &[GuardRow] = &[
     GuardRow {
         method: "GET",
         path: "/v1/admin/users/{id}",
+        live: true,
+        read: true,
+    },
+    GuardRow {
+        method: "GET",
+        path: "/v1/admin/users/lookup",
         live: true,
         read: true,
     },
@@ -467,7 +485,7 @@ const GUARD_ROWS: &[GuardRow] = &[
 
 #[tokio::test]
 async fn admin_guard_on_every_route() {
-    // The walk: all 27 admin routes × 5 caller kinds. The
+    // The walk: all 28 admin routes × 5 caller kinds. The
     // read/write flag must agree with the matrix — a row
     // whose flag disagrees with its capability fails here,
     // so the walk cannot drift from the P1-042 table.
@@ -483,7 +501,7 @@ async fn admin_guard_on_every_route() {
             row.path
         );
     }
-    assert_eq!(GUARD_ROWS.len(), 27, "one row per admin route");
+    assert_eq!(GUARD_ROWS.len(), 28, "one row per admin route");
 
     let app = guard_app().await;
     let (user_token, support_token, admin_token, admin_key, _admin_id) = callers(&app).await;
@@ -578,6 +596,11 @@ async fn admin_guard_on_every_route() {
             "/v1/admin/usage/{id}" | "/v1/admin/usage/{id}/export" | "/v1/admin/users/{id}" => {
                 (Some(usage_target), None)
             }
+            // The lookup row needs the same real user id —
+            // as its query key (the probe appends
+            // `?id=<target>`): no key is 422, an unknown id
+            // is 404, a real one is 200.
+            "/v1/admin/users/lookup" => (Some(usage_target), None),
             // The resolve row needs a real open report id +
             // a dismiss body for the admitted caller to
             // reach 200 (an unknown id is 404, an empty body

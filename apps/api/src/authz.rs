@@ -24,8 +24,8 @@
 //!
 //! # Routes vs stubs
 //!
-//! The matrix covers all 27 admin routes in the route table,
-//! live or stub. The 20 live routes are enforced by the guards
+//! The matrix covers all 28 admin routes in the route table,
+//! live or stub. The 21 live routes are enforced by the guards
 //! today and walked live by the test registry
 //! (`apps/api/tests/authz_matrix.rs`). The 7 stub routes
 //! take the guard too since P1-043 (`admin_stub` /
@@ -184,6 +184,7 @@ impl Capability {
             ("GET", "/v1/admin/metrics/dashboard") => Some(AdminDashboardRead),
             ("GET", "/v1/admin/users") => Some(AdminUsersRead),
             ("GET", "/v1/admin/users/{id}") => Some(AdminUsersRead),
+            ("GET", "/v1/admin/users/lookup") => Some(AdminUsersRead),
             ("POST", "/v1/admin/users/{id}/suspend")
             | ("POST", "/v1/admin/users/{id}/restore")
             | ("POST", "/v1/admin/users/{id}/warn")
@@ -394,13 +395,14 @@ mod tests {
 
     #[test]
     fn for_route_names_every_admin_route_and_nothing_else() {
-        // The route table: 27 admin routes, each with exactly
+        // The route table: 28 admin routes, each with exactly
         // one capability; non-admin routes map to None.
         use axum::http::Method;
         let admin_routes: &[(&str, &str)] = &[
             ("GET", "/v1/admin/metrics/dashboard"),
             ("GET", "/v1/admin/users"),
             ("GET", "/v1/admin/users/{id}"),
+            ("GET", "/v1/admin/users/lookup"),
             ("POST", "/v1/admin/users/{id}/suspend"),
             ("POST", "/v1/admin/users/{id}/restore"),
             ("POST", "/v1/admin/users/{id}/warn"),
@@ -428,8 +430,8 @@ mod tests {
         ];
         assert_eq!(
             admin_routes.len(),
-            27,
-            "27 admin (method, path) pairs in the route table"
+            28,
+            "28 admin (method, path) pairs in the route table"
         );
         for (method, path) in admin_routes {
             let m = Method::from_bytes(method.as_bytes()).unwrap();
@@ -502,7 +504,7 @@ mod tests {
             }
         }
         assert_eq!(writes, 14, "14 admin write routes");
-        assert_eq!(reads, 13, "13 admin read routes");
+        assert_eq!(reads, 14, "14 admin read routes");
     }
 
     #[test]

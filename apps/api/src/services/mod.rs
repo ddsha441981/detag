@@ -42,6 +42,7 @@ pub mod subscription_state;
 pub mod support_cancel;
 pub mod usage;
 pub mod usage_attribution;
+pub mod user_lookup;
 pub mod verification;
 pub mod webhook;
 pub mod webhook_handlers;
