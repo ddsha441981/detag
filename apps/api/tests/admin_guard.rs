@@ -15,16 +15,17 @@
 //! and `POST /v1/admin/abuse-reports/{id}/resolve`;
 //! P1-091: `POST /v1/admin/users/{id}/warn` +
 //! `/terminate`; P1-098: `GET /v1/admin/attestations`),
-//! P1-106: `GET /v1/admin/users/{id}`), so
-//! the walk now covers 18 live routes and 8 stubs. The
+//! P1-106: `GET /v1/admin/users/{id}`), and P1-107:
+//! `POST /v1/admin/users/{id}/quota-grant`, so
+//! the walk now covers 19 live routes and 7 stubs. The
 //! three tests:
 //!
 //! - `admin_guard_on_every_route` — the walk: all 26 admin
 //!   routes × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key). Anonymous is 401
 //!   `PF-1001`, a wrong role or a key is 403 `PF-1002`, an
-//!   admitted role is 200 on the 18 live routes and 501
-//!   `PF-5004` on the 8 stubs — except the catalog sync,
+//!   admitted role is 200 on the 19 live routes and 501
+//!   `PF-5004` on the 7 stubs — except the catalog sync,
 //!   whose admitted admin gets 503 `PF-5005` (billing is
 //!   unconfigured in the test environment: no Stripe key).
 //!   A route that answers 501 to an
@@ -37,7 +38,7 @@
 //! - `denied_and_stub_attempts_audit_nothing` — the negative:
 //!   a denied suspend (plain user, 403), a suspend of an
 //!   unknown id (404), and an admitted stub call (admin on
-//!   quota-grant, 501) each write NO audit row for their
+//!   jobs reprocess, 501) each write NO audit row for their
 //!   target. The trail records actions, not attempts.
 //!
 //! The automatic audit middleware is P1-046's scope (route
@@ -344,7 +345,7 @@ const GUARD_ROWS: &[GuardRow] = &[
     GuardRow {
         method: "POST",
         path: "/v1/admin/users/{id}/quota-grant",
-        live: false,
+        live: true,
         read: false,
     },
     GuardRow {
@@ -529,6 +530,18 @@ async fn admin_guard_on_every_route() {
             "/v1/admin/users/{id}/terminate" => (
                 Some(terminate_target),
                 Some(json!({ "reason": "guard probe" })),
+            ),
+            // The quota-grant row needs a real user id + a
+            // valid grant body for the admitted caller to
+            // reach 200 (an unknown id is 404, an empty body
+            // is 422).
+            "/v1/admin/users/{id}/quota-grant" => (
+                Some(usage_target),
+                Some(json!({
+                    "images": 5,
+                    "ttl_hours": 24,
+                    "reason": "guard probe"
+                })),
             ),
             "/v1/admin/users/{id}/impersonate" => (
                 Some(impersonate_target),
@@ -761,20 +774,20 @@ async fn denied_and_stub_attempts_audit_nothing() {
         "a 404 suspend audits nothing"
     );
 
-    // An admin calls a stub write (quota-grant): 501, no row.
+    // An admin calls a stub write (jobs reprocess): 501, no row.
     let res = probe(
         &app,
         "POST",
-        "/v1/admin/users/{id}/quota-grant",
+        "/v1/admin/jobs/{id}/reprocess",
         Some(&admin_token),
         Some(stub_target),
-        Some(json!({ "reason": "must not be audited" })),
+        Some(json!({})),
     )
     .await;
     assert_eq!(res.status, StatusCode::NOT_IMPLEMENTED, "{}", res.text());
     assert_eq!(problem_code(&res), "PF-5004");
     assert_eq!(
-        audit_for_user_action(&app, stub_target, "user.suspended")
+        audit_for_user_action(&app, stub_target, "admin.jobs.reprocessed")
             .await
             .len(),
         0,

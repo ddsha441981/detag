@@ -208,6 +208,7 @@ pub async fn get_profile(state: &AppState, user: &User) -> Result<ProfileRespons
         user.id,
         &plan,
         state.clock.now().date_naive(),
+        state.clock.now(),
     )
     .await
     .map_err(|err| {
@@ -388,6 +389,7 @@ pub async fn patch_profile(
         updated.id,
         &plan,
         state.clock.now().date_naive(),
+        state.clock.now(),
     )
     .await
     .map_err(|err| {

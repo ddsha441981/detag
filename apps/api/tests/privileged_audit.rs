@@ -22,7 +22,7 @@
 //!   200 from a read route each audit nothing.
 //! - `denied_and_stub_writes_audit_nothing` — the negative
 //!   on the real app: a denied write (support suspend, 403),
-//!   an admitted stub write (admin quota-grant, 501) and a
+//!   an admitted stub write (admin jobs reprocess, 501) and a
 //!   successful read (admin user search, 200) each write no
 //!   audit row. The trail records actions, not attempts or
 //!   views.
@@ -367,9 +367,7 @@ async fn denied_and_stub_writes_audit_nothing() {
     // Same baseline rule as the middleware test: the harness
     // DB persists across runs, so assert the count does not
     // move rather than that it is zero.
-    let quota_baseline = audit_for_action(&app, "admin.users.quota_granted")
-        .await
-        .len();
+    let reprocess_baseline = audit_for_action(&app, "admin.jobs.reprocessed").await.len();
 
     // A denied write (support may not suspend): 403, and no
     // `user.suspended` row for the target.
@@ -394,21 +392,19 @@ async fn denied_and_stub_writes_audit_nothing() {
         "a denied suspend audits nothing"
     );
 
-    // An admitted stub write (admin quota-grant): 501, and
-    // no `admin.users.quota_granted` row.
+    // An admitted stub write (admin jobs reprocess): 501, and
+    // no `admin.jobs.reprocessed` row.
     let res = admin_post(
         &app,
-        &format!("/v1/admin/users/{target}/quota-grant"),
+        &format!("/v1/admin/jobs/{}/reprocess", Uuid::now_v7()),
         &admin_token,
-        Some(json!({ "reason": "privileged audit probe" })),
+        Some(json!({})),
     )
     .await;
     assert_eq!(res.status, StatusCode::NOT_IMPLEMENTED, "{}", res.text());
     assert_eq!(
-        audit_for_action(&app, "admin.users.quota_granted")
-            .await
-            .len(),
-        quota_baseline,
+        audit_for_action(&app, "admin.jobs.reprocessed").await.len(),
+        reprocess_baseline,
         "an admitted stub write audits nothing"
     );
 
@@ -428,10 +424,8 @@ async fn denied_and_stub_writes_audit_nothing() {
         .await;
     assert_eq!(res.status, StatusCode::OK, "{}", res.text());
     assert_eq!(
-        audit_for_action(&app, "admin.users.quota_granted")
-            .await
-            .len(),
-        quota_baseline,
+        audit_for_action(&app, "admin.jobs.reprocessed").await.len(),
+        reprocess_baseline,
         "a read audits nothing"
     );
 }

@@ -36,6 +36,7 @@ pub mod jobs;
 pub mod login_attempts;
 pub mod plan_changes;
 pub mod plans;
+pub mod quota_grants;
 pub mod sessions;
 pub mod subscriptions;
 pub mod uploads;

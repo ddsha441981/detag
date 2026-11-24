@@ -55,7 +55,7 @@
 
 mod common;
 
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use common::{spawn_app, TestApp};
 use detag_api::services::quota_warnings::{
     maybe_warn_quota, QuotaWarningConfig, WarnOutcome, QUOTA_WARNING_100_TEMPLATE,
@@ -69,6 +69,13 @@ use uuid::Uuid;
 
 fn day() -> NaiveDate {
     NaiveDate::from_ymd_opt(2026, 11, 20).expect("fixed test day")
+}
+
+/// The frozen "now" for the grant-expiry read (P1-107): noon
+/// UTC on the fixed test day. No test here grants anything,
+/// so the instant only has to be deterministic.
+fn now() -> DateTime<Utc> {
+    day().and_hms_opt(12, 0, 0).unwrap().and_utc()
 }
 
 fn next_day() -> NaiveDate {
@@ -148,7 +155,7 @@ async fn warn_at_80_enqueues_once() {
     let free = plan(&app, "free").await;
     seed_usage(&app, user.id, day(), 8, 0).await;
 
-    let outcome = maybe_warn_quota(&app.pool, &config(), user.id, &free, day())
+    let outcome = maybe_warn_quota(&app.pool, &config(), user.id, &free, day(), now())
         .await
         .expect("warn check runs");
     assert!(
@@ -176,11 +183,11 @@ async fn second_call_same_day_sends_nothing_twice() {
     let free = plan(&app, "free").await;
     seed_usage(&app, user.id, day(), 8, 0).await;
 
-    let first = maybe_warn_quota(&app.pool, &config(), user.id, &free, day())
+    let first = maybe_warn_quota(&app.pool, &config(), user.id, &free, day(), now())
         .await
         .expect("first warn check runs");
     assert!(matches!(first, WarnOutcome::Sent { .. }));
-    let second = maybe_warn_quota(&app.pool, &config(), user.id, &free, day())
+    let second = maybe_warn_quota(&app.pool, &config(), user.id, &free, day(), now())
         .await
         .expect("second warn check runs");
     assert!(
@@ -199,12 +206,12 @@ async fn full_at_100_enqueues_100_template() {
     let free = plan(&app, "free").await;
     seed_usage(&app, user.id, day(), 8, 0).await;
 
-    let first = maybe_warn_quota(&app.pool, &config(), user.id, &free, day())
+    let first = maybe_warn_quota(&app.pool, &config(), user.id, &free, day(), now())
         .await
         .expect("warn check runs");
     assert!(matches!(first, WarnOutcome::Sent { .. }));
     set_images(&app, user.id, day(), 10).await;
-    let second = maybe_warn_quota(&app.pool, &config(), user.id, &free, day())
+    let second = maybe_warn_quota(&app.pool, &config(), user.id, &free, day(), now())
         .await
         .expect("full check runs");
     assert!(
@@ -231,7 +238,7 @@ async fn jump_straight_to_full_sends_only_full() {
     let free = plan(&app, "free").await;
     seed_usage(&app, user.id, day(), 10, 0).await;
 
-    let outcome = maybe_warn_quota(&app.pool, &config(), user.id, &free, day())
+    let outcome = maybe_warn_quota(&app.pool, &config(), user.id, &free, day(), now())
         .await
         .expect("warn check runs");
     assert!(
@@ -260,7 +267,7 @@ async fn below_threshold_sends_nothing() {
     let free = plan(&app, "free").await;
     seed_usage(&app, user.id, day(), 7, 0).await;
 
-    let outcome = maybe_warn_quota(&app.pool, &config(), user.id, &free, day())
+    let outcome = maybe_warn_quota(&app.pool, &config(), user.id, &free, day(), now())
         .await
         .expect("warn check runs");
     assert_eq!(outcome, WarnOutcome::BelowThreshold);
@@ -286,11 +293,11 @@ async fn next_day_cap_resets() {
     seed_usage(&app, user.id, day(), 8, 0).await;
     seed_usage(&app, user.id, next_day(), 8, 0).await;
 
-    let first = maybe_warn_quota(&app.pool, &config(), user.id, &free, day())
+    let first = maybe_warn_quota(&app.pool, &config(), user.id, &free, day(), now())
         .await
         .expect("day-1 warn check runs");
     assert!(matches!(first, WarnOutcome::Sent { .. }));
-    let second = maybe_warn_quota(&app.pool, &config(), user.id, &free, next_day())
+    let second = maybe_warn_quota(&app.pool, &config(), user.id, &free, next_day(), now())
         .await
         .expect("day-2 warn check runs");
     assert!(
@@ -317,7 +324,7 @@ async fn zero_limit_video_dimension_ignored() {
     // 0 limit must not warn (0 is "not granted", not a percent).
     seed_usage(&app, user.id, day(), 0, 500).await;
 
-    let outcome = maybe_warn_quota(&app.pool, &config(), user.id, &free, day())
+    let outcome = maybe_warn_quota(&app.pool, &config(), user.id, &free, day(), now())
         .await
         .expect("warn check runs");
     assert_eq!(outcome, WarnOutcome::BelowThreshold);
@@ -337,7 +344,7 @@ async fn video_dimension_trips_for_pro() {
     // Pro: 3600 video-seconds/day (FR-P-01) — 2880 is 80%.
     seed_usage(&app, user.id, day(), 0, 2880).await;
 
-    let outcome = maybe_warn_quota(&app.pool, &config(), user.id, &pro, day())
+    let outcome = maybe_warn_quota(&app.pool, &config(), user.id, &pro, day(), now())
         .await
         .expect("warn check runs");
     assert!(
@@ -366,7 +373,7 @@ async fn disabled_config_is_a_noop() {
         enabled: false,
         ..config()
     };
-    let outcome = maybe_warn_quota(&app.pool, &disabled, user.id, &free, day())
+    let outcome = maybe_warn_quota(&app.pool, &disabled, user.id, &free, day(), now())
         .await
         .expect("warn check runs");
     assert_eq!(outcome, WarnOutcome::Disabled);
@@ -387,8 +394,8 @@ async fn concurrent_calls_enqueue_once() {
 
     let cfg = config();
     let (first, second) = tokio::join!(
-        maybe_warn_quota(&app.pool, &cfg, user.id, &free, day()),
-        maybe_warn_quota(&app.pool, &cfg, user.id, &free, day()),
+        maybe_warn_quota(&app.pool, &cfg, user.id, &free, day(), now()),
+        maybe_warn_quota(&app.pool, &cfg, user.id, &free, day(), now()),
     );
     let first = first.expect("first racing check runs");
     let second = second.expect("second racing check runs");
@@ -429,7 +436,7 @@ async fn enqueued_mail_renders() {
     let free = plan(&app, "free").await;
     seed_usage(&app, user.id, day(), 8, 0).await;
 
-    let first = maybe_warn_quota(&app.pool, &config(), user.id, &free, day())
+    let first = maybe_warn_quota(&app.pool, &config(), user.id, &free, day(), now())
         .await
         .expect("warn check runs");
     assert!(matches!(first, WarnOutcome::Sent { .. }));
@@ -448,7 +455,7 @@ async fn enqueued_mail_renders() {
     );
 
     set_images(&app, user.id, day(), 10).await;
-    let second = maybe_warn_quota(&app.pool, &config(), user.id, &free, day())
+    let second = maybe_warn_quota(&app.pool, &config(), user.id, &free, day(), now())
         .await
         .expect("full check runs");
     assert!(matches!(second, WarnOutcome::Sent { .. }));

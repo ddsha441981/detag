@@ -13,17 +13,18 @@
 //!
 //! The four tests:
 //!
-//! - `admin_write_matrix_audits_every_live_action` — the 9
+//! - `admin_write_matrix_audits_every_live_action` — the 10
 //!   live admin writes (suspend / restore / warn /
-//!   terminate / impersonate / plans / billing-cancel /
-//!   abuse-resolve dismiss / abuse-resolve start_review)
+//!   terminate / impersonate / quota-grant / plans /
+//!   billing-cancel / abuse-resolve dismiss / abuse-resolve
+//!   start_review)
 //!   each write exactly one audit row with the right action,
 //!   actor and target. The registry is the 13-row
 //!   `audit_action_for` table (P1-046); this test walks
-//!   the 9 live rows, the stub test walks the other 4.
+//!   the 10 live rows, the stub test walks the other 3.
 //! - `admin_stub_and_unconfigured_writes_audit_nothing` —
-//!   the 4 stub writes (quota-grant / jobs reprocess /
-//!   jobs cancel / flags) answer 501 and write no row for
+//!   the 3 stub writes (jobs reprocess / jobs cancel /
+//!   flags) answer 501 and write no row for
 //!   their named action; catalog-sync answers 503
 //!   (unconfigured — no Stripe key in this harness) and
 //!   writes no `admin.billing.catalog_synced` row; a denied
@@ -464,6 +465,39 @@ async fn admin_write_matrix_audits_every_live_action() {
     assert_eq!(row.reason.as_deref(), Some("P1-092 suite probe"));
     assert_eq!(row.after.as_ref().unwrap()["expires_in"], 900);
 
+    // Quota grant (P1-107): exactly one new
+    // `admin.users.quota_granted` row — actor the admin,
+    // target the user, after carries the granted amounts +
+    // expiry + grant id, reason verbatim.
+    let (u6, _) = make_role(&app, &unique_email("target-g"), "user").await;
+    let before =
+        audit_for_target_action(&app, "user", &u6.to_string(), "admin.users.quota_granted")
+            .await
+            .len();
+    let res = admin_call(
+        &app,
+        Method::POST,
+        &format!("/v1/admin/users/{u6}/quota-grant"),
+        &admin_token,
+        Some(json!({
+            "images": 5,
+            "ttl_hours": 24,
+            "reason": "P1-092 suite probe"
+        })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    let rows =
+        audit_for_target_action(&app, "user", &u6.to_string(), "admin.users.quota_granted").await;
+    assert_eq!(rows.len(), before + 1, "quota grant writes exactly one row");
+    let row = &rows[rows.len() - 1];
+    assert_eq!(row.actor_user_id, Some(admin_id), "actor is the admin");
+    assert_eq!(row.target_type, "user");
+    assert_eq!(row.target_id.as_deref(), Some(u6.to_string().as_str()));
+    assert_eq!(row.after.as_ref().unwrap()["images"], 5);
+    assert!(row.after.as_ref().unwrap()["expires_at"].is_string());
+    assert_eq!(row.reason.as_deref(), Some("P1-092 suite probe"));
+
     // Plans: a same-values PUT (Pro at its seeded 49900) —
     // the row is written even though nothing changes (the
     // service does not diff), and the catalog is left
@@ -621,12 +655,6 @@ async fn admin_stub_and_unconfigured_writes_audit_nothing() {
     // guard first, so an admitted admin reaches the 501;
     // the audit middleware audits actions, not attempts.)
     let stub_cases = [
-        (
-            Method::POST,
-            format!("/v1/admin/users/{target}/quota-grant"),
-            Some(reason.clone()),
-            "admin.users.quota_granted",
-        ),
         (
             Method::POST,
             format!("/v1/admin/jobs/{job_id}/reprocess"),

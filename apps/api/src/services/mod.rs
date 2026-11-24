@@ -31,6 +31,7 @@ pub mod portal;
 pub mod profile;
 pub mod pwned;
 pub mod quota;
+pub mod quota_grant;
 pub mod quota_warnings;
 pub mod refresh;
 pub mod register;

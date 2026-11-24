@@ -173,7 +173,7 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow { method: "POST", path: "/v1/admin/users/{id}/restore", outcome: KeyOutcome::Forbidden, note: "live handler behind AdminContext; the guard rejects a key outright" },
     MatrixRow { method: "POST", path: "/v1/admin/users/{id}/warn", outcome: KeyOutcome::Forbidden, note: "live handler behind AdminContext; the guard rejects a key outright" },
     MatrixRow { method: "POST", path: "/v1/admin/users/{id}/terminate", outcome: KeyOutcome::Forbidden, note: "live handler behind AdminContext; the guard rejects a key outright" },
-    MatrixRow { method: "POST", path: "/v1/admin/users/{id}/quota-grant", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
+    MatrixRow { method: "POST", path: "/v1/admin/users/{id}/quota-grant", outcome: KeyOutcome::Forbidden, note: "live handler (P1-107) behind AdminContext; the guard rejects a key outright" },
     MatrixRow { method: "POST", path: "/v1/admin/users/{id}/impersonate", outcome: KeyOutcome::Forbidden, note: "live handler behind AdminContext; the guard rejects a key outright" },
     MatrixRow { method: "GET", path: "/v1/admin/jobs", outcome: KeyOutcome::Forbidden, note: "live handler behind AdminReadContext; the extractor rejects keys first" },
     MatrixRow { method: "POST", path: "/v1/admin/jobs/{id}/reprocess", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },

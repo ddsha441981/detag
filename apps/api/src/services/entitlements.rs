@@ -11,6 +11,17 @@
 //! the Redis mirrors are the hot path for metering, P1-050,
 //! not the source of truth for the snapshot).
 //!
+//! P1-107: a third source joins the snapshot — the admin's
+//! manual quota grants (`quota_grants`): the SUM of the
+//! user's unexpired grants is added to the plan's daily
+//! limits, so the snapshot, the profile, and the pre-check
+//! all see the same bumped limits, and an expired grant
+//! stops counting the moment its `expires_at` passes.
+//! The expiry comparison uses the caller's `now` (the app
+//! clock), never the DB clock, so a frozen clock moves
+//! expiry too — the same rule as the snapshot's day
+//! (P1-057, ADR-0027).
+//!
 //! The snapshot is a point-in-time read, not a transaction:
 //! a plan change between the subscription read and the usage
 //! read shows up on the next read. That is fine for a
@@ -30,11 +41,11 @@
 //! place, so the profile, the middleware, and the quota
 //! snapshot can never disagree about what a plan grants.
 
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use detag_core::db::DbPool;
 use detag_core::error::AppError;
 use detag_core::plans::{Entitlements, PlanCache, PlanCatalog, PlanStore};
-use detag_core::repos::{plans, subscriptions, usage_counters, RepoError};
+use detag_core::repos::{plans, quota_grants, subscriptions, usage_counters, RepoError};
 
 /// The plan, as the profile shows it: code + price. The
 /// entitlements live in the quota snapshot (the limits), not
@@ -190,19 +201,24 @@ pub fn plan_snapshot_of(plan: &plans::Plan) -> PlanSnapshot {
 /// The quota snapshot for a plan the caller already loaded:
 /// the plan's daily limits against the durable usage row for
 /// `day` (UTC day — the counters reset at the UTC boundary,
-/// P1-050). The day comes from the caller's clock, never
-/// from `Utc::now()` here: the app passes its injected clock
-/// (`state.clock`), so a frozen clock moves the snapshot's
-/// day too — the UsageMeter's rule, extended to the
-/// snapshot (P1-057, ADR-0027). No usage row for the day
-/// means zero usage. A missing or mistyped entitlement key
-/// reads as limit 0 (fail closed: a plan that does not grant
-/// a quota grants nothing).
+/// P1-050), plus the SUM of the user's unexpired manual
+/// quota grants (P1-107 — grants stack, and an expired grant
+/// contributes nothing). The day comes from the caller's
+/// clock, never from `Utc::now()` here: the app passes its
+/// injected clock (`state.clock`), so a frozen clock moves
+/// the snapshot's day too — the UsageMeter's rule, extended
+/// to the snapshot (P1-057, ADR-0027). `now` is the same
+/// clock's instant, and the grant-expiry comparison uses it,
+/// never the DB clock, so a frozen clock moves expiry too.
+/// No usage row for the day means zero usage. A missing or
+/// mistyped entitlement key reads as limit 0 (fail closed: a
+/// plan that does not grant a quota grants nothing).
 pub async fn quota_snapshot_for_plan(
     pool: &DbPool,
     user_id: uuid::Uuid,
     plan: &plans::Plan,
     day: NaiveDate,
+    now: DateTime<Utc>,
 ) -> Result<QuotaSnapshot, EntitlementError> {
     let entitlements = Entitlements::from_value(&plan.entitlements);
     let used = usage_counters::for_user_day(pool, user_id, day).await?;
@@ -213,8 +229,10 @@ pub async fn quota_snapshot_for_plan(
         ),
         None => (0, 0),
     };
+    let (granted_images, granted_video) =
+        quota_grants::unexpired_totals(pool, user_id, now).await?;
     Ok(QuotaSnapshot {
-        daily_images: bucket(entitlements.daily_images, images_used),
-        daily_video_seconds: bucket(entitlements.daily_video_seconds, video_used),
+        daily_images: bucket(entitlements.daily_images + granted_images, images_used),
+        daily_video_seconds: bucket(entitlements.daily_video_seconds + granted_video, video_used),
     })
 }

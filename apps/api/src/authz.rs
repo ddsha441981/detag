@@ -25,9 +25,9 @@
 //! # Routes vs stubs
 //!
 //! The matrix covers all 26 admin routes in the route table,
-//! live or stub. The 18 live routes are enforced by the guards
+//! live or stub. The 19 live routes are enforced by the guards
 //! today and walked live by the test registry
-//! (`apps/api/tests/authz_matrix.rs`). The 8 stub routes
+//! (`apps/api/tests/authz_matrix.rs`). The 7 stub routes
 //! take the guard too since P1-043 (`admin_stub` /
 //! `admin_read_stub` — guard first, 501 after), so their rows
 //! are enforced promises: the registry's completeness test

@@ -58,7 +58,7 @@
 //! rows.
 
 use crate::services::entitlements::{quota_snapshot_for_plan, EntitlementError, QuotaSnapshot};
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use detag_core::{
     checksum::sha256_hex,
     config::Settings,
@@ -252,13 +252,18 @@ pub fn warn_level(snapshot: &QuotaSnapshot, config: &QuotaWarningConfig) -> Opti
 /// — the quota gate's `effective_plan`) and the day (the
 /// record's day, not necessarily today — a true-up can push a
 /// past day over a threshold, and the warning belongs to that
-/// day's cap key).
+/// day's cap key). `now` is the caller's clock instant, and
+/// the snapshot's grant expiry reads it (P1-107) — for a
+/// past-day warning the grants live at `now` are what count,
+/// which is the honest reading: the warning fires for the
+/// limits in force now.
 pub async fn maybe_warn_quota(
     pool: &DbPool,
     config: &QuotaWarningConfig,
     user_id: Uuid,
     plan: &Plan,
     day: NaiveDate,
+    now: DateTime<Utc>,
 ) -> Result<WarnOutcome, AppError> {
     if !config.enabled {
         return Ok(WarnOutcome::Disabled);
@@ -267,7 +272,7 @@ pub async fn maybe_warn_quota(
         .await
         .map_err(|_| AppError::Internal)?
         .ok_or(AppError::Internal)?;
-    let snapshot = quota_snapshot_for_plan(pool, user_id, plan, day)
+    let snapshot = quota_snapshot_for_plan(pool, user_id, plan, day, now)
         .await
         .map_err(|err| match err {
             EntitlementError::Db(_) => AppError::DatabaseUnavailable,

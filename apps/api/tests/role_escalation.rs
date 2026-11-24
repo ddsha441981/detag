@@ -329,9 +329,15 @@ fn write_target_and_body(row: &WriteRow, user_target: Uuid) -> (Option<Uuid>, Op
             Some(user_target),
             Some(json!({ "reason": "escalation probe" })),
         ),
-        "/v1/admin/users/{id}/restore" | "/v1/admin/users/{id}/quota-grant" => {
-            (Some(user_target), None)
-        }
+        "/v1/admin/users/{id}/restore" => (Some(user_target), None),
+        "/v1/admin/users/{id}/quota-grant" => (
+            Some(user_target),
+            Some(json!({
+                "images": 5,
+                "ttl_hours": 24,
+                "reason": "escalation probe"
+            })),
+        ),
         "/v1/admin/flags" => (None, Some(json!({ "flags": {} }))),
         "/v1/admin/plans" => (None, Some(json!({ "plans": [] }))),
         _ => (Some(Uuid::now_v7()), None),
