@@ -86,6 +86,7 @@ use crate::{
         support_cancel::{
             support_cancel as support_cancel_service, SupportCancelError, SupportCancelResponse,
         },
+        user_lookup::{lookup_user, LookupQuery, UserLookupError},
     },
     AppState,
 };
@@ -213,6 +214,85 @@ pub async fn admin_user_view_handler(
             if let AdminUserViewError::Db(db_err) = &err {
                 tracing::error!(error = %db_err, "admin user view: read failed");
             }
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
+/// GET /v1/admin/users/lookup (P1-109): the user lookup
+/// helper — resolve a user from whatever identifier a
+/// support ticket carries (`?email=…` / `?id=…` /
+/// `?job_id=…`, exactly one) and return the P1-106 support
+/// view. Admin + support (the read-only role) may call it;
+/// a verified plain user gets 403 `PF-1002` from the
+/// extractor, no credential gets 401 `PF-1001`, an API key
+/// gets 403. Exactly one key (zero or 2+ is 422 `PF-2002`,
+/// all failures collected; email must parse as an email,
+/// `id` / `job_id` as UUIDs; unknown query keys are 422).
+/// A key that resolves to no user is 404 `PF-2010`. Every
+/// lookup audits as `admin.users.lookup` — including misses
+/// (a 404 still writes one row, so a probing pattern is
+/// visible) — and no raw searched value is stored in the
+/// audit row. Denials (401/403) and validation failures
+/// (422) audit nothing. No state change, no provider call,
+/// no mail. The service wrote the audit row, so the handler
+/// marks `AuditHandled` and the P1-046 middleware stands
+/// down — the row exists exactly once (the route is
+/// deliberately NOT in `audit_action_for`: the middleware's
+/// contract is writes).
+#[utoipa::path(
+    get,
+    path = "/v1/admin/users/lookup",
+    params(
+        ("email" = Option<String>, Query, description = "Resolve by email (case-insensitive); exactly one of email, id, job_id"),
+        ("id" = Option<String>, Query, description = "Resolve by user id (UUID); exactly one of email, id, job_id"),
+        ("job_id" = Option<String>, Query, description = "Resolve by job id (UUID) through the job's owner; exactly one of email, id, job_id")
+    ),
+    responses(
+        (status = 200, description = "The user's support view: profile, plan, usage, recent jobs, and live sessions", body = AdminUserViewResponse),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified plain user, or an API key)", body = Problem),
+        (status = 404, description = "No such user (or no such job for job_id)", body = Problem),
+        (status = 422, description = "Zero or two-or-more keys, a malformed email or UUID, or an unknown query key", body = Problem),
+        (status = 500, description = "The lookup read or audit write failed", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn user_lookup_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    admin: AdminReadContext,
+    Query(params): Query<LookupQuery>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let Some(caller) = admin.auth.user else {
+        // The extractor guarantees a user for a verified context.
+        return ProblemResponse(AppError::Internal.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
+    match lookup_user(&state, &caller, &params).await {
+        Ok(view) => {
+            // The service wrote the audit row — mark the
+            // response so the P1-046 middleware stands down
+            // and the row exists exactly once.
+            let mut response = Json(view).into_response();
+            response.extensions_mut().insert(AuditHandled);
+            response
+        }
+        Err(UserLookupError::Validation(errors)) => {
+            ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
+        }
+        Err(UserLookupError::NotFound) => {
+            ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(UserLookupError::Internal) => {
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
                 .into_response()
         }
@@ -1587,6 +1667,7 @@ pub fn router(state: AppState) -> Router<AppState> {
                 .route("/metrics/dashboard", get(admin_read_stub))
                 .route("/users", get(search_users_handler))
                 .route("/users/{id}", get(admin_user_view_handler))
+                .route("/users/lookup", get(user_lookup_handler))
                 .route("/users/{id}/suspend", post(suspend))
                 .route("/users/{id}/restore", post(restore))
                 .route("/users/{id}/warn", post(warn_user_handler))

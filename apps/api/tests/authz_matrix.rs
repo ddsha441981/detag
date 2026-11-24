@@ -14,7 +14,7 @@
 //!   `Capability::for_route`, and the role table behind it
 //!   admits exactly admin + support on read rows and admin
 //!   only on write/impersonate rows.
-//! - `admin_matrix_live` — the live walk: the 20 live routes
+//! - `admin_matrix_live` — the live walk: the 21 live routes
 //!   × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key), asserting the status
 //!   the matrix predicts — 401 `PF-1001` with no credential,
@@ -63,11 +63,11 @@ struct MatrixRow {
     live: bool,
 }
 
-/// The matrix: all 27 `/v1/admin/*` routes. The public
+/// The matrix: all 28 `/v1/admin/*` routes. The public
 /// `POST /v1/abuse` intake lives in the admin module but is
 /// not an admin route — it has no row (and no capability).
 const MATRIX: &[MatrixRow] = &[
-    // Live (20)
+    // Live (21)
     MatrixRow {
         method: "GET",
         path: "/v1/admin/users",
@@ -77,6 +77,12 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow {
         method: "GET",
         path: "/v1/admin/users/{id}",
+        capability: Capability::AdminUsersRead,
+        live: true,
+    },
+    MatrixRow {
+        method: "GET",
+        path: "/v1/admin/users/lookup",
         capability: Capability::AdminUsersRead,
         live: true,
     },
@@ -247,12 +253,12 @@ fn matrix_covers_every_admin_route() {
         .collect();
     assert_eq!(
         admin_routes.len(),
-        27,
-        "ROUTE_TABLE must hold the 27 /v1/admin/* routes (the public POST /v1/abuse intake is not one)"
+        28,
+        "ROUTE_TABLE must hold the 28 /v1/admin/* routes (the public POST /v1/abuse intake is not one)"
     );
     assert_eq!(
         MATRIX.len(),
-        27,
+        28,
         "the matrix must hold one row per admin route ({} rows today)",
         MATRIX.len()
     );
@@ -484,6 +490,20 @@ async fn probe(
         Some(id) => path.replace("{id}", &id.to_string()),
         None => path.replace("{id}", PATH_ID),
     };
+    // The lookup row takes its key as a query param, not a
+    // path id: the admitted callers need `?id=<real user>`
+    // to reach 200 (no key is 422, not 200). The target is
+    // the user id either way — the walk passes the real
+    // user for the admitted probes and the placeholder for
+    // the rest (the guard rejects those first).
+    let uri = if path == "/v1/admin/users/lookup" {
+        let id = target
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| PATH_ID.to_string());
+        format!("{uri}?id={id}")
+    } else {
+        uri
+    };
     let mut req = Request::builder()
         .method(Method::from_bytes(method.as_bytes()).unwrap())
         .uri(uri)
@@ -511,7 +531,7 @@ fn problem_code(res: &common::TestResponse) -> String {
 
 #[tokio::test]
 async fn admin_matrix_live() {
-    // The live walk: the 20 live rows × 5 caller kinds.
+    // The live walk: the 21 live rows × 5 caller kinds.
     // Order per row is anonymous → user → support → admin
     // → key, so the mutating admin call (suspend,
     // impersonate) runs last and cannot affect the earlier
@@ -617,6 +637,11 @@ async fn admin_matrix_live() {
             "/v1/admin/usage/{id}" | "/v1/admin/usage/{id}/export" | "/v1/admin/users/{id}" => {
                 (Some(usage_target), None)
             }
+            // The lookup row needs the same real user id —
+            // as its query key, not a path id (the probe
+            // appends `?id=<target>`): no key is 422, an
+            // unknown id is 404, a real one is 200.
+            "/v1/admin/users/lookup" => (Some(usage_target), None),
             // The resolve row needs a real open report id +
             // a dismiss body for the admitted caller to
             // reach 200 (an unknown id is 404, an empty body

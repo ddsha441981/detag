@@ -5,8 +5,8 @@
 //! path a request takes):
 //!
 //! 1. The table itself has no duplicate (method, path) pairs
-//!    and has the 79 entries the route table lists (auth 24 +
-//!    uploads 4 + jobs 9 + billing 12 + admin 28 — the 27
+//!    and has the 80 entries the route table lists (auth 24 +
+//!    uploads 4 + jobs 9 + billing 12 + admin 29 — the 28
 //!    `/v1/admin/*` routes plus the public `POST /v1/abuse`
 //!    intake — + meta 2).
 //! 2. Every table entry resolves to the 501 stub (never 404):
@@ -107,8 +107,8 @@ fn route_table_has_no_duplicates() {
     }
     assert_eq!(
         ROUTE_TABLE.len(),
-        79,
-        "ROUTE_TABLE must list the spec's 79 routes (auth 24 + uploads 4 + jobs 9 + billing 12 + admin 28 + meta 2)"
+        80,
+        "ROUTE_TABLE must list the spec's 80 routes (auth 24 + uploads 4 + jobs 9 + billing 12 + admin 29 + meta 2)"
     );
 }
 

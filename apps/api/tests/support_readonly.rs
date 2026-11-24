@@ -365,7 +365,7 @@ fn support_matrix_is_read_only() {
         .filter(|(_, path)| path.starts_with("/v1/admin"))
         .map(|(method, path)| (*method, *path))
         .collect();
-    assert_eq!(admin_routes.len(), 27, "27 admin routes");
+    assert_eq!(admin_routes.len(), 28, "28 admin routes");
     let mut seen = HashSet::new();
     for (method, path) in &admin_routes {
         let m = Method::from_bytes(method.as_bytes()).unwrap();

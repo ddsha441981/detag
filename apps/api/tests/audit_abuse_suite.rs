@@ -13,15 +13,18 @@
 //!
 //! The four tests:
 //!
-//! - `admin_write_matrix_audits_every_live_action` — the 11
-//!   live admin writes (suspend / restore / warn /
+//! - `admin_write_matrix_audits_every_live_action` — the 12
+//!   live admin actions (suspend / restore / warn /
 //!   terminate / impersonate / quota-grant / plans /
 //!   billing-cancel / billing-refund / abuse-resolve dismiss
-//!   / abuse-resolve start_review)
+//!   / abuse-resolve start_review / user-lookup — a READ
+//!   that audits, P1-109)
 //!   each write exactly one audit row with the right action,
 //!   actor and target. The registry is the 14-row
 //!   `audit_action_for` table (P1-046); this test walks
-//!   the 11 live rows, the stub test walks the other 3.
+//!   the 11 live rows, the stub test walks the other 3, and
+//!   the lookup joins as the 12th — it is deliberately NOT
+//!   in `audit_action_for` (a read, audited by its service).
 //! - `admin_stub_and_unconfigured_writes_audit_nothing` —
 //!   the 3 stub writes (jobs reprocess / jobs cancel /
 //!   flags) answer 501 and write no row for
@@ -692,6 +695,38 @@ async fn admin_write_matrix_audits_every_live_action() {
         before_resolved,
         "a pickup writes no resolved row"
     );
+
+    // User lookup (P1-109): a READ that audits — the admin
+    // looks u6 up by id, 200 with the P1-106 view, exactly
+    // one new `admin.users.lookup` row, actor the admin,
+    // target the user, after `{lookup_kind: "id", found:
+    // true}` and no reason, no raw searched value.
+    let before = audit_for_target_action(&app, "user", &u6.to_string(), "admin.users.lookup")
+        .await
+        .len();
+    let res = admin_call(
+        &app,
+        Method::GET,
+        &format!("/v1/admin/users/lookup?id={u6}"),
+        &admin_token,
+        None,
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_eq!(
+        res.json()["user_id"].as_str().unwrap(),
+        u6.to_string(),
+        "the lookup returns the P1-106 view for the user"
+    );
+    let rows = audit_for_target_action(&app, "user", &u6.to_string(), "admin.users.lookup").await;
+    assert_eq!(rows.len(), before + 1, "lookup writes exactly one row");
+    let row = &rows[rows.len() - 1];
+    assert_eq!(row.actor_user_id, Some(admin_id), "actor is the admin");
+    assert_eq!(row.target_type, "user");
+    assert_eq!(row.target_id.as_deref(), Some(u6.to_string()).as_deref());
+    assert_eq!(row.after.as_ref().unwrap()["lookup_kind"], "id");
+    assert_eq!(row.after.as_ref().unwrap()["found"], true);
+    assert!(row.reason.is_none(), "a lookup carries no reason");
 }
 
 #[tokio::test]

@@ -16,7 +16,7 @@
 //!   in the extractor's scope table — fail closed); no
 //!   credential is 401. This covers the live authed routes
 //!   keys must never call (profile, sessions, key management,
-//!   `logout-all`, all 27 admin routes since P1-043 put the
+//!   `logout-all`, all 28 admin routes since P1-043 put the
 //!   matrix guard on the stubs too).
 //! - `Unprotected` — NO credential is checked at all: the
 //!   plain 501 stub answers anonymous and key alike. These
@@ -105,12 +105,12 @@ struct MatrixRow {
     note: &'static str,
 }
 
-/// The matrix: all 77 `/v1` routes (auth 24, uploads 4,
-/// jobs 9, billing 12, admin 28 — the 27 `/v1/admin/*`
+/// The matrix: all 78 `/v1` routes (auth 24, uploads 4,
+/// jobs 9, billing 12, admin 29 — the 28 `/v1/admin/*`
 /// routes plus the public `POST /v1/abuse` intake). The meta
 /// routes (`/healthz`, `/readyz`) are unversioned and public,
 /// so they have no row — the completeness test asserts
-/// exactly the 75 `/v1` entries.
+/// exactly the 78 `/v1` entries.
 const MATRIX: &[MatrixRow] = &[
     // auth (24)
     MatrixRow { method: "POST", path: "/v1/auth/register", outcome: KeyOutcome::Ignored, note: "no credential — the handler validates the body" },
@@ -165,10 +165,11 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow { method: "POST", path: "/v1/webhook-endpoints", outcome: KeyOutcome::Allowed("webhooks:manage"), note: "stub_authed; the user's own webhook endpoints are key-managed" },
     MatrixRow { method: "DELETE", path: "/v1/webhook-endpoints/{id}", outcome: KeyOutcome::Allowed("webhooks:manage"), note: "stub_authed; the user's own webhook endpoints are key-managed" },
     MatrixRow { method: "GET", path: "/v1/webhook-endpoints/{id}/deliveries", outcome: KeyOutcome::Allowed("webhooks:manage"), note: "stub_authed; the user's own webhook endpoints are key-managed" },
-    // admin (28) — no admin ever for keys
+    // admin (29) — no admin ever for keys
     MatrixRow { method: "GET", path: "/v1/admin/metrics/dashboard", outcome: KeyOutcome::Forbidden, note: "guarded stub (P1-043): the matrix guard rejects a key outright (no admin ever)" },
     MatrixRow { method: "GET", path: "/v1/admin/users", outcome: KeyOutcome::Forbidden, note: "live handler behind AdminReadContext; the extractor rejects keys first" },
     MatrixRow { method: "GET", path: "/v1/admin/users/{id}", outcome: KeyOutcome::Forbidden, note: "live handler (P1-106) behind AdminReadContext; the extractor rejects keys first" },
+    MatrixRow { method: "GET", path: "/v1/admin/users/lookup", outcome: KeyOutcome::Forbidden, note: "live handler (P1-109) behind AdminReadContext; the extractor rejects keys first" },
     MatrixRow { method: "POST", path: "/v1/admin/users/{id}/suspend", outcome: KeyOutcome::Forbidden, note: "live handler behind AdminContext; the guard rejects a key outright" },
     MatrixRow { method: "POST", path: "/v1/admin/users/{id}/restore", outcome: KeyOutcome::Forbidden, note: "live handler behind AdminContext; the guard rejects a key outright" },
     MatrixRow { method: "POST", path: "/v1/admin/users/{id}/warn", outcome: KeyOutcome::Forbidden, note: "live handler behind AdminContext; the guard rejects a key outright" },
@@ -379,12 +380,12 @@ fn matrix_covers_every_v1_route() {
         .collect();
     assert_eq!(
         v1_routes.len(),
-        77,
-        "ROUTE_TABLE must hold the 77 /v1 routes (auth 24 + uploads 4 + jobs 9 + billing 12 + admin 28)"
+        78,
+        "ROUTE_TABLE must hold the 78 /v1 routes (auth 24 + uploads 4 + jobs 9 + billing 12 + admin 29)"
     );
     assert_eq!(
         MATRIX.len(),
-        77,
+        78,
         "the matrix must hold one row per /v1 route ({} rows today)",
         MATRIX.len()
     );
