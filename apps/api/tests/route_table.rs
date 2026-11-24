@@ -105,15 +105,15 @@ fn route_table_has_no_duplicates() {
     }
     assert_eq!(
         ROUTE_TABLE.len(),
-        77,
-        "ROUTE_TABLE must list the spec's 77 routes (auth 24 + uploads 4 + jobs 9 + billing 12 + admin 26 + meta 2)"
+        78,
+        "ROUTE_TABLE must list the spec's 78 routes (auth 24 + uploads 4 + jobs 9 + billing 12 + admin 27 + meta 2)"
     );
 }
 
 #[tokio::test]
 async fn every_table_entry_resolves_to_the_stub() {
     let router = test_router();
-    // The probes send 75 /v1 requests in one burst through the
+    // The probes send 76 /v1 requests in one burst through the
     // rate limiter (P0-103). They use a per-run XFF address so
     // they never share the oneshot "unknown" bucket with the
     // other test binaries running in parallel — the aggregate

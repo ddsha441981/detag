@@ -14,7 +14,7 @@
 //!   `Capability::for_route`, and the role table behind it
 //!   admits exactly admin + support on read rows and admin
 //!   only on write/impersonate rows.
-//! - `admin_matrix_live` — the live walk: the 17 live routes
+//! - `admin_matrix_live` — the live walk: the 18 live routes
 //!   × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key), asserting the status
 //!   the matrix predicts — 401 `PF-1001` with no credential,
@@ -63,14 +63,20 @@ struct MatrixRow {
     live: bool,
 }
 
-/// The matrix: all 25 `/v1/admin/*` routes. The public
+/// The matrix: all 26 `/v1/admin/*` routes. The public
 /// `POST /v1/abuse` intake lives in the admin module but is
 /// not an admin route — it has no row (and no capability).
 const MATRIX: &[MatrixRow] = &[
-    // Live (16)
+    // Live (17)
     MatrixRow {
         method: "GET",
         path: "/v1/admin/users",
+        capability: Capability::AdminUsersRead,
+        live: true,
+    },
+    MatrixRow {
+        method: "GET",
+        path: "/v1/admin/users/{id}",
         capability: Capability::AdminUsersRead,
         live: true,
     },
@@ -235,12 +241,12 @@ fn matrix_covers_every_admin_route() {
         .collect();
     assert_eq!(
         admin_routes.len(),
-        25,
-        "ROUTE_TABLE must hold the 25 /v1/admin/* routes (the public POST /v1/abuse intake is not one)"
+        26,
+        "ROUTE_TABLE must hold the 26 /v1/admin/* routes (the public POST /v1/abuse intake is not one)"
     );
     assert_eq!(
         MATRIX.len(),
-        25,
+        26,
         "the matrix must hold one row per admin route ({} rows today)",
         MATRIX.len()
     );
@@ -499,7 +505,7 @@ fn problem_code(res: &common::TestResponse) -> String {
 
 #[tokio::test]
 async fn admin_matrix_live() {
-    // The live walk: the 17 live rows × 5 caller kinds.
+    // The live walk: the 18 live rows × 5 caller kinds.
     // Order per row is anonymous → user → support → admin
     // → key, so the mutating admin call (suspend,
     // impersonate) runs last and cannot affect the earlier
@@ -575,10 +581,15 @@ async fn admin_matrix_live() {
                 Some(cancel_target),
                 Some(json!({ "reason": "authz matrix probe" })),
             ),
-            // The usage rows need a real user id for the
-            // admitted caller to reach 200 (an unknown id
-            // is 404, not 200).
-            "/v1/admin/usage/{id}" | "/v1/admin/usage/{id}/export" => (Some(usage_target), None),
+            // The usage rows + the user view need a real user
+            // id for the admitted caller to reach 200 (an
+            // unknown id is 404, not 200). (The 170th: the
+            // P1-106 row was missing here — the walk probed a
+            // placeholder id and the admitted callers got
+            // 404 instead of 200.)
+            "/v1/admin/usage/{id}" | "/v1/admin/usage/{id}/export" | "/v1/admin/users/{id}" => {
+                (Some(usage_target), None)
+            }
             // The resolve row needs a real open report id +
             // a dismiss body for the admitted caller to
             // reach 200 (an unknown id is 404, an empty body

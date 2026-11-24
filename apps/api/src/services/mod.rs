@@ -10,6 +10,7 @@ pub mod admin_attestations;
 pub mod admin_audit;
 pub mod admin_plans;
 pub mod admin_usage;
+pub mod admin_user_view;
 pub mod api_keys;
 pub mod catalog_sync;
 pub mod checkout;

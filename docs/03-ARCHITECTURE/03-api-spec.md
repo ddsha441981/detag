@@ -768,6 +768,7 @@ P1-047).
 | --- | --- | --- |
 | GET | `/v1/admin/metrics/dashboard` | jobs today, success rate, p95, queue depth, MRR, DAU |
 | GET | `/v1/admin/users?query=` | search (email/name/id prefix), cursor pagination, plan + status + usage today; admin + support |
+| GET | `/v1/admin/users/{id}` | P1-106 (FR-C-02): the support user view — profile, plan, usage summary (today + all-time totals), the 10 newest jobs, and the live sessions (P1-019 shape) for one user; admin + support (read-only role); a verified plain user is 403 `PF-1002`, an API key is 403, anonymous is 401 `PF-1001`. A user who does not exist is 404 `PF-2010`; a user with no subscription is Free, no jobs or no live sessions is `[]`, unused usage is zeros. No secrets anywhere in the shape (ADR-0065) and no audit row (a read creates nothing). |
 | POST | `/v1/admin/users/{id}/suspend` | body: reason; audited |
 | POST | `/v1/admin/users/{id}/restore` | audited |
 | POST | `/v1/admin/users/{id}/warn` | P1-091 (FR-C-02): the ladder's first rung — body: reason; audited as `user.warned`; the `enforcement-warning` mail goes out |

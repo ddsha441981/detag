@@ -840,11 +840,11 @@
 
 ## E1.13 — Support tooling (area: support)
 
-- [ ] **P1-106** — Support user view
+- [x] **P1-106** — Support user view
   - **Type:** feat · **Area:** support · **Est:** S · **Deps:** — · **Prio:** P1
   - **Spec:** Read-only user detail endpoint (support role): profile, plan, usage, recent jobs, session meta; no secrets.
   - **AC:**
-    - [ ] role-gated + no secrets
+    - [x] role-gated + no secrets
 
 - [ ] **P1-107** — Manual quota grant
   - **Type:** feat · **Area:** support · **Est:** S · **Deps:** P1-106 · **Prio:** P1
