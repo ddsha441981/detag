@@ -88,6 +88,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy, llvm-tools-preview
+      # CI-FAIL-029: cache cargo deps between runs (Swatinem/rust-cache).
+      # Size is capped by GitHub itself (10 GB/repo, LRU eviction = the
+      # reset); save-if main-only keeps a single cache key.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: fmt
         run: cargo fmt --all -- --check
       - name: clippy (-D warnings)
