@@ -13,17 +13,17 @@
 //!
 //! The four tests:
 //!
-//! - `admin_write_matrix_audits_every_live_action` — the 12
+//! - `admin_write_matrix_audits_every_live_action` — the 13
 //!   live admin actions (suspend / restore / warn /
-//!   terminate / impersonate / quota-grant / plans /
-//!   billing-cancel / billing-refund / abuse-resolve dismiss
-//!   / abuse-resolve start_review / user-lookup — a READ
-//!   that audits, P1-109)
+//!   terminate / impersonate / quota-grant / ticket-note /
+//!   plans / billing-cancel / billing-refund / abuse-resolve
+//!   dismiss / abuse-resolve start_review / user-lookup — a
+//!   READ that audits, P1-109)
 //!   each write exactly one audit row with the right action,
-//!   actor and target. The registry is the 14-row
+//!   actor and target. The registry is the 15-row
 //!   `audit_action_for` table (P1-046); this test walks
-//!   the 11 live rows, the stub test walks the other 3, and
-//!   the lookup joins as the 12th — it is deliberately NOT
+//!   the 12 live rows, the stub test walks the other 3, and
+//!   the lookup joins as the 13th — it is deliberately NOT
 //!   in `audit_action_for` (a read, audited by its service).
 //! - `admin_stub_and_unconfigured_writes_audit_nothing` —
 //!   the 3 stub writes (jobs reprocess / jobs cancel /
@@ -695,6 +695,48 @@ async fn admin_write_matrix_audits_every_live_action() {
         before_resolved,
         "a pickup writes no resolved row"
     );
+
+    // Ticket note (P1-110): exactly one new
+    // `admin.users.note_added` row — actor the admin, target
+    // the user, after carries the note id + the body length
+    // (NOT the verbatim body), and no reason. The response
+    // carries the full list with the note appended.
+    let before = audit_for_target_action(&app, "user", &u6.to_string(), "admin.users.note_added")
+        .await
+        .len();
+    let res = admin_call(
+        &app,
+        Method::POST,
+        &format!("/v1/admin/users/{u6}/notes"),
+        &admin_token,
+        Some(json!({ "body": "P1-092 suite probe note" })),
+    )
+    .await;
+    assert_eq!(res.status, StatusCode::OK, "{}", res.text());
+    assert_eq!(res.json()["user_id"].as_str().unwrap(), u6.to_string());
+    let notes = res.json()["notes"].as_array().unwrap().clone();
+    assert_eq!(notes.len(), 1, "one note after the first append: {notes:?}");
+    assert_eq!(notes[0]["body"], "P1-092 suite probe note");
+    assert_eq!(notes[0]["author_role"], "admin");
+    let rows =
+        audit_for_target_action(&app, "user", &u6.to_string(), "admin.users.note_added").await;
+    assert_eq!(rows.len(), before + 1, "note append writes exactly one row");
+    let row = &rows[rows.len() - 1];
+    assert_eq!(row.actor_user_id, Some(admin_id), "actor is the admin");
+    assert_eq!(row.target_type, "user");
+    assert_eq!(row.target_id.as_deref(), Some(u6.to_string().as_str()));
+    assert_eq!(
+        row.after.as_ref().unwrap()["note_id"].as_str().unwrap(),
+        notes[0]["id"].as_str().unwrap()
+    );
+    assert_eq!(row.after.as_ref().unwrap()["body_chars"], 23);
+    assert!(
+        !serde_json::to_string(row.after.as_ref().unwrap())
+            .unwrap()
+            .contains("suite probe note"),
+        "the audit row must not carry the note body"
+    );
+    assert!(row.reason.is_none(), "a note append carries no reason");
 
     // User lookup (P1-109): a READ that audits — the admin
     // looks u6 up by id, 200 with the P1-106 view, exactly

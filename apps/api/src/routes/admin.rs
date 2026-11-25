@@ -32,7 +32,8 @@
 //! /v1/admin/users/{id}/quota-grant`, real since P1-107
 //! (in this file), and `POST
 //! /v1/admin/billing/subscriptions/{id}/refund`, real since
-//! P1-108 (in this file).
+//! P1-108 (in this file), and `POST
+//! /v1/admin/users/{id}/notes`, real since P1-110 (in this file).
 //! Every route — live or stub — sits behind the matrix guard
 //! (P1-043): the stubs take `admin_stub` / `admin_read_stub`
 //! below, so an unauthenticated or wrong-role caller is
@@ -85,6 +86,9 @@ use crate::{
         register::UserResponse,
         support_cancel::{
             support_cancel as support_cancel_service, SupportCancelError, SupportCancelResponse,
+        },
+        ticket_notes::{
+            append_ticket_note, TicketNoteError, TicketNoteRequest, TicketNotesResponse,
         },
         user_lookup::{lookup_user, LookupQuery, UserLookupError},
     },
@@ -575,6 +579,77 @@ pub async fn quota_grant_handler(
                 .into_response()
         }
         Err(QuotaGrantError::Internal) => {
+            ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+    }
+}
+
+/// POST /v1/admin/users/{id}/notes (P1-110): append a ticket
+/// note to a user's append-only list. The note and its
+/// `admin.users.note_added` audit row commit in one
+/// transaction, and the response carries `AuditHandled` so
+/// the P1-046 middleware stands down and the row exists
+/// exactly once. The audit row carries the note id + the
+/// body length only — no verbatim body (the note lives in
+/// exactly one place: the column). The list is append-only
+/// twice over: one repo fn appends, and the
+/// `users_support_notes_append_only` trigger raises on any
+/// UPDATE that drops or rewrites an element. Support reads
+/// the notes through the P1-106 view (a sixth section), not
+/// through this endpoint. Returns the full list after the
+/// append with 200 — an admin action on a user answers 200
+/// (the suspend/warn/grant precedent), not 201, even though
+/// a note is created. Admin-only — support is read-only.
+#[utoipa::path(
+    post,
+    path = "/v1/admin/users/{id}/notes",
+    request_body = TicketNoteRequest,
+    responses(
+        (status = 200, description = "Appended; the full note list after the append", body = TicketNotesResponse),
+        (status = 401, description = "Unauthenticated (no credential, bad or expired token)", body = Problem),
+        (status = 403, description = "Forbidden (verified non-admin, or an API key)", body = Problem),
+        (status = 404, description = "No such user", body = Problem),
+        (status = 422, description = "Body missing, blank, over 2000 characters, or with control characters", body = Problem)
+    ),
+    tag = "admin",
+    security(("bearer_auth" = []))
+)]
+pub async fn ticket_note_handler(
+    State(state): State<AppState>,
+    Extension(id): Extension<RequestId>,
+    admin: AdminContext,
+    Path(user_id): Path<Uuid>,
+    ValidatedJson(req): ValidatedJson<TicketNoteRequest>,
+) -> Response {
+    let request_id = Some(id.0.as_str());
+    let Some(admin_user) = admin.auth.user else {
+        // The extractor guarantees a user for a verified context.
+        return ProblemResponse(AppError::Internal.to_problem(
+            Profile::Production,
+            request_id,
+            None,
+        ))
+        .into_response();
+    };
+    match append_ticket_note(&state, &admin_user, user_id, &req).await {
+        Ok(notes) => {
+            // The service wrote the audit row in the same
+            // transaction as the append (P1-110) — mark the
+            // response so the P1-046 middleware stands down
+            // and the row exists exactly once.
+            let mut response = Json(notes).into_response();
+            response.extensions_mut().insert(AuditHandled);
+            response
+        }
+        Err(TicketNoteError::Validation(errors)) => {
+            ProblemResponse(errors.into_problem(Profile::Production, request_id)).into_response()
+        }
+        Err(TicketNoteError::NotFound) => {
+            ProblemResponse(AppError::NotFound.to_problem(Profile::Production, request_id, None))
+                .into_response()
+        }
+        Err(TicketNoteError::Internal) => {
             ProblemResponse(AppError::Internal.to_problem(Profile::Production, request_id, None))
                 .into_response()
         }
@@ -1644,8 +1719,9 @@ pub async fn abuse_intake(
     }
 }
 
-/// The admin nest: dashboard, users (search / suspend / restore /
-/// quota-grant / impersonate), jobs (browse / reprocess / cancel),
+/// The admin nest: dashboard, users (search / view / lookup /
+/// suspend / restore / warn / terminate / quota-grant / notes /
+/// impersonate), jobs (browse / reprocess / cancel),
 /// flags, plans, audit, abuse reports, attestations, system —
 /// plus the public abuse intake at `/v1/abuse`.
 ///
@@ -1673,6 +1749,7 @@ pub fn router(state: AppState) -> Router<AppState> {
                 .route("/users/{id}/warn", post(warn_user_handler))
                 .route("/users/{id}/terminate", post(terminate_user_handler))
                 .route("/users/{id}/quota-grant", post(quota_grant_handler))
+                .route("/users/{id}/notes", post(ticket_note_handler))
                 .route("/users/{id}/impersonate", post(impersonate))
                 .route("/jobs", get(list_jobs_handler))
                 .route("/jobs/{id}/reprocess", post(admin_stub))

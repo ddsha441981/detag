@@ -40,6 +40,7 @@ pub mod revocation;
 pub mod sessions;
 pub mod subscription_state;
 pub mod support_cancel;
+pub mod ticket_notes;
 pub mod usage;
 pub mod usage_attribution;
 pub mod user_lookup;
