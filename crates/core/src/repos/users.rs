@@ -463,6 +463,57 @@ pub async fn delete_user(
     Ok(result.rows_affected() > 0)
 }
 
+/// Read a user's ticket notes (P1-110): the `support_notes`
+/// jsonb list, oldest first (the list is append-only — the
+/// trigger enforces it, this fn only reads). `None` when the
+/// user does not exist.
+pub async fn support_notes(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+) -> Result<Option<Vec<serde_json::Value>>, RepoError> {
+    let row = sqlx::query!(
+        r#"SELECT support_notes AS "support_notes: serde_json::Value" FROM users WHERE id = $1"#,
+        id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)?;
+    Ok(row.map(|row| row.support_notes.as_array().cloned().unwrap_or_default()))
+}
+
+/// Append one ticket note to a user's list (P1-110): the note
+/// (one JSON object — `{id, author_id, author_role, body,
+/// created_at}`) is concatenated onto `support_notes` in a
+/// single UPDATE and the new list is returned, oldest first.
+/// This is the ONLY writer of the column — no repo fn replaces
+/// it, and the `users_support_notes_append_only` trigger
+/// raises on any UPDATE that drops or rewrites an existing
+/// element. `NotFound` when the user does not exist. The caller
+/// writes the `admin.users.note_added` audit row in the same
+/// transaction (the service's job, not this repo's) — pass
+/// `&mut *conn` inside `tx::with_tx`.
+pub async fn append_support_note(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+    note: &serde_json::Value,
+) -> Result<Vec<serde_json::Value>, RepoError> {
+    let row = sqlx::query!(
+        r#"UPDATE users
+           SET support_notes = support_notes || $2::jsonb, updated_at = now()
+           WHERE id = $1
+           RETURNING support_notes AS "support_notes: serde_json::Value""#,
+        id,
+        note
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(|err| match err {
+        sqlx::Error::RowNotFound => RepoError::NotFound,
+        other => RepoError::from_sqlx(other),
+    })?;
+    Ok(row.support_notes.as_array().cloned().unwrap_or_default())
+}
+
 /// Suspend an account (P1-008): status becomes `suspended`
 /// and any pending deletion is cancelled (`deleted_at` is
 /// cleared — the deletion request does not survive admin

@@ -11,7 +11,8 @@
 //!   live views and sees real rows: the users search returns
 //!   the seeded users (email, role, status), the user view
 //!   returns the owner's composite (profile, Free plan, the
-//!   seeded job, the login session — no secrets), the jobs
+//!   seeded job, the login session, the empty ticket notes —
+//!   no secrets), the jobs
 //!   list returns the seeded job (kind, status, no key
 //!   material — a web-created job shows no prefix), and the
 //!   plans list returns the three seeded plans (P1-056).
@@ -227,6 +228,16 @@ async fn user_status(app: &TestApp, user_id: Uuid) -> String {
         .status
 }
 
+/// The user's ticket notes, oldest first (P1-110) — read
+/// straight from the column, so the denial proof does not
+/// depend on the view.
+async fn user_notes(app: &TestApp, user_id: Uuid) -> Vec<serde_json::Value> {
+    users::support_notes(&app.pool, user_id)
+        .await
+        .expect("read notes")
+        .expect("user exists")
+}
+
 /// The audit rows for one user target and one action.
 async fn audit_for_user_action(
     app: &TestApp,
@@ -253,7 +264,7 @@ struct WriteRow {
     target: &'static str,
 }
 
-/// All 11 write rows the test walks: 4 user writes +
+/// All 12 write rows the test walks: 5 user writes +
 /// quota-grant + impersonation + 2 job writes + flags +
 /// plans + resolve. (The catalog-sync and billing-cancel
 /// writes are not walked here — the guard walk covers
@@ -283,6 +294,11 @@ const WRITE_ROWS: &[WriteRow] = &[
     WriteRow {
         method: "POST",
         path: "/v1/admin/users/{id}/quota-grant",
+        target: "impersonate",
+    },
+    WriteRow {
+        method: "POST",
+        path: "/v1/admin/users/{id}/notes",
         target: "impersonate",
     },
     WriteRow {
@@ -365,7 +381,7 @@ fn support_matrix_is_read_only() {
         .filter(|(_, path)| path.starts_with("/v1/admin"))
         .map(|(method, path)| (*method, *path))
         .collect();
-    assert_eq!(admin_routes.len(), 28, "28 admin routes");
+    assert_eq!(admin_routes.len(), 29, "29 admin routes");
     let mut seen = HashSet::new();
     for (method, path) in &admin_routes {
         let m = Method::from_bytes(method.as_bytes()).unwrap();
@@ -469,6 +485,9 @@ async fn support_reads_live_views() {
     assert_eq!(view["recent_jobs"].as_array().unwrap().len(), 1);
     assert_eq!(view["recent_jobs"][0]["id"], job_id.to_string());
     assert_eq!(view["sessions"].as_array().unwrap().len(), 1);
+    // The ticket notes (P1-110): the sixth section — empty
+    // for a fresh user, and support reads it with the view.
+    assert_eq!(view["support_notes"].as_array().unwrap().len(), 0);
 }
 
 #[tokio::test]
@@ -560,6 +579,20 @@ async fn support_writes_forbidden_and_change_nothing() {
             .len(),
         0,
         "a denied impersonate audits nothing"
+    );
+    // A denied note append writes no note and no audit row
+    // (the P1-110 write, same target as the impersonate row).
+    assert_eq!(
+        user_notes(&app, impersonate_target).await.len(),
+        0,
+        "a denied note append must not append"
+    );
+    assert_eq!(
+        audit_for_user_action(&app, impersonate_target, "admin.users.note_added")
+            .await
+            .len(),
+        0,
+        "a denied note append audits nothing"
     );
 }
 

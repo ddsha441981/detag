@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users\n           SET support_notes = support_notes || $2::jsonb, updated_at = now()\n           WHERE id = $1\n           RETURNING support_notes AS \"support_notes: serde_json::Value\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "support_notes: serde_json::Value",
+        "type_info": "Jsonb",
+        "origin": {
+          "Table": {
+            "table": "users",
+            "name": "support_notes"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f4ca4a16136984ebed7809c23cefadb80103160ae79065c2a30ec5fa4a316693"
+}

@@ -62,7 +62,8 @@ pub enum Capability {
     /// (P1-106).
     AdminUsersRead,
     /// `POST /v1/admin/users/{id}/suspend`,
-    /// `/restore`, `/warn`, `/terminate`, `/quota-grant`.
+    /// `/restore`, `/warn`, `/terminate`, `/quota-grant`,
+    /// `/notes`.
     AdminUsersWrite,
     /// `POST /v1/admin/users/{id}/impersonate`.
     AdminUsersImpersonate,
@@ -189,7 +190,8 @@ impl Capability {
             | ("POST", "/v1/admin/users/{id}/restore")
             | ("POST", "/v1/admin/users/{id}/warn")
             | ("POST", "/v1/admin/users/{id}/terminate")
-            | ("POST", "/v1/admin/users/{id}/quota-grant") => Some(AdminUsersWrite),
+            | ("POST", "/v1/admin/users/{id}/quota-grant")
+            | ("POST", "/v1/admin/users/{id}/notes") => Some(AdminUsersWrite),
             ("POST", "/v1/admin/users/{id}/impersonate") => Some(AdminUsersImpersonate),
             ("GET", "/v1/admin/jobs") => Some(AdminJobsRead),
             ("POST", "/v1/admin/jobs/{id}/reprocess") | ("POST", "/v1/admin/jobs/{id}/cancel") => {
@@ -222,9 +224,9 @@ impl Capability {
     /// non-admin routes.
     ///
     /// The action is per ROUTE, not per capability: suspend
-    /// / restore / quota-grant share `AdminUsersWrite` but
+    /// / restore / quota-grant / notes share `AdminUsersWrite` but
     /// audit as `user.suspended` / `user.restored` /
-    /// `admin.users.quota_granted`. The live names are the
+    /// `admin.users.quota_granted` / `admin.users.note_added`. The live names are the
     /// ones the services already write (P1-008, P1-010), so
     /// a middleware row and a service row for the same action
     /// are indistinguishable by action — they differ only in
@@ -240,6 +242,7 @@ impl Capability {
             ("POST", "/v1/admin/users/{id}/warn") => Some("user.warned"),
             ("POST", "/v1/admin/users/{id}/terminate") => Some("user.terminated"),
             ("POST", "/v1/admin/users/{id}/quota-grant") => Some("admin.users.quota_granted"),
+            ("POST", "/v1/admin/users/{id}/notes") => Some("admin.users.note_added"),
             ("POST", "/v1/admin/users/{id}/impersonate") => Some("user.impersonated"),
             ("POST", "/v1/admin/jobs/{id}/reprocess") => Some("admin.jobs.reprocessed"),
             ("POST", "/v1/admin/jobs/{id}/cancel") => Some("admin.jobs.cancelled"),
@@ -271,6 +274,7 @@ impl Capability {
             | ("POST", "/v1/admin/users/{id}/warn")
             | ("POST", "/v1/admin/users/{id}/terminate")
             | ("POST", "/v1/admin/users/{id}/quota-grant")
+            | ("POST", "/v1/admin/users/{id}/notes")
             | ("POST", "/v1/admin/users/{id}/impersonate") => Some("user"),
             ("POST", "/v1/admin/jobs/{id}/reprocess") | ("POST", "/v1/admin/jobs/{id}/cancel") => {
                 Some("job")
@@ -503,7 +507,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(writes, 14, "14 admin write routes");
+        assert_eq!(writes, 15, "15 admin write routes");
         assert_eq!(reads, 14, "14 admin read routes");
     }
 
@@ -527,7 +531,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(actions.len(), 14, "one action per write route");
+        assert_eq!(actions.len(), 15, "one action per write route");
     }
 
     #[test]

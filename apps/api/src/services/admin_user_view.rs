@@ -1,7 +1,7 @@
 //! Support user view (P1-106, FR-C-02): `GET
 //! /v1/admin/users/{id}` — one read-only composite for the
 //! support workflow: profile, plan, usage, recent jobs,
-//! session meta. No secrets anywhere in the shape (ADR-0065).
+//! session meta, ticket notes. No secrets anywhere in the shape (ADR-0065).
 //!
 //! The view is a composition of reads the API already owns:
 //! the user row (`users::by_id`), the live subscription
@@ -9,11 +9,13 @@
 //! wins, the entitlements precedent — + `plan_for_subscription`
 //! for the code), the usage read (`get_usage` today +
 //! `usage_counters::totals_for_user`), the newest jobs
-//! (`jobs::list_by_user`, capped at 10), and the live
+//! (`jobs::list_by_user`, capped at 10), the live
 //! sessions (`sessions::list_live_for_user`, rendered through
 //! the P1-019 `SessionItem` — the same safe shape the user
 //! sees themselves: parsed device label + ip hash, never the
-//! refresh hash or the family id).
+//! refresh hash or the family id), and the ticket notes
+//! (`users::support_notes`, P1-110 — the append-only list,
+//! oldest first).
 //!
 //! A user who does not exist is 404 `PF-2010` (the admin
 //! asked about a specific user, so a missing one is a
@@ -37,6 +39,7 @@ use crate::{
     services::{
         admin_usage::UsageTotals,
         sessions::SessionItem,
+        ticket_notes::{parse_stored_note, TicketNote},
         usage::{get_usage, DayUsage, UsageError},
     },
     AppState,
@@ -180,7 +183,7 @@ pub fn recent_job_view_of(job: &jobs::Job) -> RecentJobView {
 }
 
 /// The support user view: profile + plan + usage + recent
-/// jobs + live sessions, for one user. No field anywhere in
+/// jobs + live sessions + ticket notes, for one user. No field anywhere in
 /// this shape is a secret: no password hash, no refresh
 /// hash, no family id, no provider id, no token, no raw
 /// user-agent string, no raw IP (ADR-0065).
@@ -202,6 +205,11 @@ pub struct AdminUserViewResponse {
     /// first, in the P1-019 shape. Empty when the user has
     /// none live.
     pub sessions: Vec<SessionItem>,
+    /// The ticket notes (P1-110): the admin-written
+    /// append-only list, oldest first. Empty when no admin
+    /// has written one — this is how the support flow reads
+    /// the notes, so there is no second GET route for them.
+    pub support_notes: Vec<TicketNote>,
 }
 
 /// What the support user view can fail with. `NotFound` is
@@ -231,7 +239,8 @@ impl From<UsageError> for AdminUserViewError {
 }
 
 /// Read `user_id`'s support view: the profile, the plan, the
-/// usage summary, the 10 newest jobs, and the live sessions.
+/// usage summary, the 10 newest jobs, the live sessions, and
+/// the ticket notes.
 /// The user must exist — a missing user is 404, not an
 /// empty view.
 pub async fn get_admin_user_view(
@@ -278,6 +287,25 @@ pub async fn get_admin_user_view(
         .into_iter()
         .map(SessionItem::from_row)
         .collect();
+    // The ticket notes (P1-110): the append-only list, oldest
+    // first. The user was just read, so a missing list here
+    // is an inconsistency, not a 404 — and a stored value
+    // that is not a note is corrupt data (only the notes
+    // service writes the column), so both are 500s.
+    let stored_notes = match users::support_notes(&state.pool, user_id).await? {
+        Some(notes) => notes,
+        None => return Err(AdminUserViewError::Internal),
+    };
+    let mut support_notes = Vec::with_capacity(stored_notes.len());
+    for value in stored_notes {
+        match parse_stored_note(value) {
+            Some(note) => support_notes.push(note),
+            None => {
+                tracing::error!("admin user view: stored note failed to parse");
+                return Err(AdminUserViewError::Internal);
+            }
+        }
+    }
     Ok(AdminUserViewResponse {
         user_id,
         profile: profile_view_of(&user),
@@ -291,6 +319,7 @@ pub async fn get_admin_user_view(
         },
         recent_jobs,
         sessions,
+        support_notes,
     })
 }
 
@@ -377,6 +406,7 @@ mod tests {
             },
             recent_jobs: vec![],
             sessions: vec![],
+            support_notes: vec![],
         };
         let json = serde_json::to_string(&view).unwrap();
         for forbidden in [

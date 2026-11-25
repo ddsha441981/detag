@@ -14,7 +14,7 @@
 //!   `Capability::for_route`, and the role table behind it
 //!   admits exactly admin + support on read rows and admin
 //!   only on write/impersonate rows.
-//! - `admin_matrix_live` — the live walk: the 21 live routes
+//! - `admin_matrix_live` — the live walk: the 22 live routes
 //!   × 5 caller kinds (anonymous, plain user, support,
 //!   admin, an admin user's API key), asserting the status
 //!   the matrix predicts — 401 `PF-1001` with no credential,
@@ -67,7 +67,7 @@ struct MatrixRow {
 /// `POST /v1/abuse` intake lives in the admin module but is
 /// not an admin route — it has no row (and no capability).
 const MATRIX: &[MatrixRow] = &[
-    // Live (21)
+    // Live (22)
     MatrixRow {
         method: "GET",
         path: "/v1/admin/users",
@@ -113,6 +113,12 @@ const MATRIX: &[MatrixRow] = &[
     MatrixRow {
         method: "POST",
         path: "/v1/admin/users/{id}/terminate",
+        capability: Capability::AdminUsersWrite,
+        live: true,
+    },
+    MatrixRow {
+        method: "POST",
+        path: "/v1/admin/users/{id}/notes",
         capability: Capability::AdminUsersWrite,
         live: true,
     },
@@ -253,12 +259,12 @@ fn matrix_covers_every_admin_route() {
         .collect();
     assert_eq!(
         admin_routes.len(),
-        28,
-        "ROUTE_TABLE must hold the 28 /v1/admin/* routes (the public POST /v1/abuse intake is not one)"
+        29,
+        "ROUTE_TABLE must hold the 29 /v1/admin/* routes (the public POST /v1/abuse intake is not one)"
     );
     assert_eq!(
         MATRIX.len(),
-        28,
+        29,
         "the matrix must hold one row per admin route ({} rows today)",
         MATRIX.len()
     );
@@ -531,7 +537,7 @@ fn problem_code(res: &common::TestResponse) -> String {
 
 #[tokio::test]
 async fn admin_matrix_live() {
-    // The live walk: the 21 live rows × 5 caller kinds.
+    // The live walk: the 22 live rows × 5 caller kinds.
     // Order per row is anonymous → user → support → admin
     // → key, so the mutating admin call (suspend,
     // impersonate) runs last and cannot affect the earlier
@@ -608,6 +614,13 @@ async fn admin_matrix_live() {
                     "ttl_hours": 24,
                     "reason": "authz matrix probe"
                 })),
+            ),
+            // The notes row needs a real user id + a valid
+            // note body for the admitted caller to reach 200
+            // (an unknown id is 404, an empty body is 422).
+            "/v1/admin/users/{id}/notes" => (
+                Some(usage_target),
+                Some(json!({ "body": "authz matrix probe" })),
             ),
             "/v1/admin/users/{id}/impersonate" => (
                 Some(impersonate_target),
