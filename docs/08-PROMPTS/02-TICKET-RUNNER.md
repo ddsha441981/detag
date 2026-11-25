@@ -20,6 +20,7 @@ STEPS
 7. Commit: `feat(area): <ticket-id> <what> (<FR-...>)` — one ticket, one commit. No drive-by refactors.
 8. State: tick the checkbox in the phase file; update 09-STATE/PROGRESS.md (done count, current ticket, next-up); if the ticket revealed a bug/assumption, add the ISSUES.md entry; if a durable decision was made, append the ADR to DECISIONS.md.
 9. Lint every commit before you finish: run `just lint-commits` after each commit (`python3 scripts/lint_commits.py --single <rev>` for a specific one, `--range <base>..HEAD` for the whole run) — ticket commits AND docs/note/run-end commits. `just verify` does NOT run the linter, so a green verify never proves the message is valid. A commit whose message fails the lint must never be merged to main (Commits #110 failed exactly this way: `docs(docs): 183rd coordinator run-end note` carries no ticket id — CI-FAIL-031).
+10. Phase gate: when the LAST ticket of a phase completes, update README.md and CHANGELOG.md before closing the phase, and NEVER start the next phase without the owner's explicit permission — everything must be green first (all CI runs green, no open S1, lint-commits green). The owner decides when the next phase begins.
 
 IF BLOCKED (> 30 min / 3 attempts): stop on this ticket. ISSUES.md entry (tag blocked:, what you tried), tick nothing, report in the run summary, and if invoked manually, say so instead of faking completion.
 
