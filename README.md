@@ -17,10 +17,11 @@ default; stripping them is a gated feature, and invisible-watermark
 
 ## Status (2026-11-25)
 
-Phase 1 (Identity & Billing) is 111/111 tickets done — COMPLETE,
-216/672 overall (Phase 0: 105/108). 1,318 tests green (`just verify`),
-CI green (#110–#112) except Commits #110 red (historical docs commit,
-not rewritten).
+**v0.1.0** released 2026-11-25 (tag `v0.1.0`) — Phase 1 (Identity &
+Billing) is 111/111 tickets done, COMPLETE, 216/672 overall
+(Phase 0: 105/108). 1,318 tests green (`just verify`), CI green
+(#115 on the v0.1.0 fix push; #110–#112, #114 green) except
+Commits #110 red (historical docs commit, not rewritten).
 
 Live now: JWT auth + email verify, API keys (create/rotate/revoke,
 per-key rate limits), roles + permission matrix, plans/quota/feature
