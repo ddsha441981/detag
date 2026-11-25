@@ -807,6 +807,14 @@
 - Status: fixed (9fc6c9e)
 - Note: CI #107's verify job ALSO failed, at the 'Coverage (llvm-cov)' step (Test step passed). Root cause unknown — the verify job log is needed; not the same failure as this one.
 
+### CI-FAIL-031 [bug] Commits #110 fails at 'Lint commit messages' — run-end note commit has no ticket id
+- Date: 2026-11-25 · Ticket: (coordinator process) · Severity: S1 (CI red on main)
+- Symptom: Commits #110 (8306a3d, P1-110 merge) failed at step 'Lint commit messages'. The range a3ba1ca..8306a3d holds 5 commits; 4 pass, 1 fails: `144d23c docs(docs): 183rd coordinator run-end note (FR-C-02)` — subject must match `<type>(<scope>): <id> <description>`, but after `docs(docs): ` comes `183rd coordinator run-end note` with no ticket/issue id. Reproduced locally with `scripts/lint_commits.py --range a3ba1ca..8306a3d` (1 of 5 failed).
+- Cause: the 183rd coordinator's run-end note commit (4-line night-report note, 2026-11-24 19:30 UTC) was written freeform and never linted. Ticket commits were already linted by coordinators (P1-109/P1-110 notes record `just lint-commits` PASS on the ticket commit); only the non-ticket note commit escaped, because `just verify` does not run the linter and no prompt step required linting it.
+- Fix: step 9 in `docs/08-PROMPTS/02-TICKET-RUNNER.md` — lint every commit before the run ends (ticket AND docs/note/run-end commits) with `just lint-commits` (or the script `--single`/`--range`), and record lint-clean in DONE MEANS. A commit whose message fails the lint must never be merged to main.
+- Status: fixed (e3d73fd)
+- Note: the bad commit is already merged + pushed on main; rewriting it would need a force-push, which is forbidden without the owner's explicit say-so and not worth it for a 4-line note. Run #110 stays red; the next push lints only the new range, so 144d23c falls out and the pipeline recovers — provided P1-111's commits follow the policy.
+
 ## Closed issues (keep for history; prune to last 50)
 
 ### SCHEMA-DOC-001 [bug] `just test-lint-commits` red — schema-docs drift test hardcoded 20 tables, repo has 22 — FIXED
