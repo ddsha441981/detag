@@ -3,7 +3,8 @@
 //! The server never trusts a claimed extension or MIME type: it
 //! sniffs the magic bytes of the completed object — head AND tail
 //! — and rejects anything that does not match the allowlist
-//! (`png/jpeg/webp/mp4/mkv/webm`) with `AppError::UnsupportedMediaType`
+//! (`png/jpeg/webp/tiff/mp4/mkv/webm/avif`) with
+//! `AppError::UnsupportedMediaType`
 //! (PF-2001, 415). Sniffing both ends is what catches polyglots:
 //! a file that is a valid PNG at the head but carries a ZIP at
 //! the tail is not a PNG.
@@ -22,6 +23,12 @@
 //!   field must equal `total_size - 8` (the tail check: a
 //!   truncated or appended file fails it).
 //! - MP4: `ftyp` at offset 4 at the head (any brand).
+//! - AVIF: `ftyp` at offset 4 with brand `avif` / `avis` at
+//!   offset 8 — checked BEFORE the generic MP4 rule, or every
+//!   AVIF file would sniff as MP4.
+//! - TIFF: `II*\0` (little-endian) or `MM\0*` (big-endian) at
+//!   the head; no trailer of its own, so the archive scan below
+//!   is the whole tail check (like MP4 / MKV / WebM).
 //! - MKV / WebM: EBML magic `1A 45 DF A3` at the head, and the
 //!   DocType string (`matroska` / `webm`) within the head.
 //! - Every kind: the tail must not contain a ZIP signature
@@ -50,12 +57,16 @@ pub enum MediaKind {
     Jpeg,
     /// WebP image.
     WebP,
+    /// TIFF image (P2-001).
+    Tiff,
     /// MP4 video.
     Mp4,
     /// Matroska video.
     Mkv,
     /// WebM video.
     Webm,
+    /// AVIF image (P2-001).
+    Avif,
 }
 
 impl MediaKind {
@@ -65,9 +76,11 @@ impl MediaKind {
             Self::Png => "image/png",
             Self::Jpeg => "image/jpeg",
             Self::WebP => "image/webp",
+            Self::Tiff => "image/tiff",
             Self::Mp4 => "video/mp4",
             Self::Mkv => "video/x-matroska",
             Self::Webm => "video/webm",
+            Self::Avif => "image/avif",
         }
     }
 
@@ -77,9 +90,11 @@ impl MediaKind {
             Self::Png => "png",
             Self::Jpeg => "jpg",
             Self::WebP => "webp",
+            Self::Tiff => "tiff",
             Self::Mp4 => "mp4",
             Self::Mkv => "mkv",
             Self::Webm => "webm",
+            Self::Avif => "avif",
         }
     }
 
@@ -91,9 +106,11 @@ impl MediaKind {
             "png" => Some(Self::Png),
             "jpg" | "jpeg" => Some(Self::Jpeg),
             "webp" => Some(Self::WebP),
+            "tiff" | "tif" => Some(Self::Tiff),
             "mp4" => Some(Self::Mp4),
             "mkv" => Some(Self::Mkv),
             "webm" => Some(Self::Webm),
+            "avif" => Some(Self::Avif),
             _ => None,
         }
     }
@@ -170,6 +187,22 @@ fn sniff_head(head: &[u8]) -> Result<MediaKind, AppError> {
     if head.len() >= 12 && &head[..4] == b"RIFF" && &head[8..12] == b"WEBP" {
         return Ok(MediaKind::WebP);
     }
+    // TIFF: "II*\0" (little-endian) or "MM\0*" (big-endian).
+    if head.len() >= 4
+        && ((head[0] == 0x49 && head[1] == 0x49 && head[2] == 0x2A && head[3] == 0x00)
+            || (head[0] == 0x4D && head[1] == 0x4D && head[2] == 0x00 && head[3] == 0x2A))
+    {
+        return Ok(MediaKind::Tiff);
+    }
+    // AVIF: "ftyp" at offset 4 with brand "avif" / "avis" at
+    // offset 8 — BEFORE the generic MP4 rule below, or every
+    // AVIF file would sniff as MP4.
+    if head.len() >= 12
+        && &head[4..8] == b"ftyp"
+        && (&head[8..12] == b"avif" || &head[8..12] == b"avis")
+    {
+        return Ok(MediaKind::Avif);
+    }
     // MP4: "ftyp" at offset 4 (any brand after it).
     if head.len() >= 8 && &head[4..8] == b"ftyp" {
         return Ok(MediaKind::Mp4);
@@ -217,7 +250,7 @@ fn check_tail(kind: MediaKind, head: &[u8], tail: &[u8], total_size: u64) -> Res
                 return Err(AppError::UnsupportedMediaType);
             }
         }
-        MediaKind::Mp4 | MediaKind::Mkv | MediaKind::Webm => {
+        MediaKind::Mp4 | MediaKind::Mkv | MediaKind::Webm | MediaKind::Tiff | MediaKind::Avif => {
             // No tail marker of their own; the archive scan below
             // is the whole tail check.
         }
@@ -305,12 +338,102 @@ mod tests {
         v
     }
 
+    fn tiff_le() -> Vec<u8> {
+        // Little-endian TIFF: "II*\0" + offset to first IFD.
+        let mut v = vec![0x49, 0x49, 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00];
+        v.extend_from_slice(&[0; 8]);
+        v
+    }
+
+    fn tiff_be() -> Vec<u8> {
+        // Big-endian TIFF: "MM\0*" + offset to first IFD.
+        let mut v = vec![0x4D, 0x4D, 0x00, 0x2A, 0x00, 0x00, 0x00, 0x08];
+        v.extend_from_slice(&[0; 8]);
+        v
+    }
+
+    fn avif(brand: &[u8; 4]) -> Vec<u8> {
+        let mut v = vec![0, 0, 0, 24];
+        v.extend_from_slice(b"ftyp");
+        v.extend_from_slice(brand);
+        v.extend_from_slice(b"\x00\x00\x00\x00avifmif1");
+        v.extend_from_slice(b"mdat\x00\x01\x02\x03");
+        v
+    }
+
     fn ebml(doctype: &[u8]) -> Vec<u8> {
         let mut v = vec![0x1A, 0x45, 0xDF, 0xA3, 0x42, 0x82];
         v.push(0x80 | doctype.len() as u8);
         v.extend_from_slice(doctype);
         v.extend_from_slice(&[0x42, 0x87, 0x81, 0x01]);
         v
+    }
+
+    #[test]
+    fn table_driven_sniffing() {
+        // P2-001: the whole allowlist plus the rejection rows,
+        // driven from one table — one row per case, magic wins.
+        let cases: [(&str, Vec<u8>, Option<MediaKind>); 15] = [
+            ("png", png(), Some(MediaKind::Png)),
+            ("jpeg", jpeg(), Some(MediaKind::Jpeg)),
+            ("webp", webp(), Some(MediaKind::WebP)),
+            ("tiff-le", tiff_le(), Some(MediaKind::Tiff)),
+            ("tiff-be", tiff_be(), Some(MediaKind::Tiff)),
+            ("mp4", mp4(), Some(MediaKind::Mp4)),
+            ("mkv", ebml(b"matroska"), Some(MediaKind::Mkv)),
+            ("webm", ebml(b"webm"), Some(MediaKind::Webm)),
+            ("avif", avif(b"avif"), Some(MediaKind::Avif)),
+            ("avis", avif(b"avis"), Some(MediaKind::Avif)),
+            (
+                "svg",
+                b"<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\"/>".to_vec(),
+                None,
+            ),
+            ("pdf", b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n".to_vec(), None),
+            ("empty", vec![], None),
+            ("random", b"hello, this is not media at all".to_vec(), None),
+            (
+                "zip-first",
+                b"PK\x03\x04\x14\x00\x00\x00\x08\x00".to_vec(),
+                None,
+            ),
+        ];
+        for (name, data, expected) in cases {
+            match expected {
+                Some(kind) => assert_eq!(sniff(&data).expect(name), kind, "{name}"),
+                None => assert!(
+                    matches!(sniff(&data), Err(AppError::UnsupportedMediaType)),
+                    "{name}"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn avif_brand_is_not_mp4() {
+        // AVIF must be checked before the generic ftyp rule.
+        assert_eq!(sniff(&avif(b"avif")).expect("avif"), MediaKind::Avif);
+        assert_eq!(sniff(&avif(b"avis")).expect("avis"), MediaKind::Avif);
+        // Any other ftyp brand stays MP4.
+        assert_eq!(sniff(&mp4()).expect("mp4"), MediaKind::Mp4);
+    }
+
+    #[test]
+    fn tiff_and_avif_mime_and_extension() {
+        assert_eq!(MediaKind::Tiff.mime(), "image/tiff");
+        assert_eq!(MediaKind::Tiff.extension(), "tiff");
+        assert_eq!(MediaKind::Avif.mime(), "image/avif");
+        assert_eq!(MediaKind::Avif.extension(), "avif");
+        assert_eq!(MediaKind::from_extension("tif"), Some(MediaKind::Tiff));
+        assert_eq!(MediaKind::from_extension("TIFF"), Some(MediaKind::Tiff));
+        assert_eq!(MediaKind::from_extension("avif"), Some(MediaKind::Avif));
+        // Magic wins over the claimed extension (P2-001 AC).
+        let kind = sniff(&tiff_le()).expect("tiff");
+        assert!(check_claimed(kind, "tiff").is_ok());
+        assert!(matches!(
+            check_claimed(kind, "png"),
+            Err(AppError::UnsupportedMediaType)
+        ));
     }
 
     #[test]

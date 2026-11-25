@@ -37,7 +37,7 @@
 
 ## E2.1 — Media intake (area: engine/intake)
 
-- [ ] **P2-001** — Magic-byte sniffing
+- [x] **P2-001** — Magic-byte sniffing
   - **Type:** feat · **Area:** engine/intake · **Est:** M · **Deps:** — · **Prio:** P1
   - **Spec:** Sniffer detects png/jpeg/webp/tiff/mp4/mkv/webm/avif from head+tail bytes; extension ignored (FR-U-03); svg/pdf/unknown rejected PF-2001; table-driven unit tests.
   - **AC:**
