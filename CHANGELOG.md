@@ -14,9 +14,9 @@ by hand, re-run the recipe instead (it prepends this file).
 - Phase 1 (Identity & Billing): 111/111 — COMPLETE 2026-11-25.
   Total 216/672. Tag `v0.1.0` (commit 236f54a); CI #115 green on
   the CI-FAIL-032 fix push.
-- Phase 2 (Removal Engine, images): 0/102 — not started, needs the
-  user's permission. Job creation is still a 501 stub, so no watermark
-  can be removed yet.
+- Phase 2 (Removal Engine, images): 0/102 — STARTED 2026-11-25
+  (owner approved; current ticket P2-001). Job creation is still a
+  501 stub, so no watermark can be removed yet.
 - Phase 3 (Pipeline & Video), Phase 4 (Console & Admin), Phase 5
   (Hardening & Release): 0. Phase 6 (Provenance research): 0, gated.
 - Latest full verify: 1,318 tests green, 0 failed (P1-111, attempt 8).

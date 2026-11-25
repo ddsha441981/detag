@@ -5,7 +5,7 @@
 ## Where we are
 
 - **Current phase:** 1 — Identity & Billing — COMPLETE (111/111)
-- **Current ticket:** P1-111 DONE 2026-11-25 — Phase 2 P2-001 NOT started (needs the user's permission; README + CHANGELOG gate update first)
+- **Current ticket:** P2-001 IN PROGRESS 2026-11-25 — Phase 2 STARTED (owner approved 2026-11-25 ~22:43 IST; v0.1.0 tagged + README/CHANGELOG marked first). Branch: phase-2.
 - **Blocked:** P0-034 live ACs (healthy under compose, volume persists) — DOCKER-001; implementation committed, live verification deferred to CI/E0.9. Native postgres on :5432 is the dev fallback (ASSUMPTION-007). P0-083 size gate likewise deferred to CI (DOCKER-001, no docker daemon here); Dockerfile.api + gate implemented, AC unticked until CI runs green. P0-088 AC ("smoke enforces health") and P0-090 AC ("smoke green in CI") likewise unticked until the smoke job goes green in CI — `just smoke` + the CI job are implemented, but the workflow files can't reach GitHub yet (CI-WORKFLOWS-001). Remote CI runs the STALE workflow — local checks added since ~09:20 IST never ran remotely.
 - **Last run:** 2026-11-25 — 191st coordinator adopted the 189th's uncommitted P1-111 tree + landed P1-111 (see Notes). Full `just verify` attempt 8 green (1318 passed, 0 failed, ~83 min), no flakes. Attempts 1 FAILED at lint, 2/4 DEAD by coordinator timeouts, 3/5/7 DEAD by the 141st/142nd/143rd VM resets, 6 FAILED on FLAKY-009 strike two (proven flake). No open S1. **PHASE 1 COMPLETE 111/111, total 216/672. Phase 2 NOT started — awaiting the user's permission after the README + CHANGELOG gate update.** 2026-11-25 — 192nd coordinator (gate work only, no P2): CI #113 on the gate push FAILED at Coverage (llvm-cov), exit 101; recorded CI-FAIL-032 (log unavailable, fix pending the user's logs ZIP); Commits #113 + Nightly #12 green; Phase 2 still NOT started. 2026-11-25 — 193rd coordinator (fix work only, no P2): proved CI-FAIL-032's root cause from the user's CI #113 logs ZIP (FLAKY-011 strike nine — `reset_token_concurrent_double_consume_succeeds_once` got [500, 204], synchronous Argon2id hashing on async workers starving the pool) and landed the fix as 3a989c7 (`hash_password_async`/`verify_password_async` spawn_blocking wrappers; call sites in login/password_reset/register) + f62ce5c (ISSUES.md update, "fixed, pending CI #114"); fix push ~20:42 IST; CI #114 (run 45642657609, head f62ce5c) in progress at the 194th's check (~57 min in). The 193rd wrote no night-report section — its work is recorded here from the commits themselves. 2026-11-25 — 194th coordinator: resolved a tree/HEAD divergence before anything else — the working tree + index held the pre-fix files staged as a revert of 3a989c7/f62ce5c (verified blob-for-blob against 3a989c7^/f62ce5c^, staged diff exactly the inverse of the fix, no new work); discarded with `git reset --hard HEAD` (f62ce5c), tree clean, fix present on disk. Full `just verify` attempt 1 on the fixed tree is the 194th's next step (see night report). Phase 2 still NOT started.
 
@@ -14,8 +14,8 @@
 | Phase | Title | Tickets done / total | Exit gates |
 | --- | --- | --- | --- |
 | 0 | Foundation & Platform Baseline | 105 / 108 | P0-034/046/083 implemented but unverified (DOCKER-001) — live ACs + exit gates for `just dev`/`just smoke`/CI deferred to docker-capable CI |
-| 1 | Identity & Billing | 111 / 111 | COMPLETE 2026-11-25 — Phase 2 NOT started (needs user permission; README + CHANGELOG gate update first) |
-| 2 | Removal Engine (images) | 0 / 102 | — |
+| 1 | Identity & Billing | 111 / 111 | COMPLETE 2026-11-25 — Phase 2 STARTED 2026-11-25 (owner approved; current ticket P2-001) |
+| 2 | Removal Engine (images) | 0 / 102 | STARTED 2026-11-25 — current ticket P2-001 (Magic-byte sniffing) |
 | 3 | Pipeline & Video | 0 / 105 | — |
 | 4 | Console & Admin | 0 / 102 | — |
 | 5 | Hardening & Release | 0 / 101 | — |
