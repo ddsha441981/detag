@@ -56,7 +56,7 @@ use detag_core::{
     checksum::sha256_hex,
     db::PoolConfig,
     error::FieldError,
-    password::{hash_password, Argon2Params, PasswordError},
+    password::{hash_password_async, Argon2Params, PasswordError},
     redis::ratelimit::RateLimit,
     repos::{
         login_attempts::{self, LockScope},
@@ -289,10 +289,12 @@ pub async fn register_user(state: &AppState, req: &RegisterRequest) -> Result<Us
 
     // Hash before any DB write (CPU work, no transaction held).
     let params = Argon2Params::from_settings(settings);
-    let hash = hash_password(&req.password, &params).map_err(|err: PasswordError| {
-        tracing::error!(error = ?err, "register: password hashing failed");
-        RegisterError::Internal
-    })?;
+    let hash = hash_password_async(req.password.clone(), params)
+        .await
+        .map_err(|err: PasswordError| {
+            tracing::error!(error = ?err, "register: password hashing failed");
+            RegisterError::Internal
+        })?;
 
     // Audit the attempt outside the transaction: it must survive
     // a duplicate (409) or a rollback — it is the record that

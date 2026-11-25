@@ -125,7 +125,9 @@ use detag_core::{
     error::FieldError,
     jwt::{issue_access_token_at, ACCESS_TOKEN_TTL_SECS, REFRESH_TOKEN_TTL_SECS},
     lockout::LOCKOUT_THRESHOLD,
-    password::{hash_password, needs_rehash, verify_password, Argon2Params, PasswordError},
+    password::{
+        hash_password_async, needs_rehash, verify_password_async, Argon2Params, PasswordError,
+    },
     redis::ratelimit::RateLimit,
     repos::{
         email_outbox::{self, NewOutboxMail},
@@ -427,7 +429,8 @@ pub async fn login_user(
         }
     };
     let Some(user) = user else {
-        let _ignored = verify_password(&req.password, &state.dummy_password_hash);
+        let _ignored =
+            verify_password_async(req.password.clone(), state.dummy_password_hash.clone()).await;
         record_login_failure(
             state,
             &email_hash,
@@ -441,7 +444,7 @@ pub async fn login_user(
 
     // Wrong password → generic 401. A malformed stored hash is
     // a 500 (data problem, not a wrong password).
-    match verify_password(&req.password, &user.password_hash) {
+    match verify_password_async(req.password.clone(), user.password_hash.clone()).await {
         Ok(true) => {}
         Ok(false) => {
             record_login_failure(
@@ -549,7 +552,7 @@ pub async fn login_user(
     // the login still succeeds on the old hash.
     let current_params = Argon2Params::from_settings(&state.settings);
     let rehashed: Option<String> = match needs_rehash(&user.password_hash, &current_params) {
-        Ok(true) => match hash_password(&req.password, &current_params) {
+        Ok(true) => match hash_password_async(req.password.clone(), current_params).await {
             Ok(hash) => Some(hash),
             Err(err) => {
                 tracing::warn!(user_id = %user.id, error = ?err, "login: rehash failed, keeping old hash");

@@ -65,7 +65,7 @@ use detag_core::{
     audit::{record, NewAuditLog},
     checksum::sha256_hex,
     db::PoolConfig,
-    password::{hash_password, Argon2Params},
+    password::{hash_password_async, Argon2Params},
     redis::ratelimit::RateLimit,
     repos::{
         email_outbox::{self, NewOutboxMail},
@@ -334,10 +334,12 @@ pub async fn reset_password(
     // Hash before any DB write (CPU work, no transaction
     // held) — the register pattern.
     let params = Argon2Params::from_settings(&state.settings);
-    let new_hash = hash_password(&req.new_password, &params).map_err(|err| {
-        tracing::error!(error = ?err, "reset-password: password hashing failed");
-        PasswordResetError::Internal
-    })?;
+    let new_hash = hash_password_async(req.new_password.clone(), params)
+        .await
+        .map_err(|err| {
+            tracing::error!(error = ?err, "reset-password: password hashing failed");
+            PasswordResetError::Internal
+        })?;
 
     let hash = hash_token(req.token.trim());
     let token = email_verification_tokens::by_hash(&state.pool, &hash)

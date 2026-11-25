@@ -103,6 +103,26 @@ pub fn hash_password(password: &str, params: &Argon2Params) -> Result<String, Pa
         .map_err(|_| PasswordError::HashFailed)
 }
 
+/// Async `hash_password`: the Argon2id hash runs on tokio's
+/// blocking pool, NOT on an async worker. A synchronous hash
+/// blocks its worker thread for the whole hash (~50–300 ms at
+/// P1-027 params, far longer under load); while workers are
+/// blocked, other tasks — including `pool.begin()` — are not
+/// polled, and a 5 s pool-acquire timeout can fire on a
+/// perfectly healthy database. That starvation is the proven
+/// root cause of FLAKY-011 (CI #107, CI #113): the reset-token
+/// race's loser got a 500 (PoolTimedOut) instead of 401.
+/// Request handlers must use this wrapper, never the sync
+/// `hash_password`, on any async path.
+pub async fn hash_password_async(
+    password: String,
+    params: Argon2Params,
+) -> Result<String, PasswordError> {
+    tokio::task::spawn_blocking(move || hash_password(&password, &params))
+        .await
+        .map_err(|_| PasswordError::HashFailed)?
+}
+
 /// Verify `password` against a stored PHC hash. `Ok(false)` is a
 /// wrong password; `Err` is a malformed stored hash (a data
 /// problem, not a wrong password — callers map it to 500, never
@@ -112,6 +132,15 @@ pub fn verify_password(password: &str, hash: &str) -> Result<bool, PasswordError
     Ok(Argon2::default()
         .verify_password(password.as_bytes(), &parsed)
         .is_ok())
+}
+
+/// Async `verify_password`: same blocking-pool rule as
+/// `hash_password_async` — verification is also a full
+/// Argon2id run and must never block an async worker.
+pub async fn verify_password_async(password: String, hash: String) -> Result<bool, PasswordError> {
+    tokio::task::spawn_blocking(move || verify_password(&password, &hash))
+        .await
+        .map_err(|_| PasswordError::HashFailed)?
 }
 
 /// Does `stored_hash` need upgrading to `current` (P1-027)?
