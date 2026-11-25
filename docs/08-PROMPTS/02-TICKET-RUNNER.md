@@ -19,8 +19,9 @@ STEPS
 6. Run `just verify` until green. Engine: also run the golden suite; put metrics before→after in the commit body. Schema: additive migration + update 03-ARCHITECTURE/04-data-model.md in the same commit. Config: update .env.example + runbook table.
 7. Commit: `feat(area): <ticket-id> <what> (<FR-...>)` — one ticket, one commit. No drive-by refactors.
 8. State: tick the checkbox in the phase file; update 09-STATE/PROGRESS.md (done count, current ticket, next-up); if the ticket revealed a bug/assumption, add the ISSUES.md entry; if a durable decision was made, append the ADR to DECISIONS.md.
+9. Lint every commit before you finish: run `just lint-commits` after each commit (`python3 scripts/lint_commits.py --single <rev>` for a specific one, `--range <base>..HEAD` for the whole run) — ticket commits AND docs/note/run-end commits. `just verify` does NOT run the linter, so a green verify never proves the message is valid. A commit whose message fails the lint must never be merged to main (Commits #110 failed exactly this way: `docs(docs): 183rd coordinator run-end note` carries no ticket id — CI-FAIL-031).
 
 IF BLOCKED (> 30 min / 3 attempts): stop on this ticket. ISSUES.md entry (tag blocked:, what you tried), tick nothing, report in the run summary, and if invoked manually, say so instead of faking completion.
 
-DONE MEANS: all ticket AC boxes true, verify green, state files updated, commit pushed/present. Nothing else counts.
+DONE MEANS: all ticket AC boxes true, verify green, every commit message lint-clean (`just lint-commits`), state files updated, commit pushed/present. Nothing else counts.
 ```
