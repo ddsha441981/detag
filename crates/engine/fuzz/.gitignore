@@ -1,0 +1,8 @@
+target
+artifacts
+coverage
+# The fuzzer grows corpus/<target>/ with new inputs on every run —
+# those stay untracked. The committed seeds are the exception:
+# `seed-*` files are the starting corpus and ARE tracked.
+corpus/*/*
+!corpus/exif_parse/seed-*
