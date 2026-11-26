@@ -7,15 +7,30 @@ license.workspace = true
 # helper, not a bench target.
 autobenches = false
 
+[features]
+# Decoder matrix (P2-002, ADR-0071): png/jpeg/webp are always on;
+# `tiff` is default (pure Rust, already in the tree); `avif` is
+# opt-in — AVIF *decode* needs the image crate's `avif-native`
+# feature, which links the system libdav1d (>= 1.3.0, install
+# `libdav1d-dev` before building with it). AVIF *encode* (ravif,
+# pure Rust) rides along with the same feature.
+default = ["tiff"]
+tiff = ["image/tiff"]
+avif = ["image/avif", "image/avif-native"]
+
 [dependencies]
 serde.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 detag-core = { path = "../core" }
+# The image crate is the decoder (P2-002): only the formats the
+# matrix needs — png/jpeg/webp always, tiff/avif via the features
+# above. No default features: bmp/dds/exr/gif/hdr/ico/pnm/qoi/tga
+# are not intake formats and must not enter the build.
+image = { workspace = true, default-features = false, features = ["png", "jpeg", "webp"] }
 
 [dev-dependencies]
 criterion.workspace = true
-image.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 
@@ -34,4 +49,8 @@ harness = false
 
 [[bench]]
 name = "full_job"
+harness = false
+
+[[bench]]
+name = "decode"
 harness = false

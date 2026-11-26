@@ -137,6 +137,7 @@ bench:
     cargo bench -p detag-engine --bench inpaint -- --save-baseline main
     cargo bench -p detag-engine --bench encode -- --save-baseline main
     cargo bench -p detag-engine --bench full_job -- --save-baseline main
+    cargo bench -p detag-engine --bench decode -- --save-baseline main
     python3 scripts/bench_baseline.py
 
 # Verify gate: fmt + clippy + tests. (Compose smoke is `just smoke`,

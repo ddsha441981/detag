@@ -52,7 +52,7 @@ testcontainers = "0.28"
 insta = { version = "1.49", features = ["json"] }
 proptest = "1"
 criterion = { version = "0.7", features = ["html_reports"] }
-image = "0.25"
+image = { version = "0.25", default-features = false } # P2-002: engine enables only the matrix formats (png/jpeg/webp + tiff/avif features); no other crate uses image.
 jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs"] }
 sha2 = "0.11"
 hmac = "0.13"
