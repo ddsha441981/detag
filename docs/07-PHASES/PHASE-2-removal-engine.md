@@ -56,11 +56,11 @@
     - [x] fuzz target runs nightly
     - [x] no panics
 
-- [ ] **P2-004** — ICC handling
+- [x] **P2-004** — ICC handling
   - **Type:** feat · **Area:** engine/intake · **Est:** S · **Deps:** P2-003 · **Prio:** P1
   - **Spec:** Extract ICC blob + presence flag; embed into output unchanged (FR-D-07); unknown profiles pass through; srgb/p3 fixture tests.
   - **AC:**
-    - [ ] ICC byte-identical post-roundtrip
+    - [x] ICC byte-identical post-roundtrip
 
 - [ ] **P2-005** — Orientation normalize
   - **Type:** feat · **Area:** engine/intake · **Est:** M · **Deps:** P2-004 · **Prio:** P1
