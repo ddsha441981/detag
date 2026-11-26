@@ -43,11 +43,11 @@
   - **AC:**
     - [ ] extension-vs-magic mismatch: magic wins
 
-- [ ] **P2-002** — Image decoder matrix
+- [x] **P2-002** — Image decoder matrix
   - **Type:** feat · **Area:** engine/intake · **Est:** M · **Deps:** P2-001 · **Prio:** P1
   - **Spec:** image crate: png/jpeg/webp (lossy+lossless) decode; avif/tiff behind cargo features (documented); 16-bit png path preserves bit depth.
   - **AC:**
-    - [ ] format matrix green
+    - [x] format matrix green
 
 - [ ] **P2-003** — EXIF parse
   - **Type:** feat · **Area:** engine/intake · **Est:** M · **Deps:** P2-002 · **Prio:** P1
