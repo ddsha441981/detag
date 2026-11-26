@@ -20,6 +20,7 @@ avif = ["image/avif", "image/avif-native"]
 
 [dependencies]
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 detag-core = { path = "../core" }
@@ -28,6 +29,8 @@ detag-core = { path = "../core" }
 # above. No default features: bmp/dds/exr/gif/hdr/ico/pnm/qoi/tga
 # are not intake formats and must not enter the build.
 image = { workspace = true, default-features = false, features = ["png", "jpeg", "webp"] }
+# EXIF summary extraction (P2-003): kamadak-exif, pure Rust.
+exif = { workspace = true }
 
 [dev-dependencies]
 criterion.workspace = true

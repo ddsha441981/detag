@@ -52,6 +52,28 @@ jobs:
           name: bench-baselines
           path: crates/engine/benches/baselines/
 
+  fuzz:
+    # P2-003: the EXIF fuzz target (crates/engine/fuzz/, exif_parse)
+    # runs every night against the committed seed corpus. libFuzzer
+    # needs nightly + cargo-fuzz; the target must never panic on any
+    # input — a crash fails this job and the corpus/artifacts are
+    # uploaded so the input can be minimized into a regression test.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: fuzz EXIF parser (5 min)
+        working-directory: crates/engine
+        run: cargo +nightly fuzz run exif_parse -- -max_total_time=300
+      - name: upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts-exif_parse
+          path: crates/engine/fuzz/artifacts/exif_parse/
+
   quarantined:
     # P0-099: list quarantined tests (#[ignore = "flaky:<issue>"])
     # so the set is visible every day. A listing, not a gate —

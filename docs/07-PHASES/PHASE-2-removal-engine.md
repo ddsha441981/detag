@@ -49,12 +49,12 @@
   - **AC:**
     - [x] format matrix green
 
-- [ ] **P2-003** — EXIF parse
+- [x] **P2-003** — EXIF parse
   - **Type:** feat · **Area:** engine/intake · **Est:** M · **Deps:** P2-002 · **Prio:** P1
   - **Spec:** kamadak-exif: summary extraction (orientation, camera, software) into jsonb; malformed-EXIF fuzz target (cargo-fuzz); parser never panics.
   - **AC:**
-    - [ ] fuzz target runs nightly
-    - [ ] no panics
+    - [x] fuzz target runs nightly
+    - [x] no panics
 
 - [ ] **P2-004** — ICC handling
   - **Type:** feat · **Area:** engine/intake · **Est:** S · **Deps:** P2-003 · **Prio:** P1

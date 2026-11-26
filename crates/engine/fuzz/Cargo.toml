@@ -1,0 +1,30 @@
+[package]
+name = "detag-engine-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+# Standalone crate: NOT a workspace member (the root workspace has
+# an explicit member list) — this empty table stops cargo from
+# treating it as part of the root workspace, so `just verify`
+# never builds the fuzz harness.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.detag-engine]
+path = ".."
+
+[dependencies.detag-core]
+path = "../../core"
+
+[[bin]]
+name = "exif_parse"
+path = "fuzz_targets/exif_parse.rs"
+test = false
+doc = false
+bench = false

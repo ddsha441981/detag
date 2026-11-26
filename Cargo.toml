@@ -53,6 +53,7 @@ insta = { version = "1.49", features = ["json"] }
 proptest = "1"
 criterion = { version = "0.7", features = ["html_reports"] }
 image = { version = "0.25", default-features = false } # P2-002: engine enables only the matrix formats (png/jpeg/webp + tiff/avif features); no other crate uses image.
+exif = { package = "kamadak-exif", version = "0.6" } # P2-003: EXIF summary extraction (orientation/camera/software); pure Rust, no system deps.
 jsonwebtoken = { version = "11", default-features = false, features = ["aws_lc_rs"] }
 sha2 = "0.11"
 hmac = "0.13"
