@@ -38,8 +38,11 @@ test-lint-commits:
     python3 -m unittest discover -s scripts -p "test_*.py"
 
 # Supply-chain check: RUSTSEC advisories + license allow-list (P0-007).
+# --all-features goes BEFORE `check`: cargo-deny takes feature flags at
+# the top level (after the subcommand clap rejects them). CI's action
+# passes --all-features by default, so local must match — CI-FAIL-033.
 deny:
-    cargo deny check
+    cargo deny --all-features check
 
 # Secret scan of the whole repo (P0-008); pre-commit scans staged changes.
 secrets:

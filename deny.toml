@@ -121,7 +121,10 @@ ignore = [
 [licenses]
 # Allow-list (spec: Apache / MIT / BSD / ISC / Unicode / MPL-2.0 / Zlib,
 # plus the three permissive licenses the mailer + S3 chains need —
-# CI-FAIL-018: all three are OSI-approved / permissive).
+# CI-FAIL-018: all three are OSI-approved / permissive — and NCSA,
+# CI-FAIL-033: libfuzzer-sys (rav1e/ravif/image avif chain) is licensed
+# "(MIT OR Apache-2.0) AND NCSA"; the AND forces NCSA to be allowed too.
+# NCSA is OSI-approved and FSF-free, same permissive class as BSD/MIT).
 allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
@@ -135,6 +138,7 @@ allow = [
     "MPL-2.0",
     "Zlib",
     "CDLA-Permissive-2.0",
+    "NCSA",
 ]
 # Warn on allow-listed licenses that no crate in the tree actually uses,
 # so the list stays honest as dependencies change.
