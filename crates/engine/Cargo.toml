@@ -31,6 +31,9 @@ detag-core = { path = "../core" }
 image = { workspace = true, default-features = false, features = ["png", "jpeg", "webp"] }
 # EXIF summary extraction (P2-003): kamadak-exif, pure Rust.
 exif = { workspace = true }
+# ICC profile extraction (P2-004): sha2 for the metadata-fragment
+# fingerprint; already in the lock (dev-deps/benches), no new crate.
+sha2 = { workspace = true }
 
 [dev-dependencies]
 criterion.workspace = true
