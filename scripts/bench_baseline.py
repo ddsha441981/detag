@@ -22,7 +22,7 @@ import json
 import sys
 from pathlib import Path
 
-BENCHES = ("detect", "inpaint", "encode", "full_job")
+BENCHES = ("detect", "inpaint", "encode", "full_job", "decode")
 
 
 def repo_root() -> Path:

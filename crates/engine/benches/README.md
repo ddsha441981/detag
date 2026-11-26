@@ -11,6 +11,7 @@ tier (512², 1080p, 4K). Run: `just bench`.
 | `inpaint.rs` | Tile throughput (tiles/s): decode + 512×512 tiles + Gaussian blur per tile. |
 | `encode.rs` | Re-encode per tier: JPEG q95 (4:4:4) + PNG, time per encode. |
 | `full_job.rs` | Chained stages per tier (decode → blur tiles → JPEG) + video input prep (load 1080p fixture + sha256). |
+| `decode.rs` | Decode per tier per format (png/jpeg/webp clean fixtures) through the engine's `decode_image` (P2-002) — the intake decode path, sniffed kind forced. |
 
 ## Scaffold status — read before quoting numbers
 
