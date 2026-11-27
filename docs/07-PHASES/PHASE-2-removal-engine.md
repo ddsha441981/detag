@@ -68,11 +68,11 @@
   - **AC:**
     - [x] golden pixels match expected orientation
 
-- [ ] **P2-006** — Dimension/size guards
+- [x] **P2-006** — Dimension/size guards
   - **Type:** feat · **Area:** engine/intake · **Est:** S · **Deps:** P2-005 · **Prio:** P1
   - **Spec:** Max 8000x8000 image + plan byte caps at intake; decompression-bomb guard (pixel budget) before full decode (PF-2005).
   - **AC:**
-    - [ ] bomb fixture rejected
+    - [x] bomb fixture rejected
 
 - [ ] **P2-007** — Decode memory budget
   - **Type:** feat · **Area:** engine/intake · **Est:** M · **Deps:** P2-006 · **Prio:** P1
