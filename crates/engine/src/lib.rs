@@ -10,6 +10,7 @@ pub mod inpaint;
 pub mod intake;
 pub mod mask;
 pub mod metrics;
+pub mod orientation;
 pub mod registry;
 
 /// Image formats the engine accepts in v1 (FR-D-07).
