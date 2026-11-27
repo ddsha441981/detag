@@ -74,11 +74,11 @@
   - **AC:**
     - [x] bomb fixture rejected
 
-- [ ] **P2-007** — Decode memory budget
+- [x] **P2-007** — Decode memory budget
   - **Type:** feat · **Area:** engine/intake · **Est:** M · **Deps:** P2-006 · **Prio:** P1
   - **Spec:** Budgeted decode path for huge images (tile-aware later); RSS ceiling assertion in bench; budget breach errors PF-2007.
   - **AC:**
-    - [ ] bench asserts ceiling
+    - [x] bench asserts ceiling
 
 - [ ] **P2-008** — Hash + perceptual hash
   - **Type:** feat · **Area:** engine/intake · **Est:** M · **Deps:** P2-007 · **Prio:** P1
