@@ -62,11 +62,11 @@
   - **AC:**
     - [x] ICC byte-identical post-roundtrip
 
-- [ ] **P2-005** — Orientation normalize
+- [x] **P2-005** — Orientation normalize
   - **Type:** feat · **Area:** engine/intake · **Est:** M · **Deps:** P2-004 · **Prio:** P1
   - **Spec:** Apply EXIF orientation into pixels, record applied transform in metadata (metrics compare correctly); orientation tag stripped after apply.
   - **AC:**
-    - [ ] golden pixels match expected orientation
+    - [x] golden pixels match expected orientation
 
 - [ ] **P2-006** — Dimension/size guards
   - **Type:** feat · **Area:** engine/intake · **Est:** S · **Deps:** P2-005 · **Prio:** P1
