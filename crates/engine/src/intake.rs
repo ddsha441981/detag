@@ -22,9 +22,11 @@
 //!
 //! # What this does NOT do
 //!
-//! No size/dimension guards here — those are P2-006 (PF-2005 pixel
-//! budget, checked BEFORE full decode) and P2-007 (PF-2007 memory
-//! budget). No EXIF/ICC handling — P2-003/P2-004. No quality metrics —
+//! No size/dimension guards here — those live in `guards.rs`
+//! (P2-006, PF-2005 pixel budget + PF-2003 plan byte cap, checked
+//! BEFORE full decode; call `check_intake_guards` before this
+//! module's `decode_image`). P2-007 owns the memory budget
+//! (PF-2007). No EXIF/ICC handling — P2-003/P2-004. No quality metrics —
 //! E2.7. This module only proves: the format matrix decodes, the
 //! format is the sniffed one, and 16-bit stays 16-bit.
 

@@ -5,6 +5,7 @@ pub mod cli;
 pub mod detect;
 pub mod encode;
 pub mod exif;
+pub mod guards;
 pub mod icc;
 pub mod inpaint;
 pub mod intake;
