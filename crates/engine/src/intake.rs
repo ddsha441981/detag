@@ -25,8 +25,10 @@
 //! No size/dimension guards here — those live in `guards.rs`
 //! (P2-006, PF-2005 pixel budget + PF-2003 plan byte cap, checked
 //! BEFORE full decode; call `check_intake_guards` before this
-//! module's `decode_image`). P2-007 owns the memory budget
-//! (PF-2007). No EXIF/ICC handling — P2-003/P2-004. No quality metrics —
+//! module's `decode_image`). The memory budget lives in `budget.rs`
+//! (P2-007, PF-2007: `decode_budgeted` decides the decoded size
+//! from the header via the decoder's own `total_bytes()` before
+//! decoding). No EXIF/ICC handling — P2-003/P2-004. No quality metrics —
 //! E2.7. This module only proves: the format matrix decodes, the
 //! format is the sniffed one, and 16-bit stays 16-bit.
 
@@ -100,6 +102,39 @@ pub enum DecodeError {
     /// not the forced format at all).
     #[error("image decode failed: {0}")]
     Image(#[from] image::ImageError),
+    /// The image's decoded size exceeds the caller's decode budget
+    /// (PF-2007, 413). Raised by `budget::decode_budgeted` BEFORE
+    /// any pixel is decoded — the estimate comes from the header via
+    /// the decoder's own `total_bytes()`, so the image was never
+    /// decoded. Carries the header's dims, the colour type, the
+    /// estimate, and the budget, so the caller can report exactly
+    /// what was refused and why.
+    #[error("image is {width}x{height} {color:?}, decoded size {estimated_bytes} bytes over the {budget_bytes}-byte decode budget (PF-2007)")]
+    BudgetExceeded {
+        /// Width in pixels, as the header claims it.
+        width: u32,
+        /// Height in pixels, as the header claims it.
+        height: u32,
+        /// Colour type the decoder reports (decides bytes-per-pixel).
+        color: ColorType,
+        /// Estimated decoded size in bytes (`total_bytes()`).
+        estimated_bytes: u64,
+        /// The budget the estimate was checked against, in bytes.
+        budget_bytes: u64,
+    },
+}
+
+impl DecodeError {
+    /// The PF error code this decode failure maps to at the API layer,
+    /// or `None` when the caller maps it to its own decode failure:
+    /// only the budget rejection has a PF code (`BudgetExceeded` →
+    /// PF-2007) — the same shape as `GuardError::pf_code`.
+    pub fn pf_code(&self) -> Option<&'static str> {
+        match self {
+            DecodeError::BudgetExceeded { .. } => Some("PF-2007"),
+            _ => None,
+        }
+    }
 }
 
 /// Decode `bytes` as the sniffed `kind` (P2-001).

@@ -1,6 +1,7 @@
 //! Detag engine: detection, mask ops, inpainting, encode, QC metrics.
 //! Implemented in Phase 2; Phase 0 only scaffolds the module tree.
 
+pub mod budget;
 pub mod cli;
 pub mod detect;
 pub mod encode;
