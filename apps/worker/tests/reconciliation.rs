@@ -214,10 +214,27 @@ async fn reconciliation_handler_corrects_drift_and_audits() {
         "the worker did not correct the drifted hash within 15 s"
     );
 
-    // The anomaly audit row landed in the scratch DB.
-    let rows = audit_logs::list_for_action(&ctx.pool, RECONCILE_AUDIT_ACTION)
-        .await
-        .expect("read the audit rows");
+    // The anomaly audit row landed in the scratch DB. Poll it
+    // like the hash above: the handler corrects the Redis hash
+    // first (reconcile_day CAS) and writes the audit row after,
+    // as a separate DB round-trip, so a single immediate read
+    // can see 0 rows under load — CI-FAIL-034 (CI #125: the
+    // hash was corrected but the row had not landed yet).
+    let rows = {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        loop {
+            let rows = audit_logs::list_for_action(&ctx.pool, RECONCILE_AUDIT_ACTION)
+                .await
+                .expect("read the audit rows");
+            if rows.len() == 1 {
+                break rows;
+            }
+            if tokio::time::Instant::now() > deadline {
+                break rows;
+            }
+            sleep(Duration::from_millis(100)).await;
+        }
+    };
     assert_eq!(rows.len(), 1, "exactly one anomaly audit row");
     assert_eq!(
         rows[0].target_id.as_deref(),
