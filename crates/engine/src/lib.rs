@@ -15,6 +15,7 @@ pub mod mask;
 pub mod metrics;
 pub mod orientation;
 pub mod registry;
+pub mod suite;
 
 /// Image formats the engine accepts in v1 (FR-D-07).
 /// Always: png, jpeg, webp. `tiff` joins when the `tiff` cargo
