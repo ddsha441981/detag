@@ -86,11 +86,11 @@
   - **AC:**
     - [x] hash stability tested
 
-- [ ] **P2-009** — Intake suite
+- [x] **P2-009** — Intake suite
   - **Type:** test · **Area:** engine/intake · **Est:** M · **Deps:** P2-008 · **Prio:** P1
   - **Spec:** Format matrix incl. polyglot + bomb rejects, orientation correctness, ICC preserved, hash stability.
   - **AC:**
-    - [ ] suite green
+    - [x] suite green
 
 - [ ] **P2-010** — Intake spec
   - **Type:** docs · **Area:** engine/intake · **Est:** S · **Deps:** P2-009 · **Prio:** P1
