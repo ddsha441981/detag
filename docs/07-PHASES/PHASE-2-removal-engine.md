@@ -80,11 +80,11 @@
   - **AC:**
     - [x] bench asserts ceiling
 
-- [ ] **P2-008** — Hash + perceptual hash
+- [x] **P2-008** — Hash + perceptual hash
   - **Type:** feat · **Area:** engine/intake · **Est:** M · **Deps:** P2-007 · **Prio:** P1
   - **Spec:** Streaming sha256 + dHash/aHash (imageproc) stored on uploads; feeds dedupe analytics + abuse velocity (FR-U-05).
   - **AC:**
-    - [ ] hash stability tested
+    - [x] hash stability tested
 
 - [ ] **P2-009** — Intake suite
   - **Type:** test · **Area:** engine/intake · **Est:** M · **Deps:** P2-008 · **Prio:** P1
