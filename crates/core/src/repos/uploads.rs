@@ -131,6 +131,59 @@ pub async fn set_sha256(
     .map_err(RepoError::from_sqlx)
 }
 
+/// Store the perceptual hash (P2-008, FR-U-05): the dHash hex
+/// (`HashRecord.dhash`, 16 chars) the engine computed at intake.
+/// Guarded on `ready`, NOT on `pending_parts` like
+/// [`set_sha256`]: intake runs after complete, so the upload is
+/// already ready — a pending or aborted upload must never gain a
+/// phash. Returns `None` when the guard did not match. Re-writing
+/// is allowed (same status, same guard): the hash is deterministic
+/// from the bytes, so a re-intake stores the same value.
+pub async fn set_phash(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+    phash: &str,
+) -> Result<Option<Upload>, RepoError> {
+    sqlx::query_as!(
+        Upload,
+        "UPDATE uploads SET phash = $2, updated_at = now()
+         WHERE id = $1 AND status = 'ready'
+         RETURNING id, user_id, kind, filename, bytes, sha256, phash, mime, width, height,
+             duration_s, metadata, status, storage_key, parts, created_at, updated_at",
+        id,
+        phash
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
+/// Store the merged intake metadata object (P2-008): the single
+/// object the engine's `merge_metadata_fragments` assembles from
+/// the exif / icc / orientation / hashes fragments. Replaces
+/// `metadata` wholesale — the engine merge is the single assembly
+/// point, so what the caller passes is exactly what is stored.
+/// Same `ready` guard as [`set_phash`] (intake runs on ready
+/// uploads); returns `None` when the guard did not match.
+pub async fn set_metadata(
+    pool: impl sqlx::Executor<'_, Database = sqlx::Postgres>,
+    id: Uuid,
+    metadata: &serde_json::Value,
+) -> Result<Option<Upload>, RepoError> {
+    sqlx::query_as!(
+        Upload,
+        "UPDATE uploads SET metadata = $2, updated_at = now()
+         WHERE id = $1 AND status = 'ready'
+         RETURNING id, user_id, kind, filename, bytes, sha256, phash, mime, width, height,
+             duration_s, metadata, status, storage_key, parts, created_at, updated_at",
+        id,
+        metadata
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(RepoError::from_sqlx)
+}
+
 /// Move an upload from `from` to `to` (and bump `updated_at`),
 /// atomically: the UPDATE matches only a row still in `from`.
 /// Returns the updated row, or `None` when no row matched — the

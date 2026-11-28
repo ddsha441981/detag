@@ -7,6 +7,7 @@ pub mod detect;
 pub mod encode;
 pub mod exif;
 pub mod guards;
+pub mod hash;
 pub mod icc;
 pub mod inpaint;
 pub mod intake;
