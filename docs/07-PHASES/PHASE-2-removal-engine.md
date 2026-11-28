@@ -92,11 +92,11 @@
   - **AC:**
     - [x] suite green
 
-- [ ] **P2-010** — Intake spec
+- [x] **P2-010** — Intake spec
   - **Type:** docs · **Area:** engine/intake · **Est:** S · **Deps:** P2-009 · **Prio:** P1
   - **Spec:** Supported matrix table, error codes, memory budgets, security notes tied to threat model.
   - **AC:**
-    - [ ] spec committed
+    - [x] spec committed
 
 ---
 
