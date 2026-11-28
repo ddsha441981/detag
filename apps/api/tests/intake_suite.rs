@@ -15,7 +15,7 @@
 mod common;
 
 use common::spawn_app;
-use detag_core::repos::{uploads, users};
+use detag_core::repos::uploads;
 use detag_engine::budget::DecodeBudget;
 use detag_engine::hash::sha256_streaming;
 use detag_engine::suite::run_intake;
@@ -33,9 +33,11 @@ const FREE_MAX_BYTES: u64 = 26_214_400;
 async fn intake_outcome_stores_phash_and_metadata() {
     let app = spawn_app().await;
 
-    let user = users::create(&app.pool, "intake-suite@example.com", "h")
-        .await
-        .expect("create user");
+    // A generated unique email (harness `seed_user_unique`): the
+    // scratch database persists across runs in one CI job (the Test
+    // step and the Coverage step share it), so a hardcoded email
+    // collides on the second run (CI-FAIL-035).
+    let user = app.seed_user_unique().await;
     let created = uploads::create(
         &app.pool,
         &uploads::NewUpload {
