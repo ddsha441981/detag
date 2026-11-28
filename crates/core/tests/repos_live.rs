@@ -59,6 +59,7 @@ fn drop_db_sql(db: &str) -> &'static str {
         "detag_p057_uploads" => "DROP DATABASE IF EXISTS detag_p057_uploads",
         "detag_p057_uploads_guarded" => "DROP DATABASE IF EXISTS detag_p057_uploads_guarded",
         "detag_p058_uploads_hash" => "DROP DATABASE IF EXISTS detag_p058_uploads_hash",
+        "detag_p008_uploads_hashes" => "DROP DATABASE IF EXISTS detag_p008_uploads_hashes",
         "detag_p060_artifacts" => "DROP DATABASE IF EXISTS detag_p060_artifacts",
         "detag_p128_outbox_claim" => "DROP DATABASE IF EXISTS detag_p128_outbox_claim",
         "detag_p128_outbox_max" => "DROP DATABASE IF EXISTS detag_p128_outbox_max",
@@ -88,6 +89,7 @@ fn create_db_sql(db: &str) -> &'static str {
         "detag_p057_uploads" => "CREATE DATABASE detag_p057_uploads",
         "detag_p057_uploads_guarded" => "CREATE DATABASE detag_p057_uploads_guarded",
         "detag_p058_uploads_hash" => "CREATE DATABASE detag_p058_uploads_hash",
+        "detag_p008_uploads_hashes" => "CREATE DATABASE detag_p008_uploads_hashes",
         "detag_p060_artifacts" => "CREATE DATABASE detag_p060_artifacts",
         "detag_p128_outbox_claim" => "CREATE DATABASE detag_p128_outbox_claim",
         "detag_p128_outbox_max" => "CREATE DATABASE detag_p128_outbox_max",
@@ -1603,6 +1605,131 @@ async fn uploads_verified_hash_is_stored() {
     assert!(uploads::set_sha256(&pool, Uuid::nil(), verified)
         .await
         .expect("set_sha256 unknown id")
+        .is_none());
+
+    teardown(pool, db).await;
+}
+
+#[tokio::test]
+async fn uploads_phash_and_metadata_are_stored() {
+    let db = "detag_p008_uploads_hashes";
+    let pool = setup(db).await;
+
+    let user = users::create(&pool, "phash@example.com", "h")
+        .await
+        .expect("create user");
+    let created = uploads::create(
+        &pool,
+        &uploads::NewUpload {
+            user_id: user.id,
+            kind: "image",
+            filename: "input.png",
+            bytes: 3,
+            sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            mime: "image/png",
+            storage_key: "dev/2026-11/c/input.png",
+            parts: 1,
+        },
+    )
+    .await
+    .expect("create upload");
+    assert_eq!(created.phash, None);
+    assert_eq!(created.metadata, serde_json::json!({}));
+
+    // The intake setters guard on `ready` (P2-008): a pending
+    // upload matches nothing — the hash is stored at intake,
+    // after complete, not during it.
+    let dhash = "0123456789abcdef";
+    assert!(
+        uploads::set_phash(&pool, created.id, dhash)
+            .await
+            .expect("set_phash pending")
+            .is_none(),
+        "storing a phash on a pending upload must match nothing"
+    );
+    let merged = serde_json::json!({
+        "hashes": {"dhash": dhash, "ahash": "fedcba9876543210", "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"},
+        "exif": {},
+    });
+    assert!(
+        uploads::set_metadata(&pool, created.id, &merged)
+            .await
+            .expect("set_metadata pending")
+            .is_none(),
+        "storing metadata on a pending upload must match nothing"
+    );
+
+    // Once ready, both store, and a re-read proves it.
+    uploads::set_status_guarded(&pool, created.id, "pending_parts", "ready")
+        .await
+        .expect("mark ready")
+        .expect("guard must match");
+    let stored = uploads::set_phash(&pool, created.id, dhash)
+        .await
+        .expect("set_phash")
+        .expect("guard must match a ready upload");
+    assert_eq!(stored.phash.as_deref(), Some(dhash));
+    let stored = uploads::set_metadata(&pool, created.id, &merged)
+        .await
+        .expect("set_metadata")
+        .expect("guard must match a ready upload");
+    assert_eq!(stored.metadata, merged);
+    let by_id = uploads::by_id(&pool, created.id)
+        .await
+        .expect("by_id")
+        .expect("upload must exist");
+    assert_eq!(by_id.phash.as_deref(), Some(dhash));
+    assert_eq!(by_id.metadata, merged);
+
+    // Re-intake overwrites (same guard, deterministic value).
+    let stored = uploads::set_phash(&pool, created.id, "ffffffffffffffff")
+        .await
+        .expect("set_phash again")
+        .expect("guard must match");
+    assert_eq!(stored.phash.as_deref(), Some("ffffffffffffffff"));
+
+    // An aborted upload matches nothing; an unknown id matches
+    // nothing.
+    let aborted = uploads::create(
+        &pool,
+        &uploads::NewUpload {
+            user_id: user.id,
+            kind: "image",
+            filename: "second.png",
+            bytes: 3,
+            sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            mime: "image/png",
+            storage_key: "dev/2026-11/c/second.png",
+            parts: 1,
+        },
+    )
+    .await
+    .expect("create second upload");
+    uploads::set_status_guarded(&pool, aborted.id, "pending_parts", "aborted")
+        .await
+        .expect("mark aborted")
+        .expect("guard must match");
+    assert!(
+        uploads::set_phash(&pool, aborted.id, dhash)
+            .await
+            .expect("set_phash aborted")
+            .is_none(),
+        "storing a phash on an aborted upload must match nothing"
+    );
+    assert!(
+        uploads::set_metadata(&pool, aborted.id, &merged)
+            .await
+            .expect("set_metadata aborted")
+            .is_none(),
+        "storing metadata on an aborted upload must match nothing"
+    );
+    assert!(uploads::set_phash(&pool, Uuid::nil(), dhash)
+        .await
+        .expect("set_phash unknown id")
+        .is_none());
+    assert!(uploads::set_metadata(&pool, Uuid::nil(), &merged)
+        .await
+        .expect("set_metadata unknown id")
         .is_none());
 
     teardown(pool, db).await;
